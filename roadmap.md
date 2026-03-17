@@ -500,6 +500,29 @@ Support config values such as:
 
 ## Milestones
 
+### Implementation Sequencing Adjustment
+
+The milestone list below still describes the full intended v1 scope, but the
+practical build order should change slightly based on the current scaffold.
+
+After the project skeleton and catalog schema are in place, the next highest
+leverage step is a lightweight matching stack, even before full OCR and CV
+land. That gives the repo a real searchable core, lets us test title
+normalization and ranking logic in isolation, and reduces the amount of
+placeholder behavior carried through the API.
+
+Recommended early implementation order:
+
+1. Project skeleton.
+2. Catalog builder and local query helpers.
+3. Matching and scoring MVP on normalized text input.
+4. Detection and normalization MVP.
+5. ROI system.
+6. OCR MVP.
+7. Debug UI.
+8. Parent-project adapter.
+9. Accuracy and hardening.
+
 ### Milestone 1: Project Skeleton
 
 **Deliverables**

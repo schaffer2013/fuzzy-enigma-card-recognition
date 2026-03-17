@@ -1,2 +1,6 @@
+import re
+
+
 def normalize_text(value: str) -> str:
-    return " ".join(value.lower().strip().split())
+    collapsed = re.sub(r"[^0-9a-z]+", " ", value.casefold())
+    return " ".join(collapsed.strip().split())
