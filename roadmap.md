@@ -506,7 +506,7 @@ What is effectively done today:
 
 - [x] Milestone 1 is complete.
 - [x] Milestone 2 is complete.
-- [ ] Milestone 3 is partially complete.
+- [x] Milestone 3 is complete.
 - [ ] Milestone 4 is partially complete.
 - [ ] Milestone 5 has not started beyond placeholders.
 - [ ] Milestone 6 is partially complete.
@@ -516,8 +516,8 @@ What is effectively done today:
 
 Recommended next step:
 
-- Finish **Milestone 3: Detection and Normalization MVP**, especially perspective correction, better bbox scoring, and richer debug outputs.
-- After that, move into **Milestone 4: ROI System** so real normalized crops can feed multiple OCR regions instead of placeholder ROI labels.
+- Start **Milestone 4: ROI System**, especially atypical layout ROI groups, ROI debug overlays, and fuller ROI extraction tests.
+- After that, move into **Milestone 5: OCR MVP** so the normalized crops feed real text extraction instead of placeholders.
 
 ### Implementation Sequencing Adjustment
 
@@ -605,9 +605,9 @@ Recommended early implementation order:
 
 - [x] Contour-based card detector baseline.
 - [x] Bbox scoring baseline.
-- [ ] Perspective warp.
+- [x] Perspective warp baseline.
 - [x] Canonical resize baseline.
-- [ ] Debug image outputs.
+- [x] Debug image outputs baseline.
 
 **Deliverables**
 

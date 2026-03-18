@@ -13,7 +13,7 @@ from .utils.image_io import load_image
 def recognize_card(image: Any) -> RecognitionResult:
     prepared_image = _prepare_image_input(image)
     detection = detect_card(prepared_image)
-    normalized = normalize_card(prepared_image, detection.bbox)
+    normalized = normalize_card(prepared_image, detection.bbox, quad=detection.quad)
     ocr = run_ocr(normalized.normalized_image, roi_label="standard")
     candidates = match_candidates(ocr.lines)
     best_name, confidence = score_candidates(candidates)
@@ -32,7 +32,10 @@ def recognize_card(image: Any) -> RecognitionResult:
                 "shape": getattr(prepared_image, "shape", None),
             },
             "detection": detection.debug,
-            "normalization": {"crop_count": len(normalized.crops)},
+            "normalization": {
+                "crop_count": len(normalized.crops),
+                **normalized.debug_outputs,
+            },
             "ocr": ocr.debug,
         },
     )

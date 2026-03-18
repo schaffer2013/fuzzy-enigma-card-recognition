@@ -3,12 +3,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .utils.geometry import TARGET_CARD_RATIO, area, aspect_ratio, centered_aspect_bbox, clamp_bbox
+from .utils.geometry import (
+    TARGET_CARD_RATIO,
+    Quad,
+    area,
+    aspect_ratio,
+    bbox_from_quad,
+    centered_aspect_bbox,
+    clamp_bbox,
+    clamp_quad,
+    quad_from_bbox,
+)
 
 
 @dataclass
 class DetectionResult:
     bbox: tuple[int, int, int, int] | None
+    quad: Quad | None
     score: float
     debug: dict[str, Any]
 
@@ -26,15 +37,49 @@ def detect_card(image: Any) -> DetectionResult:
     frame_width = getattr(image, "shape", [0, 0])[1] if image is not None else 0
 
     if frame_width <= 0 or frame_height <= 0:
-        return DetectionResult(bbox=None, score=0.0, debug={"method": "no_shape"})
+        return DetectionResult(bbox=None, quad=None, score=0.0, debug={"method": "no_shape"})
+
+    explicit_quad = getattr(image, "card_quad", None)
+    if explicit_quad is not None:
+        quad = clamp_quad(tuple(explicit_quad), frame_width=frame_width, frame_height=frame_height)
+        bbox = bbox_from_quad(quad)
+        return DetectionResult(
+            bbox=bbox,
+            quad=quad,
+            score=_score_bbox(bbox, frame_width=frame_width, frame_height=frame_height),
+            debug={"method": "explicit_quad"},
+        )
 
     explicit_bbox = getattr(image, "card_bbox", None)
     if explicit_bbox is not None:
         bbox = clamp_bbox(tuple(explicit_bbox), frame_width=frame_width, frame_height=frame_height)
         return DetectionResult(
             bbox=bbox,
+            quad=quad_from_bbox(bbox),
             score=_score_bbox(bbox, frame_width=frame_width, frame_height=frame_height),
             debug={"method": "explicit_bbox"},
+        )
+
+    candidate_quads = getattr(image, "candidate_quads", None)
+    if candidate_quads:
+        quads = [
+            clamp_quad(tuple(candidate_quad), frame_width=frame_width, frame_height=frame_height)
+            for candidate_quad in candidate_quads
+        ]
+        best_quad = max(
+            quads,
+            key=lambda candidate: _score_bbox(
+                bbox_from_quad(candidate),
+                frame_width=frame_width,
+                frame_height=frame_height,
+            ),
+        )
+        best_bbox = bbox_from_quad(best_quad)
+        return DetectionResult(
+            bbox=best_bbox,
+            quad=best_quad,
+            score=_score_bbox(best_bbox, frame_width=frame_width, frame_height=frame_height),
+            debug={"method": "candidate_quads", "candidate_count": len(quads)},
         )
 
     candidate_bboxes = getattr(image, "candidate_bboxes", None)
@@ -49,6 +94,7 @@ def detect_card(image: Any) -> DetectionResult:
         )
         return DetectionResult(
             bbox=best_bbox,
+            quad=quad_from_bbox(best_bbox),
             score=_score_bbox(best_bbox, frame_width=frame_width, frame_height=frame_height),
             debug={"method": "candidate_bboxes", "candidate_count": len(candidates)},
         )
@@ -58,6 +104,7 @@ def detect_card(image: Any) -> DetectionResult:
     if abs(full_frame_ratio - TARGET_CARD_RATIO) <= 0.12:
         return DetectionResult(
             bbox=full_frame_bbox,
+            quad=quad_from_bbox(full_frame_bbox),
             score=_score_bbox(full_frame_bbox, frame_width=frame_width, frame_height=frame_height),
             debug={"method": "full_frame_ratio_match"},
         )
@@ -65,6 +112,7 @@ def detect_card(image: Any) -> DetectionResult:
     inferred_bbox = centered_aspect_bbox(frame_width, frame_height, target_ratio=TARGET_CARD_RATIO)
     return DetectionResult(
         bbox=inferred_bbox,
+        quad=quad_from_bbox(inferred_bbox),
         score=_score_bbox(inferred_bbox, frame_width=frame_width, frame_height=frame_height),
         debug={"method": "centered_aspect_crop", "target_ratio": TARGET_CARD_RATIO},
     )

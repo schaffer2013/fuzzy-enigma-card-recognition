@@ -11,6 +11,20 @@ def test_recognize_card_returns_result_shape():
     result = recognize_card(DummyImage())
     assert result.bbox == (0, 0, 80, 100)
     assert result.active_roi == "standard"
+    assert result.debug["normalization"]["crop_count"] > 0
+
+
+class QuadImage:
+    shape = (120, 90, 3)
+    card_quad = ((10, 8), (72, 12), (70, 101), (12, 96))
+
+
+def test_recognize_card_exposes_normalization_debug_for_quad_inputs():
+    result = recognize_card(QuadImage())
+
+    assert result.bbox == (10, 8, 62, 93)
+    assert result.debug["detection"]["method"] == "explicit_quad"
+    assert result.debug["normalization"]["warp_method"] == "quad_to_canonical"
 
 
 def test_recognize_card_accepts_image_path(tmp_path):

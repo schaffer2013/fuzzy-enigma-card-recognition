@@ -21,3 +21,16 @@ def test_detector_prefers_explicit_card_bbox_hint():
 
     assert detection.bbox == (8, 12, 63, 88)
     assert detection.debug["method"] == "explicit_bbox"
+
+
+class QuadHintImage:
+    shape = (120, 90, 3)
+    card_quad = ((10, 8), (72, 12), (70, 101), (12, 96))
+
+
+def test_detector_prefers_explicit_card_quad_hint():
+    detection = detect_card(QuadHintImage())
+
+    assert detection.quad == ((10, 8), (72, 12), (70, 101), (12, 96))
+    assert detection.bbox == (10, 8, 62, 93)
+    assert detection.debug["method"] == "explicit_quad"

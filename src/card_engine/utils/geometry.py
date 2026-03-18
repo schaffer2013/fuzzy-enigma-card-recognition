@@ -1,4 +1,5 @@
 TARGET_CARD_RATIO = 63 / 88
+Quad = tuple[tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]]
 
 
 def aspect_ratio(width: int, height: int) -> float:
@@ -45,3 +46,38 @@ def centered_aspect_bbox(
     left = max(0, (frame_width - width) // 2)
     top = max(0, (frame_height - height) // 2)
     return (left, top, width, height)
+
+
+def quad_from_bbox(bbox: tuple[int, int, int, int]) -> Quad:
+    left, top, width, height = bbox
+    return (
+        (left, top),
+        (left + width, top),
+        (left + width, top + height),
+        (left, top + height),
+    )
+
+
+def clamp_quad(
+    quad: Quad,
+    *,
+    frame_width: int,
+    frame_height: int,
+) -> Quad:
+    return tuple(
+        (
+            max(0, min(x, frame_width)),
+            max(0, min(y, frame_height)),
+        )
+        for x, y in quad
+    )
+
+
+def bbox_from_quad(quad: Quad) -> tuple[int, int, int, int]:
+    xs = [point[0] for point in quad]
+    ys = [point[1] for point in quad]
+    left = min(xs)
+    top = min(ys)
+    right = max(xs)
+    bottom = max(ys)
+    return (left, top, max(0, right - left), max(0, bottom - top))
