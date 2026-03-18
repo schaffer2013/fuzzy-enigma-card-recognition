@@ -54,3 +54,4 @@ def test_format_recognition_summary_lists_candidates():
     assert "Best name: Lightning Bolt" in summary
     assert "Candidates:" in summary
     assert "Lightning Bolt" in summary
+    assert "Tried ROIs: standard" in summary

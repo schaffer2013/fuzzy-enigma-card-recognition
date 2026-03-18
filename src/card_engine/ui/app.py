@@ -8,6 +8,7 @@ from tkinter import ttk
 
 from card_engine.api import recognize_card
 from card_engine.catalog.scryfall_sync import fetch_random_card_image
+from card_engine.roi import DEFAULT_ENABLED_ROI_GROUPS, roi_group_bboxes
 from card_engine.utils.image_io import load_image
 
 from .state import UIState, cycle_active_roi, cycle_fixture_index
@@ -20,7 +21,7 @@ from .views import (
 )
 from .widgets import make_panel, make_readonly_text, set_readonly_text
 
-DEFAULT_ROIS = ["standard", "lower_text", "alt"]
+DEFAULT_ROIS = list(DEFAULT_ENABLED_ROI_GROUPS)
 
 
 class CardEngineDebugUI:
@@ -125,7 +126,7 @@ class CardEngineDebugUI:
         self._refresh()
 
     def _cycle_roi(self) -> None:
-        self.state.active_roi = cycle_active_roi(self.state.active_roi, DEFAULT_ROIS)
+        self.state.active_roi = cycle_active_roi(self.state.active_roi, self._available_roi_groups())
         self.state.status_message = f"Active ROI changed to {self.state.active_roi}."
         self._refresh()
 
@@ -171,6 +172,7 @@ class CardEngineDebugUI:
             self.state.fixture_index = 0
 
         self._load_selected_fixture_state()
+        self._sync_active_roi()
         self.fixture_count_var.set(f"{len(self.state.fixture_paths)} fixture(s)")
         self.fixture_list.delete(0, tk.END)
         for fixture_path in self.state.fixture_paths:
@@ -254,6 +256,12 @@ class CardEngineDebugUI:
                 rendered_size=(preview_image.width(), preview_image.height()),
                 source_size=(self.state.current_image.width, self.state.current_image.height),
             )
+            self._draw_active_roi_overlay(
+                card_bbox=self.state.recognition_result.bbox,
+                image_center=(image_x, image_y),
+                rendered_size=(preview_image.width(), preview_image.height()),
+                source_size=(self.state.current_image.width, self.state.current_image.height),
+            )
 
     def _draw_bbox_overlay(
         self,
@@ -280,6 +288,46 @@ class CardEngineDebugUI:
             width=2,
         )
 
+    def _draw_active_roi_overlay(
+        self,
+        *,
+        card_bbox: tuple[int, int, int, int],
+        image_center: tuple[float, float],
+        rendered_size: tuple[int, int],
+        source_size: tuple[int, int],
+    ) -> None:
+        roi_entries = roi_group_bboxes(card_bbox, self.state.active_roi)
+        if not roi_entries:
+            return
+
+        render_width, render_height = rendered_size
+        source_width, source_height = source_size
+        offset_x = image_center[0] - (render_width / 2)
+        offset_y = image_center[1] - (render_height / 2)
+        scale_x = render_width / max(source_width, 1)
+        scale_y = render_height / max(source_height, 1)
+
+        for label, (left, top, width, height) in roi_entries:
+            x1 = offset_x + (left * scale_x)
+            y1 = offset_y + (top * scale_y)
+            x2 = offset_x + ((left + width) * scale_x)
+            y2 = offset_y + ((top + height) * scale_y)
+            self.preview_canvas.create_rectangle(
+                x1,
+                y1,
+                x2,
+                y2,
+                outline="#f59e0b",
+                width=2,
+            )
+            self.preview_canvas.create_text(
+                x1 + 4,
+                y1 + 4,
+                text=label,
+                fill="#f59e0b",
+                anchor="nw",
+            )
+
     def _draw_preview_message(self, message: str) -> None:
         canvas_width = max(self.preview_canvas.winfo_width(), 240)
         canvas_height = max(self.preview_canvas.winfo_height(), 240)
@@ -291,6 +339,18 @@ class CardEngineDebugUI:
             width=canvas_width - 40,
             justify="center",
         )
+
+    def _available_roi_groups(self) -> list[str]:
+        if self.state.recognition_result and self.state.recognition_result.tried_rois:
+            return self.state.recognition_result.tried_rois
+        return DEFAULT_ROIS
+
+    def _sync_active_roi(self) -> None:
+        available_rois = self._available_roi_groups()
+        if not available_rois:
+            return
+        if self.state.active_roi not in available_rois:
+            self.state.active_roi = available_rois[0]
 
     def run(self) -> None:
         self.root.mainloop()

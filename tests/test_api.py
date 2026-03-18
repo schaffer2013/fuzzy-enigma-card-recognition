@@ -27,6 +27,19 @@ def test_recognize_card_exposes_normalization_debug_for_quad_inputs():
     assert result.debug["normalization"]["warp_method"] == "quad_to_canonical"
 
 
+class SplitLayoutImage:
+    shape = (120, 90, 3)
+    layout_hint = "split"
+
+
+def test_recognize_card_reports_layout_specific_tried_rois():
+    result = recognize_card(SplitLayoutImage())
+
+    assert result.active_roi == "standard"
+    assert result.tried_rois == ["standard", "lower_text", "split_left", "split_right"]
+    assert "split_left" in result.debug["normalization"]["roi_groups"]
+
+
 def test_recognize_card_accepts_image_path(tmp_path):
     image_path = tmp_path / "fixture.png"
     image_path.write_bytes(_minimal_png(width=80, height=100))

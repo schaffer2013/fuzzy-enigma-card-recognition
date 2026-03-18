@@ -38,6 +38,7 @@ def normalize_card(
     bbox: tuple[int, int, int, int] | None,
     *,
     quad: Quad | None = None,
+    roi_groups: list[str] | None = None,
 ) -> NormalizationResult:
     """Normalize the detected region into a canonical card-sized descriptor."""
     if bbox is None:
@@ -56,22 +57,27 @@ def normalize_card(
         path=str(getattr(image, "path", "")) or None,
     )
 
-    crops = _build_roi_crops(normalized_image.shape)
+    active_roi_groups = [group for group in (roi_groups or list(ROI_PRESETS)) if group in ROI_PRESETS]
+    crops = _build_roi_crops(normalized_image.shape, active_roi_groups)
     debug_outputs = {
         "source_bbox": bbox,
         "source_quad": source_quad,
         "destination_quad": destination_quad,
         "warp_method": "quad_to_canonical" if source_quad != rectangular_quad else "bbox_to_canonical",
-        "roi_bboxes": {name: crop.bbox for name, crop in crops.items()},
+        "roi_groups": _group_crop_bboxes(crops),
     }
     return NormalizationResult(normalized_image=normalized_image, crops=crops, debug_outputs=debug_outputs)
 
 
-def _build_roi_crops(normalized_shape: tuple[int, int, int]) -> dict[str, CropRegion]:
+def _build_roi_crops(
+    normalized_shape: tuple[int, int, int],
+    roi_groups: list[str],
+) -> dict[str, CropRegion]:
     height, width, _ = normalized_shape
     crops: dict[str, CropRegion] = {}
 
-    for group_name, rois in ROI_PRESETS.items():
+    for group_name in roi_groups:
+        rois = ROI_PRESETS.get(group_name, [])
         for roi in rois:
             crop_width = max(1, int(round(width * roi.w)))
             crop_height = max(1, int(round(height * roi.h)))
@@ -84,3 +90,11 @@ def _build_roi_crops(normalized_shape: tuple[int, int, int]) -> dict[str, CropRe
             )
 
     return crops
+
+
+def _group_crop_bboxes(crops: dict[str, CropRegion]) -> dict[str, list[tuple[str, tuple[int, int, int, int]]]]:
+    grouped: dict[str, list[tuple[str, tuple[int, int, int, int]]]] = {}
+    for crop_name, crop in crops.items():
+        group_name, _, _ = crop_name.partition(":")
+        grouped.setdefault(group_name, []).append((crop.label, crop.bbox))
+    return grouped

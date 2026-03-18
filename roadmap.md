@@ -507,7 +507,7 @@ What is effectively done today:
 - [x] Milestone 1 is complete.
 - [x] Milestone 2 is complete.
 - [x] Milestone 3 is complete.
-- [ ] Milestone 4 is partially complete.
+- [x] Milestone 4 is complete.
 - [ ] Milestone 5 has not started beyond placeholders.
 - [ ] Milestone 6 is partially complete.
 - [ ] Milestone 7 is partially complete.
@@ -516,8 +516,8 @@ What is effectively done today:
 
 Recommended next step:
 
-- Start **Milestone 4: ROI System**, especially atypical layout ROI groups, ROI debug overlays, and fuller ROI extraction tests.
-- After that, move into **Milestone 5: OCR MVP** so the normalized crops feed real text extraction instead of placeholders.
+- Start **Milestone 5: OCR MVP**, especially title-region OCR, alternate-ROI OCR passes, and OCR result normalization.
+- After that, move into **Milestone 6: Matching and Scoring MVP** so real OCR output drives ranking instead of placeholder empty text.
 
 ### Implementation Sequencing Adjustment
 
@@ -628,10 +628,10 @@ Recommended early implementation order:
 
 - [x] ROI abstraction.
 - [x] Standard card ROI presets.
-- [ ] Atypical layout ROI groups.
+- [x] Atypical layout ROI groups.
 - [x] Deterministic ROI cycling.
-- [ ] ROI debug overlays.
-- [ ] Tests for ROI ordering and extraction.
+- [x] ROI debug overlays.
+- [x] Tests for ROI ordering and extraction.
 
 **Deliverables**
 
