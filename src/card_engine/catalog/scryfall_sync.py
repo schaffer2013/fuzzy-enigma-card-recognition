@@ -1,17 +1,29 @@
 from __future__ import annotations
 
 import importlib
+import json
 import re
 from pathlib import Path
 from urllib.parse import urlparse
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
+
+
+SCRYFALL_BULK_DATA_URL = "https://api.scryfall.com/bulk-data/default-cards"
+USER_AGENT = "card-recognition-engine/0.1.0"
 
 
 def sync_bulk_data(output_path: str) -> Path:
-    """Placeholder sync entry point."""
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("[]\n", encoding="utf-8")
+
+    metadata = _fetch_json(SCRYFALL_BULK_DATA_URL)
+    download_uri = metadata.get("download_uri")
+    if not isinstance(download_uri, str) or not download_uri:
+        raise RuntimeError("Scryfall bulk-data response did not include a download_uri.")
+
+    temp_path = path.with_suffix(f"{path.suffix}.tmp")
+    _download_to_path(download_uri, temp_path)
+    temp_path.replace(path)
     return path
 
 
@@ -54,7 +66,7 @@ def _build_random_card_client():
     if request_handler_module is not None:
         handler = getattr(request_handler_module, "ScrythonRequestHandler", None)
         if handler is not None and hasattr(handler, "set_user_agent"):
-            handler.set_user_agent("card-recognition-engine/0.1.0")
+            handler.set_user_agent(USER_AGENT)
 
     return scrython.cards.Random()
 
@@ -117,8 +129,19 @@ def _extract_card_value(card, key: str, default=None):
 
 
 def _download_to_path(image_url: str, output_path: Path) -> None:
-    with urlopen(image_url) as response:
+    request = Request(image_url, headers={"User-Agent": USER_AGENT})
+    with urlopen(request) as response:
         output_path.write_bytes(response.read())
+
+
+def _fetch_json(url: str) -> dict:
+    request = Request(url, headers={"User-Agent": USER_AGENT})
+    with urlopen(request) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    if not isinstance(payload, dict):
+        raise RuntimeError("Expected a JSON object from Scryfall.")
+    return payload
 
 
 def _slugify(value: str) -> str:

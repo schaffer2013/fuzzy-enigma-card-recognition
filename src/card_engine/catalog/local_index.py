@@ -13,6 +13,7 @@ class CatalogRecord:
     set_code: str | None = None
     collector_number: str | None = None
     layout: str | None = None
+    aliases: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -31,12 +32,17 @@ class LocalCatalogIndex:
                 set_code=record.set_code,
                 collector_number=record.collector_number,
                 layout=record.layout,
+                aliases=sorted({alias.strip() for alias in (record.aliases or []) if alias and alias.strip()}),
             )
             for record in records
         ]
         self._by_normalized_name: dict[str, list[CatalogRecord]] = {}
+        self._by_normalized_alias: dict[str, list[CatalogRecord]] = {}
         for record in self.records:
             self._by_normalized_name.setdefault(record.normalized_name, []).append(record)
+            for alias in record.aliases or []:
+                normalized_alias = normalize_text(alias)
+                self._by_normalized_alias.setdefault(normalized_alias, []).append(record)
 
     @classmethod
     def from_records(cls, records: list[CatalogRecord]) -> "LocalCatalogIndex":
@@ -51,8 +57,22 @@ class LocalCatalogIndex:
         with sqlite3.connect(path) as conn:
             rows = conn.execute(
                 """
-                SELECT name, normalized_name, set_code, collector_number, layout
+                SELECT
+                    cards.name,
+                    cards.normalized_name,
+                    cards.set_code,
+                    cards.collector_number,
+                    cards.layout,
+                    GROUP_CONCAT(aliases.alias, '\u001f') AS aliases
                 FROM cards
+                LEFT JOIN aliases ON aliases.card_id = cards.id
+                GROUP BY
+                    cards.id,
+                    cards.name,
+                    cards.normalized_name,
+                    cards.set_code,
+                    cards.collector_number,
+                    cards.layout
                 """
             ).fetchall()
 
@@ -64,14 +84,27 @@ class LocalCatalogIndex:
                     set_code=set_code,
                     collector_number=collector_number,
                     layout=layout,
+                    aliases=aliases.split("\u001f") if aliases else [],
                 )
-                for name, normalized_name, set_code, collector_number, layout in rows
+                for name, normalized_name, set_code, collector_number, layout, aliases in rows
             ]
         )
 
     def exact_lookup(self, query: str) -> list[CatalogRecord]:
         normalized_query = normalize_text(query)
-        return list(self._by_normalized_name.get(normalized_query, []))
+        results: list[CatalogRecord] = []
+        seen: set[tuple[str, str | None, str | None]] = set()
+        for group in (
+            self._by_normalized_name.get(normalized_query, []),
+            self._by_normalized_alias.get(normalized_query, []),
+        ):
+            for record in group:
+                key = (record.name, record.set_code, record.collector_number)
+                if key in seen:
+                    continue
+                seen.add(key)
+                results.append(record)
+        return results
 
     def search_name(self, query: str, limit: int = 5) -> list[CatalogMatch]:
         normalized_query = normalize_text(query)
@@ -87,7 +120,9 @@ class LocalCatalogIndex:
 
         ranked: list[CatalogMatch] = []
         for record in self.records:
-            score = _fuzzy_score(normalized_query, record.normalized_name)
+            candidates = [record.normalized_name]
+            candidates.extend(normalize_text(alias) for alias in (record.aliases or []))
+            score = max(_fuzzy_score(normalized_query, candidate) for candidate in candidates if candidate)
             if score < 0.55:
                 continue
             ranked.append(CatalogMatch(record=record, score=score, match_type="fuzzy"))

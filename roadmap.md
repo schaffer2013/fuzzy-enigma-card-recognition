@@ -500,6 +500,25 @@ Support config values such as:
 
 ## Milestones
 
+### Current Progress Snapshot
+
+What is effectively done today:
+
+- [x] Milestone 1 is complete.
+- [x] Milestone 2 is complete.
+- [ ] Milestone 3 is partially complete.
+- [ ] Milestone 4 is partially complete.
+- [ ] Milestone 5 has not started beyond placeholders.
+- [ ] Milestone 6 is partially complete.
+- [ ] Milestone 7 is partially complete.
+- [ ] Milestone 8 is partially complete.
+- [ ] Milestone 9 has not started.
+
+Recommended next step:
+
+- Finish **Milestone 3: Detection and Normalization MVP**, especially perspective correction, better bbox scoring, and richer debug outputs.
+- After that, move into **Milestone 4: ROI System** so real normalized crops can feed multiple OCR regions instead of placeholder ROI labels.
+
 ### Implementation Sequencing Adjustment
 
 The milestone list below still describes the full intended v1 scope, but the
@@ -525,6 +544,16 @@ Recommended early implementation order:
 
 ### Milestone 1: Project Skeleton
 
+**Status**
+
+- [x] Repo scaffold.
+- [x] Packaging.
+- [x] Config model.
+- [x] Core data models.
+- [x] Placeholder API.
+- [x] Basic tests.
+- [x] README and setup docs.
+
 **Deliverables**
 
 - Repo scaffold.
@@ -542,6 +571,16 @@ Recommended early implementation order:
 - Main entry points exist.
 
 ### Milestone 2: Catalog Builder
+
+**Status**
+
+- [x] Bulk-data ingestion script.
+- [x] Name normalization utilities.
+- [x] SQLite schema.
+- [x] English-only local catalog build pipeline.
+- [x] Exact lookup helpers.
+- [x] Alias support.
+- [x] Layout metadata storage.
 
 **Deliverables**
 
@@ -562,6 +601,14 @@ Recommended early implementation order:
 
 ### Milestone 3: Detection and Normalization MVP
 
+**Status**
+
+- [x] Contour-based card detector baseline.
+- [x] Bbox scoring baseline.
+- [ ] Perspective warp.
+- [x] Canonical resize baseline.
+- [ ] Debug image outputs.
+
 **Deliverables**
 
 - Contour-based card detector.
@@ -576,6 +623,15 @@ Recommended early implementation order:
 - Normalized crops are visually stable.
 
 ### Milestone 4: ROI System for Standard and Atypical Layouts
+
+**Status**
+
+- [x] ROI abstraction.
+- [x] Standard card ROI presets.
+- [ ] Atypical layout ROI groups.
+- [x] Deterministic ROI cycling.
+- [ ] ROI debug overlays.
+- [ ] Tests for ROI ordering and extraction.
 
 **Deliverables**
 
@@ -594,6 +650,14 @@ Recommended early implementation order:
 
 ### Milestone 5: OCR MVP
 
+**Status**
+
+- [ ] PaddleOCR integration.
+- [ ] Title-region OCR.
+- [ ] Alternate-ROI OCR.
+- [ ] OCR result normalization.
+- [ ] Debug overlays for OCR regions.
+
 **Deliverables**
 
 - PaddleOCR integration.
@@ -610,6 +674,14 @@ Recommended early implementation order:
 
 ### Milestone 6: Matching and Scoring MVP
 
+**Status**
+
+- [x] Exact and fuzzy title matching.
+- [ ] Layout-aware reranking.
+- [ ] Support for additional OCR properties besides collector number.
+- [x] Top-k ranking.
+- [ ] Confidence calculation.
+
 **Deliverables**
 
 - Exact and fuzzy title matching.
@@ -625,6 +697,17 @@ Recommended early implementation order:
 - Collector number is not required for acceptable baseline accuracy.
 
 ### Milestone 7: Pygame Debug UI
+
+**Status**
+
+- [x] Image browser.
+- [x] Bbox overlay view.
+- [ ] Normalized crop panel.
+- [x] OCR panel.
+- [x] Candidate list.
+- [x] Keyboard shortcuts.
+- [x] ROI cycling controls.
+- [ ] Save-debug action.
 
 **Deliverables**
 
@@ -644,6 +727,13 @@ Recommended early implementation order:
 
 ### Milestone 8: Parent-Project Adapter
 
+**Status**
+
+- [x] Adapter compatible with SortingMachineArray.
+- [ ] Minimal integration docs.
+- [ ] Example configuration.
+- [x] Smoke test against parent-style frames.
+
 **Deliverables**
 
 - Adapter compatible with SortingMachineArray.
@@ -657,6 +747,15 @@ Recommended early implementation order:
 - No parent-level architectural changes are required beyond wiring.
 
 ### Milestone 9: Accuracy and Hardening
+
+**Status**
+
+- [ ] Fixture-based evaluation tool.
+- [ ] Confidence calibration.
+- [ ] Better tie-breaking from non-collector OCR regions.
+- [ ] Improved region cropping.
+- [ ] Documented extension points for image hashing in v2.
+- [ ] Performance profiling.
 
 **Deliverables**
 
