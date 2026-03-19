@@ -209,7 +209,7 @@ __marimo__/
 
 *.sqlite3
 *.png
-tests/*
+
 *.jpg
 
 data/cache/*
