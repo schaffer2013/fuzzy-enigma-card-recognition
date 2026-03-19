@@ -61,8 +61,10 @@ The goal is to keep the engine focused, fast, and easy to integrate without leak
 
 ### Image Hashing
 
-- Image hashing is **not part of v1**.
-- The architecture should leave room for visual fingerprinting in v2, but v1 should remain OCR-first and metadata-driven.
+- Full-card image hashing is **not part of v1**.
+- A narrow exception is allowed for tie-breaking: after OCR and catalog ranking have reduced the search to a small top-candidate set, the engine may compare a small normalized ROI around the set symbol area.
+- This should be treated as a lightweight discriminator, not a primary recognition path.
+- The architecture should leave room for broader visual fingerprinting in v2, but v1 should remain OCR-first and metadata-driven.
 
 ---
 
@@ -248,6 +250,7 @@ Matching strategy:
 - Fuzzy title match.
 - Use other OCR regions and card properties to narrow candidates.
 - Rerank candidates based on consistency across multiple OCR regions.
+- When top candidates remain tied or near-tied, optionally compare a small set-symbol ROI against candidate-specific references using a lightweight image hash.
 
 Preferred supporting properties for v1:
 
@@ -274,6 +277,7 @@ Possible features:
 - Detection quality.
 - OCR confidence.
 - Consistency across multiple OCR passes.
+- Small-ROI set-symbol hash agreement for final tie-breaking between otherwise similar printings.
 
 Primary output:
 
@@ -753,6 +757,7 @@ Recommended early implementation order:
 - [ ] Fixture-based evaluation tool.
 - [ ] Confidence calibration.
 - [ ] Better tie-breaking from non-collector OCR regions.
+- [ ] Set-symbol ROI hash tie-breaker for near-equal top candidates.
 - [ ] Improved region cropping.
 - [ ] Documented extension points for image hashing in v2.
 - [ ] Performance profiling.
@@ -762,6 +767,7 @@ Recommended early implementation order:
 - Fixture-based evaluation tool.
 - Confidence calibration.
 - Better tie-breaking from non-collector OCR regions.
+- Set-symbol ROI hash tie-breaker for near-equal top candidates.
 - Improved region cropping.
 - Documented extension points for image hashing in v2.
 - Performance profiling.
@@ -771,6 +777,7 @@ Recommended early implementation order:
 - Measurable improvement over MVP.
 - Reproducible eval workflow exists.
 - Common failure modes are documented.
+- Same-name printings with distinct set symbols can be separated when OCR text alone is insufficient.
 - v2 path for visual fingerprinting is defined without affecting v1 simplicity.
 
 ---
@@ -847,6 +854,8 @@ Exact latency targets can be added after the first working baseline.
   - **Mitigation:** Enforce the adapter boundary and keep parent integration thin.
 - **Risk:** Catalog gets bloated or slow.
   - **Mitigation:** Store metadata only; avoid full images and defer image hashing to v2.
+- **Risk:** Same-name printings remain tied after OCR because visible text is identical.
+  - **Mitigation:** Add a small normalized set-symbol ROI hash as a late-stage tie-breaker for the top candidate set only.
 - **Risk:** Confidence is poorly calibrated.
   - **Mitigation:** Build a fixture-based evaluation loop and tune thresholds from actual results.
 
