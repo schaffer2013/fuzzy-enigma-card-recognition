@@ -77,3 +77,17 @@ def test_exact_lookup_uses_aliases():
     matches = index.exact_lookup("fire")
 
     assert [record.name for record in matches] == ["Fire // Ice"]
+
+
+def test_search_name_skips_records_without_usable_search_strings():
+    index = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Nameless", normalized_name="", aliases=[]),
+            CatalogRecord(name="Lightning Bolt", normalized_name="", aliases=[]),
+        ]
+    )
+
+    matches = index.search_name("lightning bot", limit=2)
+
+    assert matches
+    assert matches[0].record.name == "Lightning Bolt"

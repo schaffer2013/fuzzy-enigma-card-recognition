@@ -17,6 +17,7 @@ class UIState:
     status_message: str = "Ready."
     current_image: LoadedImage | None = None
     recognition_result: RecognitionResult | None = None
+    recognition_error: str | None = None
     preview_message: str = "Preview unavailable."
     manual_quads: dict[Path, Quad] = field(default_factory=dict)
     manual_roi_overrides: dict[str, dict[str, RelativeROI]] = field(default_factory=dict)

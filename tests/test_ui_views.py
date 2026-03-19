@@ -78,3 +78,10 @@ def test_format_recognition_summary_lists_candidates():
     assert "Candidates:" in summary
     assert "Lightning Bolt" in summary
     assert "Tried ROIs: standard" in summary
+
+
+def test_format_recognition_summary_shows_error_when_recognition_failed():
+    summary = format_recognition_summary(None, error_message="max() iterable argument is empty")
+
+    assert "Recognition failed." in summary
+    assert "max() iterable argument is empty" in summary

@@ -92,8 +92,10 @@ def format_status_summary(state: UIState) -> str:
     )
 
 
-def format_recognition_summary(result: RecognitionResult | None) -> str:
+def format_recognition_summary(result: RecognitionResult | None, *, error_message: str | None = None) -> str:
     if result is None:
+        if error_message:
+            return f"Recognition failed.\n\n{error_message}"
         return "Recognition has not run yet."
 
     lines = [

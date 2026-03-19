@@ -308,7 +308,13 @@ class CardEngineDebugUI:
             self.fixture_list.activate(self.state.fixture_index)
 
         set_readonly_text(self.fixture_text, format_fixture_summary(self.state))
-        set_readonly_text(self.recognition_text, format_recognition_summary(self.state.recognition_result))
+        set_readonly_text(
+            self.recognition_text,
+            format_recognition_summary(
+                self.state.recognition_result,
+                error_message=self.state.recognition_error,
+            ),
+        )
         set_readonly_text(self.status_text, format_status_summary(self.state))
         self._refresh_preview()
 
@@ -317,6 +323,7 @@ class CardEngineDebugUI:
         if fixture_path is None:
             self.state.current_image = None
             self.state.recognition_result = None
+            self.state.recognition_error = None
             self.state.preview_message = "No fixture selected."
             return
 
@@ -325,6 +332,7 @@ class CardEngineDebugUI:
         except Exception as exc:
             self.state.current_image = None
             self.state.recognition_result = None
+            self.state.recognition_error = str(exc)
             self.state.preview_message = f"Could not read image metadata: {exc}"
             self.state.status_message = f"Failed to load image metadata for {fixture_path.name}."
             return
@@ -339,8 +347,10 @@ class CardEngineDebugUI:
                 self._build_recognition_input(),
                 progress_callback=splash.update,
             )
+            self.state.recognition_error = None
         except Exception as exc:
             self.state.recognition_result = None
+            self.state.recognition_error = str(exc)
             self.state.status_message = f"Recognition failed for {fixture_path.name}: {exc}"
         else:
             self.state.status_message = f"Recognition refreshed for {fixture_path.name}."

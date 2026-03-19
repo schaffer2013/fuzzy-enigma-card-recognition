@@ -144,7 +144,10 @@ class LocalCatalogIndex:
         for record in self.records:
             candidates = [record.normalized_name]
             candidates.extend(normalize_text(alias) for alias in (record.aliases or []))
-            score = max(_fuzzy_score(normalized_query, candidate) for candidate in candidates if candidate)
+            usable_candidates = [candidate for candidate in candidates if candidate]
+            if not usable_candidates:
+                continue
+            score = max(_fuzzy_score(normalized_query, candidate) for candidate in usable_candidates)
             if score < 0.55:
                 continue
             ranked.append(CatalogMatch(record=record, score=score, match_type="fuzzy"))
