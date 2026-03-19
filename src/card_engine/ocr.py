@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
-import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
@@ -11,7 +12,7 @@ from typing import Any
 from .normalize import CropRegion
 from .utils.text_normalize import normalize_text
 
-_TITLE_LIKE_ROIS = {"standard", "split_left", "split_right", "adventure", "transform_back", None}
+OCR_LOG_PATH = Path("data") / "cache" / "ocr_logs" / "ocr_attempts.jsonl"
 _PADDLE_OCR_INSTANCE: Any | None = None
 _RAPID_OCR_INSTANCE: Any | None = None
 _PADDLE_OCR_DISABLED_REASON: str | None = None
@@ -30,39 +31,37 @@ def run_ocr(
     *,
     crop_region: CropRegion | None = None,
 ) -> OCRResult:
-    rapid_result = _run_rapidocr_backend(image, roi_label=roi_label, crop_region=crop_region)
+    attempt_log = _base_attempt_log(image=image, roi_label=roi_label, crop_region=crop_region)
+
+    if _resolve_ocr_input(image, crop_region) is None:
+        attempt_log["result"] = "no_pixel_input"
+        _write_ocr_log(attempt_log)
+        return OCRResult(
+            lines=[],
+            confidence=0.0,
+            debug=_build_debug(
+                backend="unavailable",
+                roi_label=roi_label,
+                crop_region=crop_region,
+                source=image,
+                normalized_lines=[],
+                attempts=attempt_log["attempts"],
+                outcome="no_pixel_input",
+            ),
+        )
+
+    rapid_result = _run_rapidocr_backend(image, roi_label=roi_label, crop_region=crop_region, attempt_log=attempt_log)
     if rapid_result is not None:
+        _write_ocr_log(attempt_log)
         return rapid_result
 
-    paddle_result = _run_paddleocr_backend(image, roi_label=roi_label, crop_region=crop_region)
+    paddle_result = _run_paddleocr_backend(image, roi_label=roi_label, crop_region=crop_region, attempt_log=attempt_log)
     if paddle_result is not None:
+        _write_ocr_log(attempt_log)
         return paddle_result
 
-    explicit_lines = _extract_explicit_lines(image, roi_label)
-    if explicit_lines is not None:
-        return _result_from_lines(
-            explicit_lines,
-            confidence=0.99 if explicit_lines else 0.0,
-            backend="simulated_hint",
-            roi_label=roi_label,
-            crop_region=crop_region,
-            source=image,
-        )
-
-    filename_lines = _extract_filename_lines(image, roi_label)
-    if filename_lines:
-        return _result_from_lines(
-            filename_lines,
-            confidence=0.72,
-            backend="filename_fallback",
-            roi_label=roi_label,
-            crop_region=crop_region,
-            source=image,
-        )
-
-    if paddle_result is not None:
-        return paddle_result
-
+    attempt_log["result"] = "no_backend_result"
+    _write_ocr_log(attempt_log)
     return OCRResult(
         lines=[],
         confidence=0.0,
@@ -72,6 +71,8 @@ def run_ocr(
             crop_region=crop_region,
             source=image,
             normalized_lines=[],
+            attempts=attempt_log["attempts"],
+            outcome="no_backend_result",
         ),
     )
 
@@ -84,6 +85,8 @@ def _result_from_lines(
     roi_label: str | None,
     crop_region: CropRegion | None,
     source: Any,
+    attempts: list[dict[str, Any]],
+    outcome: str,
 ) -> OCRResult:
     lines = _normalize_display_lines(raw_lines)
     return OCRResult(
@@ -95,70 +98,10 @@ def _result_from_lines(
             crop_region=crop_region,
             source=source,
             normalized_lines=[normalize_text(line) for line in lines],
+            attempts=attempts,
+            outcome=outcome,
         ),
     )
-
-
-def _extract_explicit_lines(image: Any, roi_label: str | None) -> list[str] | None:
-    for source in _iter_hint_sources(image):
-        for attr_name in ("ocr_lines_by_roi", "ocr_text_by_roi"):
-            mapping = getattr(source, attr_name, None)
-            if isinstance(mapping, dict) and roi_label in mapping:
-                return _coerce_lines(mapping.get(roi_label))
-
-        for attr_name in _roi_specific_attrs(roi_label):
-            if hasattr(source, attr_name):
-                return _coerce_lines(getattr(source, attr_name))
-
-    return None
-
-
-def _extract_filename_lines(image: Any, roi_label: str | None) -> list[str]:
-    if roi_label not in _TITLE_LIKE_ROIS:
-        return []
-
-    for source in _iter_hint_sources(image):
-        path_value = getattr(source, "path", None)
-        if path_value is None:
-            continue
-
-        path = Path(path_value)
-        title = _title_from_path(path)
-        if title:
-            return [title]
-
-    return []
-
-
-def _title_from_path(path: Path) -> str | None:
-    stem = path.stem.strip()
-    if not stem:
-        return None
-
-    stem = re.sub(r"^[0-9]+[-_ ]+", "", stem)
-    tokens = [token for token in re.split(r"[-_ ]+", stem) if token]
-    if tokens and _looks_generated_suffix(tokens[-1]):
-        tokens = tokens[:-1]
-    if not tokens:
-        return None
-
-    return " ".join(_humanize_token(token) for token in tokens)
-
-
-def _looks_generated_suffix(token: str) -> bool:
-    if len(token) < 6:
-        return False
-    has_alpha = any(character.isalpha() for character in token)
-    has_digit = any(character.isdigit() for character in token)
-    return has_alpha and has_digit
-
-
-def _humanize_token(token: str) -> str:
-    if not token:
-        return token
-    if token.isupper():
-        return token
-    return token[0].upper() + token[1:].lower()
 
 
 def _normalize_display_lines(lines: list[str]) -> list[str]:
@@ -177,68 +120,43 @@ def _normalize_display_lines(lines: list[str]) -> list[str]:
     return normalized
 
 
-def _coerce_lines(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, (list, tuple, set)):
-        return [str(item) for item in value]
-    return [str(value)]
-
-
-def _iter_hint_sources(image: Any) -> list[Any]:
-    sources: list[Any] = []
-    for candidate in (image, getattr(image, "source_image", None)):
-        if candidate is None:
-            continue
-        if any(existing is candidate for existing in sources):
-            continue
-        sources.append(candidate)
-    return sources
-
-
-def _roi_specific_attrs(roi_label: str | None) -> tuple[str, ...]:
-    if roi_label == "type_line":
-        return ("type_line_text", "type_line")
-    if roi_label == "lower_text":
-        return ("lower_text", "oracle_text", "rules_text")
-    if roi_label == "split_left":
-        return ("split_left_text", "left_title", "left_name")
-    if roi_label == "split_right":
-        return ("split_right_text", "right_title", "right_name")
-    if roi_label == "adventure":
-        return ("adventure_title", "adventure_name")
-    if roi_label == "transform_back":
-        return ("transform_back_title", "back_title", "back_name")
-    return ("title_text", "title", "name", "card_name")
-
-
 def _run_paddleocr_backend(
     image: Any,
     *,
     roi_label: str | None,
     crop_region: CropRegion | None,
+    attempt_log: dict[str, Any],
 ) -> OCRResult | None:
     global _PADDLE_OCR_DISABLED_REASON
+    attempt = _begin_backend_attempt(attempt_log, "paddleocr")
     if find_spec("paddleocr") is None:
+        attempt["status"] = "module_missing"
         return None
     if _PADDLE_OCR_DISABLED_REASON is not None:
+        attempt["status"] = "disabled"
+        attempt["reason"] = _PADDLE_OCR_DISABLED_REASON
         return None
 
-    paddle_input = _resolve_paddle_input(image, crop_region)
-    if paddle_input is None:
+    ocr_input = _resolve_ocr_input(image, crop_region)
+    if ocr_input is None:
+        attempt["status"] = "no_input"
         return None
 
     try:
         ocr_engine = _get_paddle_ocr_instance()
-        raw_result = ocr_engine.predict(paddle_input)
+        raw_result = ocr_engine.predict(ocr_input)
         lines, confidences = _extract_paddle_lines(raw_result)
     except Exception as exc:
         _PADDLE_OCR_DISABLED_REASON = f"{type(exc).__name__}: {exc}"
+        attempt["status"] = "error"
+        attempt["reason"] = _PADDLE_OCR_DISABLED_REASON
         return None
 
+    attempt["status"] = "success" if lines else "empty"
+    attempt["line_count"] = len(lines)
     confidence = (sum(confidences) / len(confidences)) if confidences else 0.0
+    attempt["confidence"] = round(confidence, 4)
+    attempt_log["result"] = attempt["status"]
 
     result = _result_from_lines(
         lines,
@@ -247,6 +165,8 @@ def _run_paddleocr_backend(
         roi_label=roi_label,
         crop_region=crop_region,
         source=image,
+        attempts=attempt_log["attempts"],
+        outcome=attempt["status"],
     )
     result.debug["crop_applied"] = crop_region is not None
     return result
@@ -257,24 +177,36 @@ def _run_rapidocr_backend(
     *,
     roi_label: str | None,
     crop_region: CropRegion | None,
+    attempt_log: dict[str, Any],
 ) -> OCRResult | None:
+    attempt = _begin_backend_attempt(attempt_log, "rapidocr")
     if find_spec("rapidocr_onnxruntime") is None:
+        attempt["status"] = "module_missing"
         return None
 
-    ocr_input = _resolve_paddle_input(image, crop_region)
+    ocr_input = _resolve_ocr_input(image, crop_region)
     if ocr_input is None:
+        attempt["status"] = "no_input"
         return None
 
     try:
         ocr_engine = _get_rapidocr_instance()
         raw_result, elapsed = ocr_engine(ocr_input)
-    except Exception:
+    except Exception as exc:
+        attempt["status"] = "error"
+        attempt["reason"] = f"{type(exc).__name__}: {exc}"
         return None
 
     entries = raw_result or []
     lines = [entry[1] for entry in entries if len(entry) > 1 and entry[1]]
     confidences = [float(entry[2]) for entry in entries if len(entry) > 2]
     confidence = (sum(confidences) / len(confidences)) if confidences else 0.0
+
+    attempt["status"] = "success" if lines else "empty"
+    attempt["line_count"] = len(lines)
+    attempt["confidence"] = round(confidence, 4)
+    attempt["timings"] = elapsed
+    attempt_log["result"] = attempt["status"]
 
     result = _result_from_lines(
         lines,
@@ -283,35 +215,36 @@ def _run_rapidocr_backend(
         roi_label=roi_label,
         crop_region=crop_region,
         source=image,
+        attempts=attempt_log["attempts"],
+        outcome=attempt["status"],
     )
     result.debug["crop_applied"] = crop_region is not None
     result.debug["timings"] = elapsed
     return result
 
 
-def _resolve_paddle_input(image: Any, crop_region: CropRegion | None) -> Any | None:
+def _resolve_ocr_input(image: Any, crop_region: CropRegion | None) -> Any | None:
     if crop_region is not None and getattr(crop_region, "image_array", None) is not None:
         return crop_region.image_array
 
-    for source in _iter_hint_sources(image):
+    for source in _iter_sources(image):
         for attr_name in ("image_array", "pixels", "array"):
-            if not hasattr(source, attr_name):
-                continue
-            value = getattr(source, attr_name)
-            if value is None:
-                continue
-            if crop_region is None:
+            value = getattr(source, attr_name, None)
+            if value is not None:
                 return value
 
-            left, top, width, height = crop_region.bbox
-            try:
-                cropped = value[top : top + height, left : left + width]
-            except Exception:
-                cropped = value
-            if cropped is not None:
-                return cropped
-
     return None
+
+
+def _iter_sources(image: Any) -> list[Any]:
+    sources: list[Any] = []
+    for candidate in (image, getattr(image, "source_image", None)):
+        if candidate is None:
+            continue
+        if any(existing is candidate for existing in sources):
+            continue
+        sources.append(candidate)
+    return sources
 
 
 def _get_paddle_ocr_instance() -> Any:
@@ -353,6 +286,36 @@ def _extract_paddle_lines(raw_result: Any) -> tuple[list[str], list[float]]:
     return lines, confidences
 
 
+def _base_attempt_log(*, image: Any, roi_label: str | None, crop_region: CropRegion | None) -> dict[str, Any]:
+    source_path = getattr(image, "path", None) or getattr(getattr(image, "source_image", None), "path", None)
+    return {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "source_path": str(source_path) if source_path else None,
+        "roi_label": roi_label,
+        "crop_label": crop_region.label if crop_region is not None else None,
+        "crop_bbox": crop_region.bbox if crop_region is not None else None,
+        "crop_shape": crop_region.shape if crop_region is not None else None,
+        "has_crop_pixels": bool(crop_region is not None and getattr(crop_region, "image_array", None) is not None),
+        "attempts": [],
+        "result": "pending",
+    }
+
+
+def _begin_backend_attempt(attempt_log: dict[str, Any], backend: str) -> dict[str, Any]:
+    attempt = {"backend": backend, "status": "pending"}
+    attempt_log["attempts"].append(attempt)
+    return attempt
+
+
+def _write_ocr_log(payload: dict[str, Any]) -> None:
+    try:
+        OCR_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with OCR_LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except OSError:
+        return
+
+
 def _build_debug(
     *,
     backend: str,
@@ -360,10 +323,14 @@ def _build_debug(
     crop_region: CropRegion | None,
     source: Any,
     normalized_lines: list[str],
+    attempts: list[dict[str, Any]],
+    outcome: str,
 ) -> dict[str, Any]:
     crop_bbox = crop_region.bbox if crop_region is not None else None
     crop_shape = crop_region.shape if crop_region is not None else None
     source_path = getattr(source, "path", None) if source is not None else None
+    if source_path is None and source is not None:
+        source_path = getattr(getattr(source, "source_image", None), "path", None)
     return {
         "backend": backend,
         "roi_label": roi_label,
@@ -373,4 +340,7 @@ def _build_debug(
         "normalized_lines": normalized_lines,
         "source_path": str(source_path) if source_path else None,
         "paddle_disabled_reason": _PADDLE_OCR_DISABLED_REASON,
+        "attempts": attempts,
+        "outcome": outcome,
+        "log_path": str(OCR_LOG_PATH),
     }

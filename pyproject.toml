@@ -10,6 +10,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.scripts]
+card-ui = "card_engine.ui.app:main"
+
 [project.optional-dependencies]
 ocr = [
   "paddleocr>=2.7",
