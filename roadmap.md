@@ -517,7 +517,7 @@ What is effectively done today:
 Recommended next step:
 
 - Finish **Milestone 5: OCR MVP** by validating PaddleOCR on real cropped image inputs instead of simulated hints alone.
-- After that, move deeper into **Milestone 6: Matching and Scoring MVP** so multi-ROI OCR output drives reranking and confidence instead of title-only fallback behavior.
+- Continue **Milestone 6: Matching and Scoring MVP** with fixture-driven tuning, especially improving tie-breaking from OCR noise and validating confidence on a curated card set.
 
 ### Implementation Sequencing Adjustment
 
@@ -677,10 +677,10 @@ Recommended early implementation order:
 **Status**
 
 - [x] Exact and fuzzy title matching.
-- [ ] Layout-aware reranking.
-- [ ] Support for additional OCR properties besides collector number.
+- [x] Layout-aware reranking.
+- [x] Support for additional OCR properties besides collector number.
 - [x] Top-k ranking.
-- [ ] Confidence calculation.
+- [x] Confidence calculation.
 
 **Deliverables**
 

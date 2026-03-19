@@ -14,10 +14,12 @@ from .scorer import score_candidates
 from .utils.image_io import load_image
 
 
-def recognize_card(image: Any) -> RecognitionResult:
+def recognize_card(image: Any, *, progress_callback=None) -> RecognitionResult:
+    _notify(progress_callback, "Preparing image input...")
     prepared_image = _prepare_image_input(image)
     config = EngineConfig()
     catalog = _load_catalog(config.catalog_path)
+    _notify(progress_callback, "Detecting card bounds...")
     detection = detect_card(prepared_image)
     layout_hint = getattr(prepared_image, "layout_hint", getattr(prepared_image, "layout", "normal"))
     tried_rois = resolve_roi_groups_for_layout(
@@ -25,21 +27,42 @@ def recognize_card(image: Any) -> RecognitionResult:
         enabled_groups=config.enabled_roi_groups,
         cycle_order=config.roi_cycle_order,
     )
+    _notify(progress_callback, "Normalizing card image...")
     normalized = normalize_card(prepared_image, detection.bbox, quad=detection.quad, roi_groups=tried_rois)
 
-    ocr_results = [
-        run_ocr(
-            normalized.normalized_image,
-            roi_label=roi_group,
-            crop_region=_first_crop_for_group(normalized.crops, roi_group),
+    ocr_results = []
+    for roi_group in tried_rois:
+        _notify(progress_callback, f"Running OCR for ROI: {roi_group}...")
+        ocr_results.append(
+            run_ocr(
+                normalized.normalized_image,
+                roi_label=roi_group,
+                crop_region=_first_crop_for_group(normalized.crops, roi_group),
+            )
         )
-        for roi_group in tried_rois
-    ]
+    results_by_roi = {
+        roi_group: {
+            "line_count": len(result.lines),
+            "lines": result.lines,
+            "confidence": result.confidence,
+            "debug": result.debug,
+        }
+        for roi_group, result in zip(tried_rois, ocr_results)
+    }
     active_index = next((index for index, result in enumerate(ocr_results) if result.lines), 0)
     active_roi = tried_rois[active_index] if tried_rois else None
     ocr = ocr_results[active_index] if ocr_results else run_ocr(normalized.normalized_image, roi_label=None)
-    candidates = match_candidates(ocr.lines, limit=config.candidate_count, catalog=catalog)
+    _notify(progress_callback, "Matching OCR text against catalog...")
+    candidates = match_candidates(
+        ocr.lines,
+        limit=config.candidate_count,
+        catalog=catalog,
+        results_by_roi=results_by_roi,
+        layout_hint=layout_hint,
+    )
+    _notify(progress_callback, "Scoring candidates...")
     best_name, confidence = score_candidates(candidates)
+    _notify(progress_callback, f"Recognition complete: {best_name or 'no match'}")
 
     return RecognitionResult(
         bbox=detection.bbox,
@@ -61,15 +84,7 @@ def recognize_card(image: Any) -> RecognitionResult:
             },
             "ocr": {
                 "active_roi": active_roi,
-                "results_by_roi": {
-                    roi_group: {
-                        "line_count": len(result.lines),
-                        "lines": result.lines,
-                        "confidence": result.confidence,
-                        "debug": result.debug,
-                    }
-                    for roi_group, result in zip(tried_rois, ocr_results)
-                },
+                "results_by_roi": results_by_roi,
                 **ocr.debug,
             },
         },
@@ -93,3 +108,8 @@ def _first_crop_for_group(crops: dict[str, Any], group_name: str):
 @lru_cache(maxsize=4)
 def _load_catalog(db_path: str) -> LocalCatalogIndex:
     return LocalCatalogIndex.from_sqlite(db_path)
+
+
+def _notify(callback, message: str) -> None:
+    if callback is not None:
+        callback(message)

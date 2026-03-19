@@ -7,6 +7,8 @@ from pathlib import Path
 
 from card_engine.utils.text_normalize import normalize_text
 
+CATALOG_SCHEMA_VERSION = "2"
+
 
 @dataclass(frozen=True)
 class CatalogBuildStats:
@@ -41,9 +43,11 @@ def build_catalog(db_path: str, source_path: str) -> CatalogBuildStats:
                 collector_number,
                 language,
                 layout,
-                type_line
+                type_line,
+                oracle_text,
+                flavor_text
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             cards,
         )
@@ -66,9 +70,10 @@ def build_catalog(db_path: str, source_path: str) -> CatalogBuildStats:
             VALUES
                 ('source_path', ?),
                 ('card_count', ?),
-                ('alias_count', ?)
+                ('alias_count', ?),
+                ('schema_version', ?)
             """,
-            (str(source), str(len(cards)), str(len(aliases))),
+            (str(source), str(len(cards)), str(len(aliases)), CATALOG_SCHEMA_VERSION),
         )
         conn.commit()
     finally:
@@ -83,12 +88,12 @@ def build_catalog(db_path: str, source_path: str) -> CatalogBuildStats:
     )
 
 
-def _load_catalog_rows(source_path: Path) -> tuple[list[tuple[str, str | None, str, str, str | None, str | None, str, str | None, str | None]], list[tuple[str, str, str]]]:
+def _load_catalog_rows(source_path: Path) -> tuple[list[tuple[str, str | None, str, str, str | None, str | None, str, str | None, str | None, str | None, str | None]], list[tuple[str, str, str]]]:
     raw_cards = json.loads(source_path.read_text(encoding="utf-8"))
     if not isinstance(raw_cards, list):
         raise ValueError("Catalog source JSON must contain a top-level list")
 
-    cards: list[tuple[str, str | None, str, str, str | None, str | None, str, str | None, str | None]] = []
+    cards: list[tuple[str, str | None, str, str, str | None, str | None, str, str | None, str | None, str | None, str | None]] = []
     aliases: list[tuple[str, str, str]] = []
 
     for card in raw_cards:
@@ -116,6 +121,8 @@ def _load_catalog_rows(source_path: Path) -> tuple[list[tuple[str, str | None, s
                 "en",
                 _clean_optional(card.get("layout")),
                 _clean_optional(card.get("type_line")),
+                _clean_optional(card.get("oracle_text")),
+                _clean_optional(card.get("flavor_text")),
             )
         )
 
@@ -161,7 +168,9 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             collector_number TEXT,
             language TEXT DEFAULT 'en',
             layout TEXT,
-            type_line TEXT
+            type_line TEXT,
+            oracle_text TEXT,
+            flavor_text TEXT
         );
 
         CREATE TABLE aliases (

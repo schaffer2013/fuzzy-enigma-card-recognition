@@ -10,6 +10,10 @@ from urllib.request import Request, urlopen
 
 SCRYFALL_BULK_DATA_URL = "https://api.scryfall.com/bulk-data/default-cards"
 USER_AGENT = "card-recognition-engine/0.1.0"
+REQUEST_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "application/json;q=0.9,*/*;q=0.8",
+}
 
 
 def sync_bulk_data(output_path: str) -> Path:
@@ -133,7 +137,7 @@ def _extract_card_value(card, key: str, default=None):
 
 
 def _download_to_path(image_url: str, output_path: Path) -> None:
-    request = Request(image_url, headers={"User-Agent": USER_AGENT})
+    request = Request(image_url, headers=REQUEST_HEADERS)
     with urlopen(request) as response:
         output_path.write_bytes(response.read())
 
@@ -188,7 +192,7 @@ def _face_roi_mapping(face_payload: list, layout: str | None) -> dict[str, str]:
 
 
 def _fetch_json(url: str) -> dict:
-    request = Request(url, headers={"User-Agent": USER_AGENT})
+    request = Request(url, headers=REQUEST_HEADERS)
     with urlopen(request) as response:
         payload = json.loads(response.read().decode("utf-8"))
 

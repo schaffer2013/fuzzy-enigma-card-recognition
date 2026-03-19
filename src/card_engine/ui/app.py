@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from card_engine.api import recognize_card
+from card_engine.catalog.maintenance import catalog_refresh_needed, ensure_catalog_ready
 from card_engine.catalog.scryfall_sync import fetch_random_card_image
 from card_engine.roi import DEFAULT_ENABLED_ROI_GROUPS, roi_group_bboxes
 from card_engine.utils.geometry import Quad, quad_from_bbox
@@ -59,6 +60,62 @@ class DragTarget:
     label: str | None = None
 
 
+class OperationSplash:
+    def __init__(self, root: tk.Tk, *, title: str, initial_message: str):
+        self.root = root
+        self.window = tk.Toplevel(root)
+        self.window.title(title)
+        self.window.transient(root)
+        self.window.resizable(False, False)
+        self.window.attributes("-topmost", True)
+        self.window.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        frame = ttk.Frame(self.window, padding=18)
+        frame.grid(row=0, column=0, sticky="nsew")
+        frame.columnconfigure(0, weight=1)
+
+        self.message_var = tk.StringVar(value=initial_message)
+        ttk.Label(frame, text=title, font=("TkDefaultFont", 12, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(frame, textvariable=self.message_var, wraplength=360, justify="left").grid(
+            row=1,
+            column=0,
+            sticky="w",
+            pady=(10, 10),
+        )
+
+        self.log_text = tk.Text(frame, height=8, width=52, state="disabled", wrap="word")
+        self.log_text.grid(row=2, column=0, sticky="nsew")
+        self.update(initial_message)
+
+        self.window.update_idletasks()
+        self._center_on_root()
+
+    def update(self, message: str) -> None:
+        self.message_var.set(message)
+        self.log_text.configure(state="normal")
+        self.log_text.insert("end", f"{message}\n")
+        self.log_text.see("end")
+        self.log_text.configure(state="disabled")
+        self.window.update_idletasks()
+        self.root.update_idletasks()
+
+    def close(self) -> None:
+        self.window.destroy()
+        self.root.update_idletasks()
+
+    def _center_on_root(self) -> None:
+        self.root.update_idletasks()
+        root_x = self.root.winfo_rootx()
+        root_y = self.root.winfo_rooty()
+        root_w = max(self.root.winfo_width(), 800)
+        root_h = max(self.root.winfo_height(), 600)
+        window_w = self.window.winfo_width()
+        window_h = self.window.winfo_height()
+        x = root_x + max(0, (root_w - window_w) // 2)
+        y = root_y + max(0, (root_h - window_h) // 2)
+        self.window.geometry(f"+{x}+{y}")
+
+
 class CardEngineDebugUI:
     def __init__(self, fixtures_dir: str | None = None):
         self.fixtures_dir = fixtures_dir or _default_fixtures_dir()
@@ -78,6 +135,7 @@ class CardEngineDebugUI:
 
         self._build_layout()
         self._bind_shortcuts()
+        self._ensure_catalog()
         self._refresh()
 
     def _build_layout(self) -> None:
@@ -271,13 +329,23 @@ class CardEngineDebugUI:
             self.state.status_message = f"Failed to load image metadata for {fixture_path.name}."
             return
 
+        splash = OperationSplash(
+            self.root,
+            title="Recognizing Card",
+            initial_message=f"Preparing recognition for {fixture_path.name}...",
+        )
         try:
-            self.state.recognition_result = recognize_card(self._build_recognition_input())
+            self.state.recognition_result = recognize_card(
+                self._build_recognition_input(),
+                progress_callback=splash.update,
+            )
         except Exception as exc:
             self.state.recognition_result = None
             self.state.status_message = f"Recognition failed for {fixture_path.name}: {exc}"
         else:
             self.state.status_message = f"Recognition refreshed for {fixture_path.name}."
+        finally:
+            splash.close()
 
         self.state.preview_message = "Preview ready."
 
@@ -605,6 +673,41 @@ class CardEngineDebugUI:
             manual_roi_overrides=self.state.manual_roi_overrides,
         )
 
+    def _ensure_catalog(self) -> None:
+        needs_refresh, age_days = catalog_refresh_needed(db_path=_default_catalog_path())
+        if not needs_refresh:
+            self.state.status_message = (
+                f"Catalog ready ({age_days:.1f} days old)." if age_days is not None else "Catalog ready."
+            )
+            return
+
+        splash = OperationSplash(
+            self.root,
+            title="Updating Catalog",
+            initial_message="Checking local card catalog...",
+        )
+        try:
+            status = ensure_catalog_ready(
+                db_path=_default_catalog_path(),
+                source_json_path=_default_catalog_source_path(),
+                max_age_days=7,
+                progress_callback=splash.update,
+            )
+        except Exception as exc:
+            self.state.status_message = f"Catalog refresh failed: {exc}"
+            return
+        finally:
+            splash.close()
+
+        if status.refreshed:
+            self.state.status_message = (
+                f"Catalog refreshed ({status.build_stats.card_count} cards)." if status.build_stats else "Catalog refreshed."
+            )
+        else:
+            self.state.status_message = (
+                f"Catalog reused ({status.age_days:.1f} days old)." if status.age_days is not None else "Catalog reused."
+            )
+
     def _on_close(self) -> None:
         self._save_overrides()
         self.root.destroy()
@@ -615,6 +718,14 @@ class CardEngineDebugUI:
 
 def _default_fixtures_dir() -> str:
     return str(Path("data") / "fixtures")
+
+
+def _default_catalog_path() -> str:
+    return str(Path("data") / "catalog" / "cards.sqlite3")
+
+
+def _default_catalog_source_path() -> str:
+    return str(Path("data") / "catalog" / "default-cards.json")
 
 
 def _default_random_cache_dir() -> str:

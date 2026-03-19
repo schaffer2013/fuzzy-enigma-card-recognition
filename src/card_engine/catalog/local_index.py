@@ -13,6 +13,9 @@ class CatalogRecord:
     set_code: str | None = None
     collector_number: str | None = None
     layout: str | None = None
+    type_line: str | None = None
+    oracle_text: str | None = None
+    flavor_text: str | None = None
     aliases: list[str] | None = None
 
 
@@ -32,6 +35,9 @@ class LocalCatalogIndex:
                 set_code=record.set_code,
                 collector_number=record.collector_number,
                 layout=record.layout,
+                type_line=record.type_line.strip() if record.type_line else None,
+                oracle_text=record.oracle_text.strip() if record.oracle_text else None,
+                flavor_text=record.flavor_text.strip() if record.flavor_text else None,
                 aliases=sorted({alias.strip() for alias in (record.aliases or []) if alias and alias.strip()}),
             )
             for record in records
@@ -55,14 +61,24 @@ class LocalCatalogIndex:
             return cls([])
 
         with sqlite3.connect(path) as conn:
+            columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(cards)").fetchall()
+            }
+            type_line_select = "cards.type_line" if "type_line" in columns else "NULL"
+            oracle_text_select = "cards.oracle_text" if "oracle_text" in columns else "NULL"
+            flavor_text_select = "cards.flavor_text" if "flavor_text" in columns else "NULL"
             rows = conn.execute(
-                """
+                f"""
                 SELECT
                     cards.name,
                     cards.normalized_name,
                     cards.set_code,
                     cards.collector_number,
                     cards.layout,
+                    {type_line_select},
+                    {oracle_text_select},
+                    {flavor_text_select},
                     GROUP_CONCAT(aliases.alias, '\u001f') AS aliases
                 FROM cards
                 LEFT JOIN aliases ON aliases.card_id = cards.id
@@ -72,7 +88,10 @@ class LocalCatalogIndex:
                     cards.normalized_name,
                     cards.set_code,
                     cards.collector_number,
-                    cards.layout
+                    cards.layout,
+                    {type_line_select},
+                    {oracle_text_select},
+                    {flavor_text_select}
                 """
             ).fetchall()
 
@@ -84,9 +103,12 @@ class LocalCatalogIndex:
                     set_code=set_code,
                     collector_number=collector_number,
                     layout=layout,
+                    type_line=type_line,
+                    oracle_text=oracle_text,
+                    flavor_text=flavor_text,
                     aliases=aliases.split("\u001f") if aliases else [],
                 )
-                for name, normalized_name, set_code, collector_number, layout, aliases in rows
+                for name, normalized_name, set_code, collector_number, layout, type_line, oracle_text, flavor_text, aliases in rows
             ]
         )
 

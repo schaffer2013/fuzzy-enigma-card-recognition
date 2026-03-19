@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy
 
 from card_engine.api import recognize_card
+from card_engine.catalog.local_index import CatalogRecord, LocalCatalogIndex
 from card_engine.ocr import OCRResult
 from card_engine.ui.app import EditableLoadedImage
 
@@ -153,6 +154,59 @@ def test_recognize_card_preserves_pixels_for_ui_editable_images(monkeypatch, tmp
 
     assert seen_roi_labels == ["standard", "type_line", "lower_text"]
     assert result.debug["ocr"]["results_by_roi"]["standard"]["debug"]["backend"] == "fake"
+
+
+def test_recognize_card_uses_multi_roi_matching_for_catalog_ranking(monkeypatch):
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        lines_by_roi = {
+            "standard": ["Opt"],
+            "type_line": ["Instant"],
+            "lower_text": [],
+        }
+        return OCRResult(
+            lines=lines_by_roi.get(roi_label, []),
+            confidence=0.9,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Opt", normalized_name="", set_code="XLN", type_line="Instant", layout="normal"),
+            CatalogRecord(name="Opt", normalized_name="", set_code="ALT", type_line="Sorcery", layout="normal"),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+
+    result = recognize_card(DummyImage())
+
+    assert result.best_name == "Opt"
+    assert result.top_k_candidates[0].set_code == "XLN"
+    assert "type_line_match" in (result.top_k_candidates[0].notes or [])
+    assert 0.0 <= result.confidence <= 1.0
+    assert result.confidence >= result.top_k_candidates[0].score
+
+
+def test_recognize_card_reports_progress(monkeypatch):
+    messages: list[str] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        return OCRResult(
+            lines=[],
+            confidence=0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+        )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+
+    recognize_card(DummyImage(), progress_callback=messages.append)
+
+    assert messages[0] == "Preparing image input..."
+    assert "Detecting card bounds..." in messages
+    assert "Normalizing card image..." in messages
+    assert "Running OCR for ROI: standard..." in messages
+    assert messages[-1].startswith("Recognition complete:")
 
 
 def _minimal_png(*, width: int, height: int) -> bytes:
