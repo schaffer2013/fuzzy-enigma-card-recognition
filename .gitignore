@@ -212,3 +212,5 @@ __marimo__/
 tests/*
 *.jpg
 
+data/cache/*
+.pytest*

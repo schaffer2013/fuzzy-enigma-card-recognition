@@ -11,6 +11,10 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
+ocr = [
+  "paddleocr>=2.7",
+  "rapidocr-onnxruntime>=1.4",
+]
 ui = [
   "scrython>=2.0",
 ]

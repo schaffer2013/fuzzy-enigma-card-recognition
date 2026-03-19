@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+RelativeROI = tuple[float, float, float, float]
+
 
 @dataclass(frozen=True)
 class ROI:
@@ -14,6 +16,7 @@ class ROI:
 
 ROI_PRESETS: dict[str, list[ROI]] = {
     "standard": [ROI("title_band", 0.08, 0.05, 0.84, 0.12)],
+    "type_line": [ROI("type_line", 0.08, 0.19, 0.84, 0.08)],
     "lower_text": [ROI("lower_text", 0.08, 0.75, 0.84, 0.18)],
     "split_left": [ROI("left_panel_title", 0.05, 0.08, 0.4, 0.12)],
     "split_right": [ROI("right_panel_title", 0.55, 0.08, 0.4, 0.12)],
@@ -21,14 +24,14 @@ ROI_PRESETS: dict[str, list[ROI]] = {
     "transform_back": [ROI("back_title", 0.08, 0.08, 0.84, 0.12)],
 }
 
-DEFAULT_ENABLED_ROI_GROUPS = ["standard", "lower_text"]
-DEFAULT_ROI_CYCLE_ORDER = ["standard", "lower_text", "split_left", "split_right", "adventure", "transform_back"]
+DEFAULT_ENABLED_ROI_GROUPS = ["standard", "type_line", "lower_text"]
+DEFAULT_ROI_CYCLE_ORDER = ["standard", "type_line", "lower_text", "split_left", "split_right", "adventure", "transform_back"]
 LAYOUT_TO_ROI_GROUPS: dict[str, list[str]] = {
-    "normal": ["standard", "lower_text"],
-    "split": ["split_left", "split_right", "lower_text"],
-    "adventure": ["standard", "adventure", "lower_text"],
-    "transform": ["standard", "transform_back", "lower_text"],
-    "modal_dfc": ["standard", "transform_back", "lower_text"],
+    "normal": ["standard", "type_line", "lower_text"],
+    "split": ["split_left", "split_right", "type_line", "lower_text"],
+    "adventure": ["standard", "type_line", "adventure", "lower_text"],
+    "transform": ["standard", "type_line", "transform_back", "lower_text"],
+    "modal_dfc": ["standard", "type_line", "transform_back", "lower_text"],
 }
 
 
@@ -59,9 +62,11 @@ def resolve_roi_groups_for_layout(
 def roi_group_bboxes(
     card_bbox: tuple[int, int, int, int],
     group_name: str,
+    *,
+    overrides: dict[str, RelativeROI] | None = None,
 ) -> list[tuple[str, tuple[int, int, int, int]]]:
     left, top, width, height = card_bbox
-    rois = ROI_PRESETS.get(group_name, [])
+    rois = resolved_group_rois(group_name, overrides=overrides)
     bboxes: list[tuple[str, tuple[int, int, int, int]]] = []
     for roi in rois:
         roi_left = left + int(round(width * roi.x))
@@ -75,5 +80,23 @@ def roi_group_bboxes(
 def grouped_roi_bboxes(
     card_bbox: tuple[int, int, int, int],
     group_names: list[str],
+    *,
+    overrides: dict[str, dict[str, RelativeROI]] | None = None,
 ) -> dict[str, list[tuple[str, tuple[int, int, int, int]]]]:
-    return {group_name: roi_group_bboxes(card_bbox, group_name) for group_name in group_names if group_name in ROI_PRESETS}
+    return {
+        group_name: roi_group_bboxes(card_bbox, group_name, overrides=(overrides or {}).get(group_name))
+        for group_name in group_names
+        if group_name in ROI_PRESETS
+    }
+
+
+def resolved_group_rois(
+    group_name: str,
+    *,
+    overrides: dict[str, RelativeROI] | None = None,
+) -> list[ROI]:
+    base_rois = ROI_PRESETS.get(group_name, [])
+    merged: dict[str, ROI] = {roi.label: roi for roi in base_rois}
+    for label, values in (overrides or {}).items():
+        merged[label] = ROI(label, *values)
+    return list(merged.values())

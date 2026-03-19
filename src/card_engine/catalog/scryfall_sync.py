@@ -49,6 +49,10 @@ def fetch_random_card_image(
     filename = f"{_slugify(card_name)}-{str(card_id)[:8]}{suffix}"
     output_path = output_root / filename
     downloader(image_url, output_path)
+    output_path.with_suffix(".json").write_text(
+        json.dumps(_build_fixture_sidecar(card), indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
     return output_path
 
 
@@ -132,6 +136,55 @@ def _download_to_path(image_url: str, output_path: Path) -> None:
     request = Request(image_url, headers={"User-Agent": USER_AGENT})
     with urlopen(request) as response:
         output_path.write_bytes(response.read())
+
+
+def _build_fixture_sidecar(card) -> dict:
+    card_name = _extract_card_value(card, "name", default="")
+    type_line = _extract_card_value(card, "type_line", default="")
+    oracle_text = _extract_card_value(card, "oracle_text", default="")
+    layout = _extract_card_value(card, "layout", default="normal")
+    face_payload = _extract_card_value(card, "card_faces", default=[])
+
+    ocr_text_by_roi: dict[str, str] = {}
+    if card_name:
+        ocr_text_by_roi["standard"] = card_name
+    if type_line:
+        ocr_text_by_roi["type_line"] = type_line
+    if oracle_text:
+        ocr_text_by_roi["lower_text"] = oracle_text
+
+    if isinstance(face_payload, list):
+        ocr_text_by_roi.update(_face_roi_mapping(face_payload, layout))
+
+    return {
+        "layout_hint": layout,
+        "ocr_text_by_roi": ocr_text_by_roi,
+    }
+
+
+def _face_roi_mapping(face_payload: list, layout: str | None) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    faces = [face for face in face_payload if isinstance(face, dict)]
+    if not faces:
+        return mapping
+
+    normalized_layout = (layout or "").lower()
+    if normalized_layout == "split":
+        if len(faces) > 0 and faces[0].get("name"):
+            mapping["split_left"] = faces[0]["name"]
+        if len(faces) > 1 and faces[1].get("name"):
+            mapping["split_right"] = faces[1]["name"]
+        return mapping
+
+    if normalized_layout == "adventure" and len(faces) > 1 and faces[1].get("name"):
+        mapping["adventure"] = faces[1]["name"]
+        return mapping
+
+    if normalized_layout in {"transform", "modal_dfc"} and len(faces) > 1 and faces[1].get("name"):
+        mapping["transform_back"] = faces[1]["name"]
+        return mapping
+
+    return mapping
 
 
 def _fetch_json(url: str) -> dict:

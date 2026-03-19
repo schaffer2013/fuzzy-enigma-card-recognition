@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import json
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
+import cv2
+import numpy
 
 
 @dataclass(frozen=True)
@@ -11,6 +16,9 @@ class LoadedImage:
     image_format: str
     width: int
     height: int
+    layout_hint: str | None = None
+    ocr_text_by_roi: dict[str, Any] = field(default_factory=dict)
+    image_array: Any | None = None
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -21,7 +29,16 @@ def load_image(path: str | Path) -> LoadedImage:
     image_path = Path(path)
     data = image_path.read_bytes()
     image_format, width, height = _read_image_metadata(data)
-    return LoadedImage(path=image_path, image_format=image_format, width=width, height=height)
+    metadata = _read_sidecar_metadata(image_path)
+    return LoadedImage(
+        path=image_path,
+        image_format=image_format,
+        width=width,
+        height=height,
+        layout_hint=_coerce_optional_string(metadata.get("layout_hint")),
+        ocr_text_by_roi=_coerce_roi_mapping(metadata.get("ocr_text_by_roi")),
+        image_array=_decode_image_array(data),
+    )
 
 
 def _read_image_metadata(data: bytes) -> tuple[str, int, int]:
@@ -93,3 +110,35 @@ def _read_jpeg_metadata(data: bytes) -> tuple[str, int, int]:
         index += segment_length
 
     raise ValueError("Unsupported or malformed JPEG image")
+
+
+def _read_sidecar_metadata(image_path: Path) -> dict[str, Any]:
+    sidecar_path = image_path.with_suffix(".json")
+    if not sidecar_path.exists():
+        return {}
+
+    try:
+        payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    return payload if isinstance(payload, dict) else {}
+
+
+def _coerce_optional_string(value: Any) -> str | None:
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _coerce_roi_mapping(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): item for key, item in value.items()}
+
+
+def _decode_image_array(data: bytes) -> Any | None:
+    try:
+        buffer = numpy.frombuffer(data, dtype=numpy.uint8)
+        decoded = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+    except Exception:
+        return None
+    return decoded

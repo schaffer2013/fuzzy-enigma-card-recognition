@@ -66,6 +66,10 @@ def format_fixture_summary(state: UIState) -> str:
             [
                 f"Format: {state.current_image.image_format}",
                 f"Dimensions: {state.current_image.width} x {state.current_image.height}",
+                (
+                    "OCR metadata: "
+                    + (", ".join(sorted(state.current_image.ocr_text_by_roi)) if state.current_image.ocr_text_by_roi else "none")
+                ),
             ]
         )
 
@@ -104,6 +108,18 @@ def format_recognition_summary(result: RecognitionResult | None) -> str:
         lines.append(f"OCR: {' | '.join(result.ocr_lines)}")
     else:
         lines.append("OCR: No text detected.")
+
+    roi_results = result.debug.get("ocr", {}).get("results_by_roi", {})
+    if roi_results:
+        lines.append("")
+        lines.append("OCR by ROI:")
+        for roi_name in result.tried_rois:
+            roi_result = roi_results.get(roi_name, {})
+            roi_lines = roi_result.get("lines", [])
+            roi_confidence = roi_result.get("confidence", 0.0)
+            roi_text = " | ".join(roi_lines) if roi_lines else "No text"
+            backend = roi_result.get("debug", {}).get("backend", "unknown")
+            lines.append(f"  - {roi_name}: {roi_text} (confidence={roi_confidence:.2f}; backend={backend})")
 
     lines.append("")
     lines.append("Candidates:")

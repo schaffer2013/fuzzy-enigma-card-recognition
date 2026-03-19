@@ -508,7 +508,7 @@ What is effectively done today:
 - [x] Milestone 2 is complete.
 - [x] Milestone 3 is complete.
 - [x] Milestone 4 is complete.
-- [ ] Milestone 5 has not started beyond placeholders.
+- [ ] Milestone 5 is partially complete.
 - [ ] Milestone 6 is partially complete.
 - [ ] Milestone 7 is partially complete.
 - [ ] Milestone 8 is partially complete.
@@ -516,8 +516,8 @@ What is effectively done today:
 
 Recommended next step:
 
-- Start **Milestone 5: OCR MVP**, especially title-region OCR, alternate-ROI OCR passes, and OCR result normalization.
-- After that, move into **Milestone 6: Matching and Scoring MVP** so real OCR output drives ranking instead of placeholder empty text.
+- Finish **Milestone 5: OCR MVP** by validating PaddleOCR on real cropped image inputs instead of simulated hints alone.
+- After that, move deeper into **Milestone 6: Matching and Scoring MVP** so multi-ROI OCR output drives reranking and confidence instead of title-only fallback behavior.
 
 ### Implementation Sequencing Adjustment
 
@@ -653,10 +653,10 @@ Recommended early implementation order:
 **Status**
 
 - [ ] PaddleOCR integration.
-- [ ] Title-region OCR.
-- [ ] Alternate-ROI OCR.
-- [ ] OCR result normalization.
-- [ ] Debug overlays for OCR regions.
+- [x] Title-region OCR.
+- [x] Alternate-ROI OCR.
+- [x] OCR result normalization.
+- [x] Debug overlays for OCR regions.
 
 **Deliverables**
 

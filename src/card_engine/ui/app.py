@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import math
 from pathlib import Path
 import tkinter as tk
@@ -9,8 +10,19 @@ from tkinter import ttk
 from card_engine.api import recognize_card
 from card_engine.catalog.scryfall_sync import fetch_random_card_image
 from card_engine.roi import DEFAULT_ENABLED_ROI_GROUPS, roi_group_bboxes
+from card_engine.utils.geometry import Quad, quad_from_bbox
 from card_engine.utils.image_io import load_image
 
+from .interaction import (
+    PreviewTransform,
+    bbox_corners,
+    canvas_to_source_point,
+    relative_roi_from_bboxes,
+    source_to_canvas_point,
+    update_bbox_corner_axis_aligned,
+    update_quad_corner,
+)
+from .persistence import load_ui_overrides, save_ui_overrides
 from .state import UIState, cycle_active_roi, cycle_fixture_index
 from .views import (
     discover_fixture_paths,
@@ -24,15 +36,43 @@ from .widgets import make_panel, make_readonly_text, set_readonly_text
 DEFAULT_ROIS = list(DEFAULT_ENABLED_ROI_GROUPS)
 
 
+@dataclass(frozen=True)
+class EditableLoadedImage:
+    path: Path
+    image_format: str
+    width: int
+    height: int
+    card_quad: Quad | None
+    roi_overrides: dict[str, dict[str, tuple[float, float, float, float]]]
+
+    @property
+    def shape(self) -> tuple[int, int, int]:
+        return (self.height, self.width, 3)
+
+
+@dataclass(frozen=True)
+class DragTarget:
+    kind: str
+    corner_index: int
+    label: str | None = None
+
+
 class CardEngineDebugUI:
     def __init__(self, fixtures_dir: str | None = None):
         self.fixtures_dir = fixtures_dir or _default_fixtures_dir()
+        self._overrides_path = _default_overrides_path()
         self.state = UIState()
         self.state.fixture_paths = discover_fixture_paths(self.fixtures_dir)
+        manual_quads, manual_roi_overrides = load_ui_overrides(self._overrides_path)
+        self.state.manual_quads = manual_quads
+        self.state.manual_roi_overrides = manual_roi_overrides
         self.preview_image: tk.PhotoImage | None = None
+        self.preview_transform: PreviewTransform | None = None
+        self.active_drag_target: DragTarget | None = None
         self.root = tk.Tk()
         self.root.title("Card Engine Debug UI")
         self.root.minsize(1180, 720)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._build_layout()
         self._bind_shortcuts()
@@ -46,18 +86,20 @@ class CardEngineDebugUI:
 
         toolbar = ttk.Frame(self.root, padding=(12, 12, 12, 0))
         toolbar.grid(row=0, column=0, columnspan=3, sticky="ew")
-        for column in range(8):
-            toolbar.columnconfigure(column, weight=1 if column == 7 else 0)
+        for column in range(10):
+            toolbar.columnconfigure(column, weight=1 if column == 9 else 0)
 
         ttk.Button(toolbar, text="Prev", command=self._select_previous_fixture).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(toolbar, text="Next", command=self._select_next_fixture).grid(row=0, column=1, padx=(0, 8))
         ttk.Button(toolbar, text="Cycle ROI", command=self._cycle_roi).grid(row=0, column=2, padx=(0, 8))
         ttk.Button(toolbar, text="Toggle BBox", command=self._toggle_bbox).grid(row=0, column=3, padx=(0, 8))
-        ttk.Button(toolbar, text="Refresh", command=self._refresh_fixture_list).grid(row=0, column=4)
+        ttk.Button(toolbar, text="Refresh", command=self._refresh_fixture_list).grid(row=0, column=4, padx=(0, 8))
         ttk.Button(toolbar, text="Random Card", command=self._fetch_random_card).grid(row=0, column=5, padx=(0, 8))
+        ttk.Button(toolbar, text="Reset BBox", command=self._reset_manual_bbox).grid(row=0, column=6, padx=(0, 8))
+        ttk.Button(toolbar, text="Reset ROI", command=self._reset_manual_roi).grid(row=0, column=7, padx=(0, 8))
 
         self.fixture_count_var = tk.StringVar(value="0 fixtures")
-        ttk.Label(toolbar, textvariable=self.fixture_count_var).grid(row=0, column=7, sticky="e")
+        ttk.Label(toolbar, textvariable=self.fixture_count_var).grid(row=0, column=9, sticky="e")
 
         fixture_panel = make_panel(self.root, "Fixtures")
         fixture_panel.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=12)
@@ -71,6 +113,10 @@ class CardEngineDebugUI:
         self.preview_canvas = tk.Canvas(preview_panel, background="#1f2328", highlightthickness=0)
         self.preview_canvas.grid(row=0, column=0, sticky="nsew")
         self.preview_canvas.bind("<Configure>", lambda _event: self._refresh_preview())
+        self.preview_canvas.bind("<Button-1>", self._on_preview_press)
+        self.preview_canvas.bind("<B1-Motion>", self._on_preview_drag)
+        self.preview_canvas.bind("<ButtonRelease-1>", self._on_preview_release)
+        self.preview_canvas.bind("<Motion>", self._on_preview_motion)
 
         sidebar = ttk.Frame(self.root)
         sidebar.grid(row=1, column=2, sticky="nsew", padx=(6, 12), pady=12)
@@ -99,7 +145,7 @@ class CardEngineDebugUI:
         footer.columnconfigure(0, weight=1)
 
         self.footer_var = tk.StringVar(
-            value="Use Left/Right to browse fixtures, R to cycle ROI, B to toggle bbox, or Random Card to fetch one."
+            value="Use Left/Right to browse fixtures, drag green corners for bbox, and orange corners for ROI."
         )
         ttk.Label(footer, textvariable=self.footer_var).grid(row=0, column=0, sticky="w")
 
@@ -108,6 +154,7 @@ class CardEngineDebugUI:
         self.root.bind("<Right>", lambda _event: self._select_next_fixture())
         self.root.bind("<Key-r>", lambda _event: self._cycle_roi())
         self.root.bind("<Key-b>", lambda _event: self._toggle_bbox())
+        self.root.bind("<Escape>", lambda _event: self._reset_manual_bbox())
 
     def _refresh_fixture_list(self) -> None:
         self.state.fixture_paths = discover_fixture_paths(self.fixtures_dir)
@@ -165,6 +212,23 @@ class CardEngineDebugUI:
         self.state.status_message = f"Fetched random card image: {random_image_path.name}"
         set_readonly_text(self.status_text, format_status_summary(self.state))
 
+    def _reset_manual_bbox(self) -> None:
+        fixture_path = selected_fixture(self.state)
+        if fixture_path is None:
+            return
+        if fixture_path in self.state.manual_quads:
+            del self.state.manual_quads[fixture_path]
+            self._save_overrides()
+            self.state.status_message = f"Reset manual bbox override for {fixture_path.name}."
+            self._refresh()
+
+    def _reset_manual_roi(self) -> None:
+        if self.state.active_roi in self.state.manual_roi_overrides:
+            del self.state.manual_roi_overrides[self.state.active_roi]
+            self._save_overrides()
+            self.state.status_message = f"Reset global ROI overrides for {self.state.active_roi}."
+            self._refresh()
+
     def _refresh(self) -> None:
         if self.state.fixture_paths:
             self.state.fixture_index %= len(self.state.fixture_paths)
@@ -206,7 +270,7 @@ class CardEngineDebugUI:
             return
 
         try:
-            self.state.recognition_result = recognize_card(fixture_path)
+            self.state.recognition_result = recognize_card(self._build_recognition_input())
         except Exception as exc:
             self.state.recognition_result = None
             self.state.status_message = f"Recognition failed for {fixture_path.name}: {exc}"
@@ -218,6 +282,7 @@ class CardEngineDebugUI:
     def _refresh_preview(self) -> None:
         self.preview_canvas.delete("all")
         self.preview_image = None
+        self.preview_transform = None
 
         fixture_path = selected_fixture(self.state)
         if fixture_path is None:
@@ -248,10 +313,19 @@ class CardEngineDebugUI:
         image_x = canvas_width / 2
         image_y = canvas_height / 2
         self.preview_canvas.create_image(image_x, image_y, image=preview_image)
+        self.preview_transform = PreviewTransform(
+            offset_x=image_x - (preview_image.width() / 2),
+            offset_y=image_y - (preview_image.height() / 2),
+            rendered_width=preview_image.width(),
+            rendered_height=preview_image.height(),
+            source_width=self.state.current_image.width,
+            source_height=self.state.current_image.height,
+        )
 
         if self.state.show_bbox and self.state.recognition_result and self.state.recognition_result.bbox and self.state.current_image:
+            edit_quad = self._current_edit_quad()
             self._draw_bbox_overlay(
-                bbox=self.state.recognition_result.bbox,
+                quad=edit_quad or quad_from_bbox(self.state.recognition_result.bbox),
                 image_center=(image_x, image_y),
                 rendered_size=(preview_image.width(), preview_image.height()),
                 source_size=(self.state.current_image.width, self.state.current_image.height),
@@ -262,31 +336,47 @@ class CardEngineDebugUI:
                 rendered_size=(preview_image.width(), preview_image.height()),
                 source_size=(self.state.current_image.width, self.state.current_image.height),
             )
+            self._draw_bbox_handles()
+            self._draw_roi_handles()
 
     def _draw_bbox_overlay(
         self,
         *,
-        bbox: tuple[int, int, int, int],
+        quad: Quad,
         image_center: tuple[float, float],
         rendered_size: tuple[int, int],
         source_size: tuple[int, int],
     ) -> None:
-        left, top, width, height = bbox
         render_width, render_height = rendered_size
         source_width, source_height = source_size
         offset_x = image_center[0] - (render_width / 2)
         offset_y = image_center[1] - (render_height / 2)
         scale_x = render_width / max(source_width, 1)
         scale_y = render_height / max(source_height, 1)
+        canvas_points: list[float] = []
+        for x, y in quad:
+            canvas_points.extend([offset_x + (x * scale_x), offset_y + (y * scale_y)])
 
-        self.preview_canvas.create_rectangle(
-            offset_x + (left * scale_x),
-            offset_y + (top * scale_y),
-            offset_x + ((left + width) * scale_x),
-            offset_y + ((top + height) * scale_y),
-            outline="#4ade80",
-            width=2,
-        )
+        self.preview_canvas.create_polygon(*canvas_points, outline="#4ade80", width=2, fill="")
+
+    def _draw_bbox_handles(self) -> None:
+        quad = self._current_edit_quad()
+        if quad is None or self.preview_transform is None:
+            return
+
+        for corner_index, point in enumerate(quad):
+            canvas_x, canvas_y = source_to_canvas_point(self.preview_transform, point)
+            is_active = self.active_drag_target == DragTarget(kind="bbox", corner_index=corner_index)
+            radius = 5 if not is_active else 7
+            self.preview_canvas.create_oval(
+                canvas_x - radius,
+                canvas_y - radius,
+                canvas_x + radius,
+                canvas_y + radius,
+                fill="#38bdf8",
+                outline="#082f49",
+                width=1,
+            )
 
     def _draw_active_roi_overlay(
         self,
@@ -296,7 +386,7 @@ class CardEngineDebugUI:
         rendered_size: tuple[int, int],
         source_size: tuple[int, int],
     ) -> None:
-        roi_entries = roi_group_bboxes(card_bbox, self.state.active_roi)
+        roi_entries = self._current_active_roi_entries()
         if not roi_entries:
             return
 
@@ -312,21 +402,27 @@ class CardEngineDebugUI:
             y1 = offset_y + (top * scale_y)
             x2 = offset_x + ((left + width) * scale_x)
             y2 = offset_y + ((top + height) * scale_y)
-            self.preview_canvas.create_rectangle(
-                x1,
-                y1,
-                x2,
-                y2,
-                outline="#f59e0b",
-                width=2,
-            )
-            self.preview_canvas.create_text(
-                x1 + 4,
-                y1 + 4,
-                text=label,
-                fill="#f59e0b",
-                anchor="nw",
-            )
+            self.preview_canvas.create_rectangle(x1, y1, x2, y2, outline="#f59e0b", width=2)
+            self.preview_canvas.create_text(x1 + 4, y1 + 4, text=label, fill="#f59e0b", anchor="nw")
+
+    def _draw_roi_handles(self) -> None:
+        if self.preview_transform is None:
+            return
+
+        for label, bbox in self._current_active_roi_entries():
+            for corner_index, point in enumerate(bbox_corners(bbox)):
+                canvas_x, canvas_y = source_to_canvas_point(self.preview_transform, point)
+                is_active = self.active_drag_target == DragTarget(kind="roi", label=label, corner_index=corner_index)
+                radius = 4 if not is_active else 6
+                self.preview_canvas.create_oval(
+                    canvas_x - radius,
+                    canvas_y - radius,
+                    canvas_x + radius,
+                    canvas_y + radius,
+                    fill="#f59e0b",
+                    outline="#7c2d12",
+                    width=1,
+                )
 
     def _draw_preview_message(self, message: str) -> None:
         canvas_width = max(self.preview_canvas.winfo_width(), 240)
@@ -338,6 +434,35 @@ class CardEngineDebugUI:
             fill="#d0d7de",
             width=canvas_width - 40,
             justify="center",
+        )
+
+    def _on_preview_press(self, event) -> None:
+        point = self._canvas_event_to_source_point(event.x, event.y)
+        if point is None or self.state.current_image is None:
+            return
+
+        drag_target = self._nearest_drag_target(event.x, event.y)
+        if drag_target is None:
+            return
+        self.active_drag_target = drag_target
+        self._apply_drag_target_update(drag_target, point)
+
+    def _on_preview_drag(self, event) -> None:
+        point = self._canvas_event_to_source_point(event.x, event.y)
+        if point is None or self.active_drag_target is None:
+            return
+        self._apply_drag_target_update(self.active_drag_target, point)
+
+    def _on_preview_release(self, _event) -> None:
+        self.active_drag_target = None
+
+    def _on_preview_motion(self, event) -> None:
+        point = self._canvas_event_to_source_point(event.x, event.y)
+        if point is None:
+            return
+        x, y = point
+        self.footer_var.set(
+            f"Mouse: ({x}, {y}) in source image. Drag green corners for bbox or orange corners for ROI. Changes persist."
         )
 
     def _available_roi_groups(self) -> list[str]:
@@ -352,6 +477,134 @@ class CardEngineDebugUI:
         if self.state.active_roi not in available_rois:
             self.state.active_roi = available_rois[0]
 
+    def _canvas_event_to_source_point(self, x: int, y: int) -> tuple[int, int] | None:
+        if self.preview_transform is None:
+            return None
+        return canvas_to_source_point(self.preview_transform, (x, y))
+
+    def _current_edit_quad(self) -> Quad | None:
+        fixture_path = selected_fixture(self.state)
+        if fixture_path is None or self.state.recognition_result is None or self.state.recognition_result.bbox is None:
+            return None
+        if fixture_path in self.state.manual_quads:
+            return self.state.manual_quads[fixture_path]
+        return quad_from_bbox(self.state.recognition_result.bbox)
+
+    def _current_active_roi_entries(self) -> list[tuple[str, tuple[int, int, int, int]]]:
+        if self.state.recognition_result is None or self.state.recognition_result.bbox is None:
+            return []
+        overrides = self.state.manual_roi_overrides.get(self.state.active_roi, {})
+        return roi_group_bboxes(self.state.recognition_result.bbox, self.state.active_roi, overrides=overrides)
+
+    def _apply_manual_corner_update(self, corner_index: int, point: tuple[int, int]) -> None:
+        fixture_path = selected_fixture(self.state)
+        quad = self._current_edit_quad()
+        if fixture_path is None or quad is None or self.state.current_image is None:
+            return
+
+        updated_quad = update_quad_corner(
+            quad,
+            corner_index,
+            point,
+            frame_width=self.state.current_image.width,
+            frame_height=self.state.current_image.height,
+        )
+        self.state.manual_quads[fixture_path] = updated_quad
+        self._save_overrides()
+        self.state.status_message = f"Updated bbox corner {corner_index + 1} for {fixture_path.name}."
+        self._refresh()
+
+    def _apply_manual_roi_corner_update(self, label: str, corner_index: int, point: tuple[int, int]) -> None:
+        if (
+            self.state.current_image is None
+            or self.state.recognition_result is None
+            or self.state.recognition_result.bbox is None
+        ):
+            return
+
+        roi_entries = dict(self._current_active_roi_entries())
+        roi_bbox = roi_entries.get(label)
+        if roi_bbox is None:
+            return
+
+        updated_bbox = update_bbox_corner_axis_aligned(
+            roi_bbox,
+            corner_index,
+            point,
+            frame_width=self.state.current_image.width,
+            frame_height=self.state.current_image.height,
+        )
+        relative_roi = relative_roi_from_bboxes(self.state.recognition_result.bbox, updated_bbox)
+        group_overrides = self.state.manual_roi_overrides.setdefault(self.state.active_roi, {})
+        group_overrides[label] = relative_roi
+        self._save_overrides()
+        self.state.status_message = f"Updated global ROI {label} corner {corner_index + 1} for {self.state.active_roi}."
+        self._refresh()
+
+    def _nearest_drag_target(self, canvas_x: int, canvas_y: int) -> DragTarget | None:
+        if self.preview_transform is None:
+            return None
+
+        nearest_distance: float | None = None
+        nearest_target: DragTarget | None = None
+
+        for label, bbox in self._current_active_roi_entries():
+            for corner_index, point in enumerate(bbox_corners(bbox)):
+                px, py = source_to_canvas_point(self.preview_transform, point)
+                distance = ((px - canvas_x) ** 2) + ((py - canvas_y) ** 2)
+                if nearest_distance is None or distance < nearest_distance:
+                    nearest_distance = distance
+                    nearest_target = DragTarget(kind="roi", label=label, corner_index=corner_index)
+
+        quad = self._current_edit_quad()
+        if quad is not None:
+            for corner_index, point in enumerate(quad):
+                px, py = source_to_canvas_point(self.preview_transform, point)
+                distance = ((px - canvas_x) ** 2) + ((py - canvas_y) ** 2)
+                if nearest_distance is None or distance < nearest_distance:
+                    nearest_distance = distance
+                    nearest_target = DragTarget(kind="bbox", corner_index=corner_index)
+
+        if nearest_distance is None or nearest_distance > (14 ** 2):
+            return None
+        return nearest_target
+
+    def _apply_drag_target_update(self, target: DragTarget, point: tuple[int, int]) -> None:
+        if target.kind == "bbox":
+            self._apply_manual_corner_update(target.corner_index, point)
+        elif target.kind == "roi" and target.label is not None:
+            self._apply_manual_roi_corner_update(target.label, target.corner_index, point)
+
+    def _build_recognition_input(self):
+        fixture_path = selected_fixture(self.state)
+        if fixture_path is None or self.state.current_image is None:
+            return None
+
+        manual_quad = self.state.manual_quads.get(fixture_path)
+        manual_roi_overrides = self.state.manual_roi_overrides
+        if manual_quad is None and not manual_roi_overrides:
+            return fixture_path
+
+        return EditableLoadedImage(
+            path=self.state.current_image.path,
+            image_format=self.state.current_image.image_format,
+            width=self.state.current_image.width,
+            height=self.state.current_image.height,
+            card_quad=manual_quad,
+            roi_overrides=manual_roi_overrides,
+        )
+
+    def _save_overrides(self) -> None:
+        save_ui_overrides(
+            self._overrides_path,
+            manual_quads=self.state.manual_quads,
+            manual_roi_overrides=self.state.manual_roi_overrides,
+        )
+
+    def _on_close(self) -> None:
+        self._save_overrides()
+        self.root.destroy()
+
     def run(self) -> None:
         self.root.mainloop()
 
@@ -362,6 +615,10 @@ def _default_fixtures_dir() -> str:
 
 def _default_random_cache_dir() -> str:
     return str(Path("data") / "cache" / "random_cards")
+
+
+def _default_overrides_path() -> str:
+    return str(Path("data") / "cache" / "ui_overrides.json")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

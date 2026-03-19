@@ -2,7 +2,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from card_engine.models import RecognitionResult
+from card_engine.utils.geometry import Quad
 from card_engine.utils.image_io import LoadedImage
+
+RelativeROI = tuple[float, float, float, float]
 
 
 @dataclass
@@ -15,6 +18,8 @@ class UIState:
     current_image: LoadedImage | None = None
     recognition_result: RecognitionResult | None = None
     preview_message: str = "Preview unavailable."
+    manual_quads: dict[Path, Quad] = field(default_factory=dict)
+    manual_roi_overrides: dict[str, dict[str, RelativeROI]] = field(default_factory=dict)
 
 
 def cycle_fixture_index(current_index: int, delta: int, fixture_count: int) -> int:

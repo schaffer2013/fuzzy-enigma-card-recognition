@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .roi import ROI_PRESETS
+import cv2
+import numpy
+
+from .roi import ROI_PRESETS, resolved_group_rois
 from .utils.geometry import Quad, quad_from_bbox
 
 CANONICAL_CARD_SIZE = (880, 630)  # height, width
@@ -14,6 +17,7 @@ class CropRegion:
     label: str
     bbox: tuple[int, int, int, int]
     shape: tuple[int, int, int]
+    image_array: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -23,6 +27,8 @@ class NormalizedCardImage:
     source_quad: Quad | None
     source_shape: tuple[int, int, int] | None
     destination_quad: Quad | None
+    source_image: Any | None = None
+    image_array: Any | None = None
     path: str | None = None
 
 
@@ -48,17 +54,31 @@ def normalize_card(
     source_quad = quad or getattr(image, "card_quad", None) or quad_from_bbox(bbox)
     rectangular_quad = quad_from_bbox(bbox)
     destination_quad = quad_from_bbox((0, 0, CANONICAL_CARD_SIZE[1], CANONICAL_CARD_SIZE[0]))
+    roi_overrides = getattr(image, "roi_overrides", {})
+    normalized_pixels = _warp_to_canonical(
+        image,
+        source_quad=source_quad,
+        destination_quad=destination_quad,
+        fallback_bbox=bbox,
+    )
     normalized_image = NormalizedCardImage(
         shape=(CANONICAL_CARD_SIZE[0], CANONICAL_CARD_SIZE[1], 3),
         source_bbox=bbox,
         source_quad=source_quad,
         source_shape=source_shape,
         destination_quad=destination_quad,
+        source_image=image,
+        image_array=normalized_pixels,
         path=str(getattr(image, "path", "")) or None,
     )
 
     active_roi_groups = [group for group in (roi_groups or list(ROI_PRESETS)) if group in ROI_PRESETS]
-    crops = _build_roi_crops(normalized_image.shape, active_roi_groups)
+    crops = _build_roi_crops(
+        normalized_image.shape,
+        active_roi_groups,
+        roi_overrides=roi_overrides,
+        normalized_pixels=normalized_pixels,
+    )
     debug_outputs = {
         "source_bbox": bbox,
         "source_quad": source_quad,
@@ -72,12 +92,15 @@ def normalize_card(
 def _build_roi_crops(
     normalized_shape: tuple[int, int, int],
     roi_groups: list[str],
+    *,
+    roi_overrides: dict[str, dict[str, tuple[float, float, float, float]]] | None = None,
+    normalized_pixels: Any | None = None,
 ) -> dict[str, CropRegion]:
     height, width, _ = normalized_shape
     crops: dict[str, CropRegion] = {}
 
     for group_name in roi_groups:
-        rois = ROI_PRESETS.get(group_name, [])
+        rois = resolved_group_rois(group_name, overrides=(roi_overrides or {}).get(group_name))
         for roi in rois:
             crop_width = max(1, int(round(width * roi.w)))
             crop_height = max(1, int(round(height * roi.h)))
@@ -87,6 +110,7 @@ def _build_roi_crops(
                 label=roi.label,
                 bbox=(crop_left, crop_top, crop_width, crop_height),
                 shape=(crop_height, crop_width, 3),
+                image_array=_crop_pixels(normalized_pixels, crop_left, crop_top, crop_width, crop_height),
             )
 
     return crops
@@ -98,3 +122,63 @@ def _group_crop_bboxes(crops: dict[str, CropRegion]) -> dict[str, list[tuple[str
         group_name, _, _ = crop_name.partition(":")
         grouped.setdefault(group_name, []).append((crop.label, crop.bbox))
     return grouped
+
+
+def _warp_to_canonical(
+    image: Any,
+    *,
+    source_quad: Quad,
+    destination_quad: Quad,
+    fallback_bbox: tuple[int, int, int, int],
+) -> Any | None:
+    source_pixels = _source_pixels(image)
+    if source_pixels is None:
+        return None
+
+    try:
+        transform = cv2.getPerspectiveTransform(
+            numpy.array(source_quad, dtype=numpy.float32),
+            numpy.array(destination_quad, dtype=numpy.float32),
+        )
+        return cv2.warpPerspective(
+            source_pixels,
+            transform,
+            (CANONICAL_CARD_SIZE[1], CANONICAL_CARD_SIZE[0]),
+        )
+    except Exception:
+        left, top, width, height = fallback_bbox
+        cropped = source_pixels[top : top + height, left : left + width]
+        if cropped is None or getattr(cropped, "size", 0) == 0:
+            return None
+        return cv2.resize(cropped, (CANONICAL_CARD_SIZE[1], CANONICAL_CARD_SIZE[0]))
+
+
+def _source_pixels(image: Any) -> Any | None:
+    for candidate in (image, getattr(image, "source_image", None)):
+        if candidate is None:
+            continue
+        for attr_name in ("image_array", "pixels", "array"):
+            value = getattr(candidate, attr_name, None)
+            if value is not None:
+                return value
+    return None
+
+
+def _crop_pixels(
+    normalized_pixels: Any | None,
+    left: int,
+    top: int,
+    width: int,
+    height: int,
+) -> Any | None:
+    if normalized_pixels is None:
+        return None
+
+    try:
+        cropped = normalized_pixels[top : top + height, left : left + width]
+    except Exception:
+        return None
+
+    if cropped is None or getattr(cropped, "size", 0) == 0:
+        return None
+    return cropped
