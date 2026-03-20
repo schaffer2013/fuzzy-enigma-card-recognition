@@ -85,3 +85,49 @@ def test_ensure_catalog_ready_downloads_and_builds_when_missing(tmp_path, monkey
         f"sync:{source_path}",
         f"build:{db_path}:{source_path}",
     ]
+
+
+def test_ensure_catalog_ready_rebuilds_malformed_database(tmp_path, monkeypatch):
+    db_path = tmp_path / "cards.sqlite3"
+    source_path = tmp_path / "default-cards.json"
+    db_path.write_text("not-a-real-sqlite-db", encoding="utf-8")
+    source_path.write_text("[]", encoding="utf-8")
+    calls: list[str] = []
+
+    def fake_sync(output_path: str):
+        calls.append(f"sync:{output_path}")
+        path = Path(output_path)
+        path.write_text("[]", encoding="utf-8")
+        return path
+
+    def fake_build(output_db: str, input_json: str):
+        calls.append(f"build:{output_db}:{input_json}")
+        Path(output_db).write_text("sqlite", encoding="utf-8")
+        return type(
+            "DummyStats",
+            (),
+            {
+                "card_count": 3,
+                "alias_count": 1,
+                "source_path": source_path,
+                "database_path": db_path,
+            },
+        )()
+
+    monkeypatch.setattr("card_engine.catalog.maintenance.sync_bulk_data", fake_sync)
+    monkeypatch.setattr("card_engine.catalog.maintenance.build_catalog", fake_build)
+
+    status = ensure_catalog_ready(
+        db_path=str(db_path),
+        source_json_path=str(source_path),
+        max_age_days=7,
+    )
+
+    backups = list(tmp_path.glob("cards.sqlite3.malformed-*.bak"))
+
+    assert status.refreshed is True
+    assert status.action == "malformed"
+    assert len(backups) == 1
+    assert calls == [
+        f"build:{db_path}:{source_path}",
+    ]

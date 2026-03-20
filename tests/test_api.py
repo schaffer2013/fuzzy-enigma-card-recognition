@@ -249,6 +249,48 @@ def test_recognize_card_can_skip_secondary_ocr_after_set_symbol_match(monkeypatc
     assert result.debug["set_symbol"]["used"] is True
 
 
+def test_recognize_card_keeps_wider_candidate_pool_before_final_top_k(monkeypatch):
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        lines_by_roi = {
+            "standard": ["Ancient Craving"],
+            "lower_text": ["Knowledge demands sacrifice."],
+        }
+        return OCRResult(
+            lines=lines_by_roi.get(roi_label, []),
+            confidence=0.9,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    records = [
+        CatalogRecord(name="Ancient Craving", normalized_name="", set_code="A25", collector_number="79", layout="normal"),
+        CatalogRecord(name="Ancient Craving", normalized_name="", set_code="C15", collector_number="114", layout="normal"),
+        CatalogRecord(name="Ancient Craving", normalized_name="", set_code="C21", collector_number="135", layout="normal"),
+        CatalogRecord(name="Ancient Craving", normalized_name="", set_code="DDK", collector_number="28", layout="normal"),
+        CatalogRecord(name="Ancient Craving", normalized_name="", set_code="S99", collector_number="64", layout="normal"),
+        CatalogRecord(name="Ancient Craving", normalized_name="", set_code="J22", collector_number="376", layout="normal"),
+    ]
+    catalog = LocalCatalogIndex.from_records(records)
+
+    def fake_set_symbol_rerank(candidates, *, observed_crop, catalog, progress_callback=None):
+        updated = list(candidates)
+        for index, candidate in enumerate(updated):
+            if candidate.set_code == "J22":
+                updated[index].score = 0.99
+                updated[index].notes = ["exact", "set_symbol_match"]
+        updated.sort(key=lambda candidate: (-candidate.score, candidate.name))
+        return type("Result", (), {"candidates": updated, "debug": {"used": True}})()
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr("card_engine.api.rerank_candidates_by_set_symbol", fake_set_symbol_rerank)
+
+    result = recognize_card(DummyImage())
+
+    assert result.best_name == "Ancient Craving"
+    assert result.top_k_candidates[0].set_code == "J22"
+    assert len(result.top_k_candidates) == 5
+
+
 def _minimal_png(*, width: int, height: int) -> bytes:
     return (
         b"\x89PNG\r\n\x1a\n"

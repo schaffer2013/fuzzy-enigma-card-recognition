@@ -64,6 +64,7 @@ The goal is to keep the engine focused, fast, and easy to integrate without leak
 - Full-card image hashing is **not part of v1**.
 - A narrow exception is allowed for tie-breaking: after OCR and catalog ranking have reduced the search to a small top-candidate set, the engine may compare a small normalized ROI around the set symbol area.
 - The preferred flow is to OCR the name first, then use the set-symbol ROI hash against the top name candidates before spending time on other OCR regions.
+- Set-symbol comparison should apply to all near-tied same-name candidates, not just an arbitrary small prefix of the ranked list.
 - If the name plus set-symbol comparison is already confident enough, the engine should skip additional OCR passes on secondary ROIs.
 - This should be treated as a lightweight discriminator, not a primary recognition path.
 - The architecture should leave room for broader visual fingerprinting in v2, but v1 should remain OCR-first and metadata-driven.

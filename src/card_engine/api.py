@@ -2,6 +2,7 @@ from pathlib import Path
 from functools import lru_cache
 from typing import Any
 
+from .catalog.maintenance import ensure_catalog_ready
 from .catalog.local_index import LocalCatalogIndex
 from .config import EngineConfig
 from .detector import detect_card
@@ -21,6 +22,7 @@ def recognize_card(image: Any, *, progress_callback=None) -> RecognitionResult:
     _notify(progress_callback, "Preparing image input...")
     prepared_image = _prepare_image_input(image)
     config = EngineConfig()
+    candidate_pool_limit = max(config.candidate_count * 4, config.candidate_count)
     catalog = _load_catalog(config.catalog_path)
     _notify(progress_callback, "Detecting card bounds...")
     detection = detect_card(prepared_image)
@@ -59,7 +61,7 @@ def recognize_card(image: Any, *, progress_callback=None) -> RecognitionResult:
     _notify(progress_callback, "Matching OCR text against catalog...")
     candidates = match_candidates(
         ocr.lines,
-        limit=config.candidate_count,
+        limit=candidate_pool_limit,
         catalog=catalog,
         results_by_roi=results_by_roi,
         layout_hint=layout_hint,
@@ -102,7 +104,7 @@ def recognize_card(image: Any, *, progress_callback=None) -> RecognitionResult:
         _notify(progress_callback, "Re-ranking with secondary OCR signals...")
         candidates = match_candidates(
             ocr.lines,
-            limit=config.candidate_count,
+            limit=candidate_pool_limit,
             catalog=catalog,
             results_by_roi=results_by_roi,
             layout_hint=layout_hint,
@@ -127,7 +129,7 @@ def recognize_card(image: Any, *, progress_callback=None) -> RecognitionResult:
         best_name=best_name,
         confidence=confidence,
         ocr_lines=ocr.lines,
-        top_k_candidates=candidates,
+        top_k_candidates=candidates[: config.candidate_count],
         active_roi=active_roi,
         tried_rois=tried_rois,
         debug={
@@ -166,6 +168,7 @@ def _first_crop_for_group(crops: dict[str, Any], group_name: str):
 
 @lru_cache(maxsize=4)
 def _load_catalog(db_path: str) -> LocalCatalogIndex:
+    ensure_catalog_ready(db_path=db_path)
     return LocalCatalogIndex.from_sqlite(db_path)
 
 

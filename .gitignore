@@ -214,3 +214,4 @@ __marimo__/
 
 data/cache/*
 .pytest*
+*.sqlite3.*

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -30,6 +31,9 @@ def catalog_refresh_needed(
     database = Path(db_path)
     if not database.exists():
         return True, None
+
+    if _integrity_refresh_needed(database):
+        return True, _age_in_days(database)
 
     if _schema_refresh_needed(database):
         return True, _age_in_days(database)
@@ -65,6 +69,9 @@ def ensure_catalog_ready(
     if not database.exists():
         _notify(progress_callback, "Catalog missing. Downloading bulk data...")
         reason = "missing"
+    elif _integrity_refresh_needed(database):
+        _notify(progress_callback, "Catalog database is malformed. Rebuilding local catalog...")
+        reason = "malformed"
     elif _schema_refresh_needed(database):
         _notify(progress_callback, "Catalog schema is outdated. Rebuilding bulk data...")
         reason = "schema"
@@ -72,7 +79,13 @@ def ensure_catalog_ready(
         _notify(progress_callback, f"Catalog is {age_days:.1f} days old. Refreshing bulk data...")
         reason = "stale"
 
-    sync_bulk_data(str(source))
+    if reason == "malformed":
+        _backup_malformed_database(database, progress_callback=progress_callback)
+
+    if _should_refresh_source(reason, source):
+        sync_bulk_data(str(source))
+    else:
+        _notify(progress_callback, f"Using existing bulk data from {source.name}.")
     _notify(progress_callback, "Building local SQLite catalog...")
     stats = build_catalog(str(database), str(source))
     _notify(progress_callback, f"Catalog ready with {stats.card_count} cards.")
@@ -110,3 +123,36 @@ def _schema_refresh_needed(database: Path) -> bool:
     if row is None:
         return True
     return str(row[0]) != CATALOG_SCHEMA_VERSION
+
+
+def _integrity_refresh_needed(database: Path) -> bool:
+    try:
+        with sqlite3.connect(database) as conn:
+            row = conn.execute("PRAGMA quick_check").fetchone()
+    except sqlite3.Error:
+        return True
+
+    if row is None:
+        return True
+    return str(row[0]).lower() != "ok"
+
+
+def _backup_malformed_database(
+    database: Path,
+    *,
+    progress_callback: ProgressCallback | None = None,
+) -> Path | None:
+    if not database.exists():
+        return None
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = database.with_suffix(f"{database.suffix}.malformed-{timestamp}.bak")
+    shutil.copy2(database, backup_path)
+    _notify(progress_callback, f"Backed up malformed catalog to {backup_path.name}.")
+    return backup_path
+
+
+def _should_refresh_source(reason: str, source: Path) -> bool:
+    if not source.exists():
+        return True
+    return reason in {"missing", "stale", "schema"}

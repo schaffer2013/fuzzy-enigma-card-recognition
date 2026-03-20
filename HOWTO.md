@@ -219,8 +219,9 @@ fallback for cached random-card images.
 The current recognition flow is moving toward a Milestone 9 fast path:
 
 1. OCR the title region first.
-2. Use the set-symbol ROI as a lightweight visual tie-breaker for top title
-   candidates.
+2. Use the set-symbol ROI as a lightweight visual tie-breaker for near-tied
+   title candidates, using a refined symbol fingerprint rather than a full-card
+   image comparison.
 3. Only run the remaining ROIs such as `type_line` and `lower_text` if the
    title-plus-set-symbol evidence is still not confident enough.
 
