@@ -139,6 +139,7 @@ The `Recognition` panel shows the current engine output for the selected image.
 It includes:
 
 - best match name
+- recognized set abbreviation
 - confidence
 - active ROI
 - tried ROI list

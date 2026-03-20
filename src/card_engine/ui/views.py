@@ -98,8 +98,10 @@ def format_recognition_summary(result: RecognitionResult | None, *, error_messag
             return f"Recognition failed.\n\n{error_message}"
         return "Recognition has not run yet."
 
+    best_candidate = result.top_k_candidates[0] if result.top_k_candidates else None
     lines = [
         f"Best name: {result.best_name or 'None'}",
+        f"Best set: {best_candidate.set_code or 'Unknown'}" if best_candidate else "Best set: Unknown",
         f"Confidence: {result.confidence:.2f}",
         f"Active ROI: {result.active_roi or 'None'}",
         f"Tried ROIs: {', '.join(result.tried_rois) if result.tried_rois else 'None'}",

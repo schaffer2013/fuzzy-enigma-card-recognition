@@ -19,7 +19,6 @@ from .catalog.scryfall_sync import REQUEST_HEADERS
 SET_SYMBOL_CACHE_DIR = Path("data") / "cache" / "set_symbol_refs"
 SET_SYMBOL_MATCH_THRESHOLD = 0.84
 SET_SYMBOL_CONFIDENCE_THRESHOLD = 0.92
-SET_SYMBOL_MAX_COMPARISONS = 8
 SET_SYMBOL_SCORE_WINDOW = 0.12
 
 
@@ -307,10 +306,66 @@ def _preprocess_symbol_image(image_array) -> tuple[object, object] | None:
     normalized = cv2.equalizeHist(cropped)
     normalized = cv2.GaussianBlur(normalized, (3, 3), 0)
     normalized = cv2.resize(normalized, (48, 48), interpolation=cv2.INTER_CUBIC)
-    _threshold, binary_mask = cv2.threshold(normalized, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    if binary_mask.mean() > 127:
-        binary_mask = cv2.bitwise_not(binary_mask)
-    return normalized, binary_mask
+    _threshold, threshold_mask = cv2.threshold(normalized, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    binary_mask = _select_symbol_mask(threshold_mask)
+    return _tighten_symbol_focus(normalized, binary_mask)
+
+
+def _select_symbol_mask(threshold_mask) -> object:
+    candidates = [threshold_mask, cv2.bitwise_not(threshold_mask)]
+    return max(candidates, key=_mask_quality_score)
+
+
+def _mask_quality_score(binary_mask) -> float:
+    cleaned = _clean_symbol_mask(binary_mask)
+    coords = cv2.findNonZero(cleaned)
+    if coords is None:
+        return 0.0
+
+    x, y, width, height = cv2.boundingRect(coords)
+    total_area = max(1, cleaned.shape[0] * cleaned.shape[1])
+    foreground_ratio = float(cleaned.mean() / 255.0)
+    bbox_ratio = float((width * height) / total_area)
+
+    foreground_score = 1.0 - min(abs(foreground_ratio - 0.18) / 0.18, 1.0)
+    bbox_score = 1.0 - min(abs(bbox_ratio - 0.35) / 0.35, 1.0)
+    center_x = x + (width / 2.0)
+    center_y = y + (height / 2.0)
+    center_distance = abs(center_x - (cleaned.shape[1] / 2.0)) + abs(center_y - (cleaned.shape[0] / 2.0))
+    max_center_distance = max(1.0, cleaned.shape[0] + cleaned.shape[1])
+    center_score = 1.0 - min(center_distance / max_center_distance, 1.0)
+
+    return (foreground_score * 0.45) + (bbox_score * 0.35) + (center_score * 0.20)
+
+
+def _clean_symbol_mask(binary_mask):
+    kernel = numpy.ones((3, 3), dtype=numpy.uint8)
+    cleaned = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, kernel)
+    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
+    return cleaned
+
+
+def _tighten_symbol_focus(grayscale, binary_mask) -> tuple[object, object]:
+    cleaned = _clean_symbol_mask(binary_mask)
+    coords = cv2.findNonZero(cleaned)
+    if coords is None:
+        return grayscale, cleaned
+
+    x, y, width, height = cv2.boundingRect(coords)
+    pad = max(2, int(round(max(width, height) * 0.18)))
+    left = max(0, x - pad)
+    top = max(0, y - pad)
+    right = min(cleaned.shape[1], x + width + pad)
+    bottom = min(cleaned.shape[0], y + height + pad)
+
+    cropped_gray = grayscale[top:bottom, left:right]
+    cropped_mask = cleaned[top:bottom, left:right]
+    if cropped_gray.size == 0 or cropped_mask.size == 0:
+        return grayscale, cleaned
+
+    resized_gray = cv2.resize(cropped_gray, (48, 48), interpolation=cv2.INTER_CUBIC)
+    resized_mask = cv2.resize(cropped_mask, (48, 48), interpolation=cv2.INTER_NEAREST)
+    return resized_gray, resized_mask
 
 
 def _pack_binary_mask(binary_mask) -> str:
@@ -330,8 +385,6 @@ def _candidate_indices_for_symbol_compare(candidates: list[Candidate]) -> list[i
         if (best.score - candidate.score) > SET_SYMBOL_SCORE_WINDOW:
             continue
         indices.append(index)
-        if len(indices) >= SET_SYMBOL_MAX_COMPARISONS:
-            break
     if len(indices) < 2:
         return []
     return indices

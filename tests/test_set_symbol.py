@@ -93,3 +93,53 @@ def test_rerank_candidates_by_set_symbol_considers_near_tied_same_name_candidate
 
     assert result.debug["used"] is True
     assert result.candidates[0].set_code == "8ed"
+
+
+def test_rerank_candidates_by_set_symbol_does_not_drop_late_near_tied_candidate(monkeypatch):
+    records = [
+        CatalogRecord(name="Path to Exile", normalized_name="", set_code="md1", collector_number="3", image_uri="https://img.example/md1.png"),
+        CatalogRecord(name="Path to Exile", normalized_name="", set_code="mm3", collector_number="17", image_uri="https://img.example/mm3.png"),
+        CatalogRecord(name="Path to Exile", normalized_name="", set_code="mkc", collector_number="78", image_uri="https://img.example/mkc.png"),
+        CatalogRecord(name="Path to Exile", normalized_name="", set_code="plst", collector_number="CON-15", image_uri="https://img.example/plst-con15.png"),
+        CatalogRecord(name="Path to Exile", normalized_name="", set_code="ss2", collector_number="3", image_uri="https://img.example/ss2.png"),
+        CatalogRecord(name="Path to Exile", normalized_name="", set_code="e02", collector_number="3", image_uri="https://img.example/e02.png"),
+    ]
+    catalog = LocalCatalogIndex.from_records(records)
+    observed_crop = CropRegion(
+        label="set_symbol",
+        bbox=(0, 0, 40, 40),
+        shape=(40, 40, 3),
+        image_array=numpy.zeros((40, 40, 3), dtype=numpy.uint8),
+    )
+
+    similarities = {"md1": 0.75, "mm3": 0.76, "mkc": 0.77, "plst": 0.60, "ss2": 0.69, "e02": 0.98}
+
+    def fake_similarity(record, *, observed_fingerprint, progress_callback=None):
+        return similarities[record.set_code]
+
+    monkeypatch.setattr("card_engine.set_symbol._reference_similarity_for_record", fake_similarity)
+    monkeypatch.setattr(
+        "card_engine.set_symbol._compute_symbol_fingerprint",
+        lambda *_args, **_kwargs: {
+            "gray_dhash": "f" * 64,
+            "edge_ahash": "f" * 64,
+            "binary_mask": "f" * 576,
+            "foreground_ratio": 0.5,
+        },
+    )
+
+    result = rerank_candidates_by_set_symbol(
+        [
+            Candidate(name="Path to Exile", score=0.7646, set_code="md1", collector_number="3", notes=["fuzzy"]),
+            Candidate(name="Path to Exile", score=0.7646, set_code="mm3", collector_number="17", notes=["fuzzy"]),
+            Candidate(name="Path to Exile", score=0.7646, set_code="mkc", collector_number="78", notes=["fuzzy"]),
+            Candidate(name="Path to Exile", score=0.7646, set_code="plst", collector_number="CON-15", notes=["fuzzy"]),
+            Candidate(name="Path to Exile", score=0.7646, set_code="ss2", collector_number="3", notes=["fuzzy"]),
+            Candidate(name="Path to Exile", score=0.7646, set_code="e02", collector_number="3", notes=["fuzzy"]),
+        ],
+        observed_crop=observed_crop,
+        catalog=catalog,
+    )
+
+    assert result.debug["used"] is True
+    assert result.candidates[0].set_code == "e02"

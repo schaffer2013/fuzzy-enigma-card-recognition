@@ -73,6 +73,7 @@ def test_format_recognition_summary_lists_candidates():
     summary = format_recognition_summary(result)
 
     assert "Best name: Lightning Bolt" in summary
+    assert "Best set: M11" in summary
     assert "OCR by ROI:" in summary
     assert "backend=simulated_hint" in summary
     assert "Candidates:" in summary
