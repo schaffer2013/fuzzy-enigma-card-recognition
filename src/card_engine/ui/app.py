@@ -88,6 +88,7 @@ class OperationSplash:
         self.update(initial_message)
 
         self.window.update_idletasks()
+        self.window.update()
         self._center_on_root()
 
     def update(self, message: str) -> None:
@@ -97,7 +98,9 @@ class OperationSplash:
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
         self.window.update_idletasks()
+        self.window.update()
         self.root.update_idletasks()
+        self.root.update()
 
     def close(self) -> None:
         self.window.destroy()
@@ -146,8 +149,8 @@ class CardEngineDebugUI:
 
         toolbar = ttk.Frame(self.root, padding=(12, 12, 12, 0))
         toolbar.grid(row=0, column=0, columnspan=3, sticky="ew")
-        for column in range(10):
-            toolbar.columnconfigure(column, weight=1 if column == 9 else 0)
+        for column in range(11):
+            toolbar.columnconfigure(column, weight=1 if column == 10 else 0)
 
         ttk.Button(toolbar, text="Prev", command=self._select_previous_fixture).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(toolbar, text="Next", command=self._select_next_fixture).grid(row=0, column=1, padx=(0, 8))
@@ -155,11 +158,12 @@ class CardEngineDebugUI:
         ttk.Button(toolbar, text="Toggle BBox", command=self._toggle_bbox).grid(row=0, column=3, padx=(0, 8))
         ttk.Button(toolbar, text="Refresh", command=self._refresh_fixture_list).grid(row=0, column=4, padx=(0, 8))
         ttk.Button(toolbar, text="Random Card", command=self._fetch_random_card).grid(row=0, column=5, padx=(0, 8))
-        ttk.Button(toolbar, text="Reset BBox", command=self._reset_manual_bbox).grid(row=0, column=6, padx=(0, 8))
-        ttk.Button(toolbar, text="Reset ROI", command=self._reset_manual_roi).grid(row=0, column=7, padx=(0, 8))
+        ttk.Button(toolbar, text="Re-evaluate", command=self._re_evaluate).grid(row=0, column=6, padx=(0, 8))
+        ttk.Button(toolbar, text="Reset BBox", command=self._reset_manual_bbox).grid(row=0, column=7, padx=(0, 8))
+        ttk.Button(toolbar, text="Reset ROI", command=self._reset_manual_roi).grid(row=0, column=8, padx=(0, 8))
 
         self.fixture_count_var = tk.StringVar(value="0 fixtures")
-        ttk.Label(toolbar, textvariable=self.fixture_count_var).grid(row=0, column=9, sticky="e")
+        ttk.Label(toolbar, textvariable=self.fixture_count_var).grid(row=0, column=10, sticky="e")
 
         fixture_panel = make_panel(self.root, "Fixtures")
         fixture_panel.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=12)
@@ -205,7 +209,7 @@ class CardEngineDebugUI:
         footer.columnconfigure(0, weight=1)
 
         self.footer_var = tk.StringVar(
-            value="Use Left/Right to browse fixtures, drag green corners for bbox, and orange corners for ROI."
+            value="Use Left/Right to browse fixtures, drag green corners for bbox, drag orange corners for ROI, then click Re-evaluate."
         )
         ttk.Label(footer, textvariable=self.footer_var).grid(row=0, column=0, sticky="w")
 
@@ -220,29 +224,29 @@ class CardEngineDebugUI:
         self.state.fixture_paths = discover_fixture_paths(self.fixtures_dir)
         self.state.fixture_index = 0
         self.state.status_message = "Refreshed fixture list."
-        self._refresh()
+        self._refresh(run_recognition=True)
 
     def _select_previous_fixture(self) -> None:
         self.state.fixture_index = cycle_fixture_index(self.state.fixture_index, -1, len(self.state.fixture_paths))
         self.state.status_message = "Moved to previous fixture."
-        self._refresh()
+        self._refresh(run_recognition=True)
 
     def _select_next_fixture(self) -> None:
         self.state.fixture_index = cycle_fixture_index(self.state.fixture_index, 1, len(self.state.fixture_paths))
         self.state.status_message = "Moved to next fixture."
-        self._refresh()
+        self._refresh(run_recognition=True)
 
     def _cycle_roi(self) -> None:
         self.state.active_roi = cycle_active_roi(self.state.active_roi, self._available_roi_groups())
-        self.state.status_message = f"Active ROI changed to {self.state.active_roi}."
-        self._refresh()
+        self.state.status_message = f"Active ROI changed to {self.state.active_roi}. Recognition not rerun."
+        self._refresh(run_recognition=False)
 
     def _toggle_bbox(self) -> None:
         self.state.show_bbox = not self.state.show_bbox
         self.state.status_message = (
             "Bounding box overlay enabled." if self.state.show_bbox else "Bounding box overlay hidden."
         )
-        self._refresh()
+        self._refresh(run_recognition=False)
 
     def _on_fixture_selected(self, _event) -> None:
         selection = self.fixture_list.curselection()
@@ -251,7 +255,7 @@ class CardEngineDebugUI:
 
         self.state.fixture_index = selection[0]
         self.state.status_message = "Selected fixture from browser."
-        self._refresh()
+        self._refresh(run_recognition=True)
 
     def _fetch_random_card(self) -> None:
         self.state.status_message = "Fetching a random card image from Scrython..."
@@ -268,9 +272,16 @@ class CardEngineDebugUI:
         existing = [path for path in self.state.fixture_paths if path != random_image_path]
         self.state.fixture_paths = [random_image_path] + existing
         self.state.fixture_index = 0
-        self._refresh()
+        self._refresh(run_recognition=True)
         self.state.status_message = f"Fetched random card image: {random_image_path.name}"
         set_readonly_text(self.status_text, format_status_summary(self.state))
+
+    def _re_evaluate(self) -> None:
+        fixture_path = selected_fixture(self.state)
+        if fixture_path is None:
+            return
+        self.state.status_message = f"Re-evaluating {fixture_path.name}..."
+        self._refresh(run_recognition=True)
 
     def _reset_manual_bbox(self) -> None:
         fixture_path = selected_fixture(self.state)
@@ -279,23 +290,23 @@ class CardEngineDebugUI:
         if fixture_path in self.state.manual_quads:
             del self.state.manual_quads[fixture_path]
             self._save_overrides()
-            self.state.status_message = f"Reset manual bbox override for {fixture_path.name}."
-            self._refresh()
+            self.state.status_message = f"Reset manual bbox override for {fixture_path.name}. Click Re-evaluate to apply."
+            self._refresh(run_recognition=False)
 
     def _reset_manual_roi(self) -> None:
         if self.state.active_roi in self.state.manual_roi_overrides:
             del self.state.manual_roi_overrides[self.state.active_roi]
             self._save_overrides()
-            self.state.status_message = f"Reset global ROI overrides for {self.state.active_roi}."
-            self._refresh()
+            self.state.status_message = f"Reset global ROI overrides for {self.state.active_roi}. Click Re-evaluate to apply."
+            self._refresh(run_recognition=False)
 
-    def _refresh(self) -> None:
+    def _refresh(self, *, run_recognition: bool = True) -> None:
         if self.state.fixture_paths:
             self.state.fixture_index %= len(self.state.fixture_paths)
         else:
             self.state.fixture_index = 0
 
-        self._load_selected_fixture_state()
+        self._load_selected_fixture_state(run_recognition=run_recognition)
         self._sync_active_roi()
         self.fixture_count_var.set(f"{len(self.state.fixture_paths)} fixture(s)")
         self.fixture_list.delete(0, tk.END)
@@ -318,7 +329,7 @@ class CardEngineDebugUI:
         set_readonly_text(self.status_text, format_status_summary(self.state))
         self._refresh_preview()
 
-    def _load_selected_fixture_state(self) -> None:
+    def _load_selected_fixture_state(self, *, run_recognition: bool) -> None:
         fixture_path = selected_fixture(self.state)
         if fixture_path is None:
             self.state.current_image = None
@@ -327,14 +338,20 @@ class CardEngineDebugUI:
             self.state.preview_message = "No fixture selected."
             return
 
-        try:
-            self.state.current_image = load_image(fixture_path)
-        except Exception as exc:
-            self.state.current_image = None
-            self.state.recognition_result = None
-            self.state.recognition_error = str(exc)
-            self.state.preview_message = f"Could not read image metadata: {exc}"
-            self.state.status_message = f"Failed to load image metadata for {fixture_path.name}."
+        current_path = getattr(self.state.current_image, "path", None)
+        if self.state.current_image is None or current_path != fixture_path:
+            try:
+                self.state.current_image = load_image(fixture_path)
+            except Exception as exc:
+                self.state.current_image = None
+                self.state.recognition_result = None
+                self.state.recognition_error = str(exc)
+                self.state.preview_message = f"Could not read image metadata: {exc}"
+                self.state.status_message = f"Failed to load image metadata for {fixture_path.name}."
+                return
+
+        if not run_recognition:
+            self.state.preview_message = "Preview ready."
             return
 
         splash = OperationSplash(
@@ -591,8 +608,10 @@ class CardEngineDebugUI:
         )
         self.state.manual_quads[fixture_path] = updated_quad
         self._save_overrides()
-        self.state.status_message = f"Updated bbox corner {corner_index + 1} for {fixture_path.name}."
-        self._refresh()
+        self.state.status_message = (
+            f"Updated bbox corner {corner_index + 1} for {fixture_path.name}. Click Re-evaluate to apply."
+        )
+        self._refresh(run_recognition=False)
 
     def _apply_manual_roi_corner_update(self, label: str, corner_index: int, point: tuple[int, int]) -> None:
         if (
@@ -618,8 +637,11 @@ class CardEngineDebugUI:
         group_overrides = self.state.manual_roi_overrides.setdefault(self.state.active_roi, {})
         group_overrides[label] = relative_roi
         self._save_overrides()
-        self.state.status_message = f"Updated global ROI {label} corner {corner_index + 1} for {self.state.active_roi}."
-        self._refresh()
+        self.state.status_message = (
+            f"Updated global ROI {label} corner {corner_index + 1} for {self.state.active_roi}. "
+            "Click Re-evaluate to apply."
+        )
+        self._refresh(run_recognition=False)
 
     def _nearest_drag_target(self, canvas_x: int, canvas_y: int) -> DragTarget | None:
         if self.preview_transform is None:

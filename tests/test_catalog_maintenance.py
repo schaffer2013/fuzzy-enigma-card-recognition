@@ -28,7 +28,7 @@ def test_ensure_catalog_ready_reuses_recent_catalog(tmp_path):
     with sqlite3.connect(db_path) as conn:
         conn.execute("CREATE TABLE catalog_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         conn.execute(
-            "INSERT INTO catalog_metadata (key, value) VALUES ('schema_version', '2')"
+            "INSERT INTO catalog_metadata (key, value) VALUES ('schema_version', '3')"
         )
         conn.commit()
 

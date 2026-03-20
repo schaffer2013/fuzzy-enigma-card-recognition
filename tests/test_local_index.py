@@ -47,6 +47,7 @@ def test_from_sqlite_loads_catalog_rows(tmp_path):
                     "type_line": "Instant",
                     "oracle_text": "Scry 1. Draw a card.",
                     "flavor_text": "The call of the sea.",
+                    "image_uris": {"png": "https://img.example/opt.png"},
                     "printed_name": "Optimum",
                 }
             ]
@@ -64,6 +65,7 @@ def test_from_sqlite_loads_catalog_rows(tmp_path):
     assert matches[0].type_line == "Instant"
     assert matches[0].oracle_text == "Scry 1. Draw a card."
     assert matches[0].flavor_text == "The call of the sea."
+    assert matches[0].image_uri == "https://img.example/opt.png"
     assert matches[0].aliases == ["Optimum"]
 
 

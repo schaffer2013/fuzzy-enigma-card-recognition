@@ -17,6 +17,12 @@ If you want the random-card button to work, install the UI extra first:
 .\.venv\Scripts\python.exe -m pip install -e .[ui]
 ```
 
+For fixture-level accuracy checks outside the UI, run:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\eval_fixture_set.py --fixtures-dir data\cache\random_cards
+```
+
 ## Main Window
 
 There is one page today: the main debug window.
@@ -38,8 +44,8 @@ recognition.
 Moves to the next fixture in the list and refreshes preview and recognition.
 
 `Cycle ROI`
-Cycles the active ROI label used by the UI state. This is useful for future
-layout-aware OCR/debug flows and already updates the displayed state.
+Cycles the active ROI label used by the UI state. This updates the displayed
+overlay only and does not rerun recognition.
 
 `Toggle BBox`
 Shows or hides the recognition bounding box overlay on top of the preview.
@@ -48,10 +54,20 @@ Shows or hides the recognition bounding box overlay on top of the preview.
 Rescans the fixture directory passed at launch time and reloads the fixture
 list from disk.
 
+`Re-evaluate`
+Runs recognition again for the currently selected fixture, using any saved bbox
+or ROI edits that are currently in effect.
+
 `Random Card`
 Fetches a random card image using Scrython, stores it under
 `data/cache/random_cards`, inserts it at the top of the fixture list, and
 immediately runs recognition on it.
+
+`Reset BBox`
+Clears the saved manual bbox/quad override for the selected fixture.
+
+`Reset ROI`
+Clears the saved global override for the currently active ROI group.
 
 `Fixture Count`
 The label at the far right shows how many fixture images are currently loaded
@@ -79,6 +95,9 @@ Selecting an item in the list does three things:
 2. Runs the current recognition pipeline on that file.
 3. Refreshes the preview and right-hand panels.
 
+If catalog maintenance or recognition is doing non-trivial work, the UI shows
+a splash/progress window instead of silently blocking.
+
 ## Preview Panel
 
 The `Preview` panel shows the current image if Tk can render the file format
@@ -88,7 +107,15 @@ If preview rendering is not available for that format, the panel shows a
 fallback message with the known image metadata instead of crashing.
 
 When `Toggle BBox` is enabled and the recognizer returns a bounding box, the UI
-draws a green overlay rectangle on top of the preview.
+draws a green overlay polygon on top of the preview.
+
+You can also:
+
+- drag green handles to adjust the detected card quad
+- drag orange handles to adjust the active ROI rectangle
+- keep ROI rectangles axis-aligned
+- persist those edits across restarts
+- click `Re-evaluate` when you want those edits applied to recognition
 
 ## Fixture Details Panel
 
@@ -117,10 +144,11 @@ It includes:
 - tried ROI list
 - detected bounding box
 - OCR lines
+- per-ROI OCR text and backend
 - top candidate list
 
-Right now the recognition pipeline is still mostly scaffold logic, so this
-panel is useful for tracing current behavior more than judging model accuracy.
+If recognition fails, this panel now shows the failure message instead of
+falling back to a misleading empty-state message.
 
 ## Status Panel
 
@@ -144,6 +172,10 @@ Current shortcuts:
 - `Right Arrow`: next fixture
 - `R`: cycle ROI
 - `B`: toggle bbox
+- `Escape`: reset bbox for the selected fixture
+
+Changing the active ROI, toggling overlays, or dragging ROI handles does not
+rerun recognition automatically anymore.
 
 ## Random Card Notes
 
@@ -155,11 +187,49 @@ panel will explain why.
 Random downloads are cached locally so you can inspect them again without
 having to keep them only in memory.
 
+## Evaluation Workflow
+
+Use the evaluation script when you want repeatable accuracy metrics on a folder
+of fixtures.
+
+Example:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\eval_fixture_set.py `
+  --fixtures-dir data\cache\random_cards `
+  --json-out data\sample_outputs\eval-summary.json
+```
+
+The script currently reports:
+
+- fixture count
+- scored fixture count
+- top-1 accuracy
+- top-5 accuracy
+- average confidence
+- ROI usage
+- error-class counts
+- a short list of top mismatches
+
+Expected names come from sidecar metadata when available, with a filename
+fallback for cached random-card images.
+
+## Recognition Flow Notes
+
+The current recognition flow is moving toward a Milestone 9 fast path:
+
+1. OCR the title region first.
+2. Use the set-symbol ROI as a lightweight visual tie-breaker for top title
+   candidates.
+3. Only run the remaining ROIs such as `type_line` and `lower_text` if the
+   title-plus-set-symbol evidence is still not confident enough.
+
 ## Current Limitations
 
 - There is only one page today.
-- The OCR and matching pipeline are still early-stage placeholders.
 - Some image formats can be recognized from file metadata without being
   previewable in Tk.
 - The random-card action runs synchronously, so it may briefly pause the UI
   while downloading.
+- The evaluation script only scores fixtures when it can infer an expected
+  name from sidecar metadata or filename.

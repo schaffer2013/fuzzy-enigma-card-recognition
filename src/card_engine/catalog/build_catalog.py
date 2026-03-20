@@ -7,7 +7,7 @@ from pathlib import Path
 
 from card_engine.utils.text_normalize import normalize_text
 
-CATALOG_SCHEMA_VERSION = "2"
+CATALOG_SCHEMA_VERSION = "3"
 
 
 @dataclass(frozen=True)
@@ -45,9 +45,10 @@ def build_catalog(db_path: str, source_path: str) -> CatalogBuildStats:
                 layout,
                 type_line,
                 oracle_text,
-                flavor_text
+                flavor_text,
+                image_uri
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             cards,
         )
@@ -88,12 +89,12 @@ def build_catalog(db_path: str, source_path: str) -> CatalogBuildStats:
     )
 
 
-def _load_catalog_rows(source_path: Path) -> tuple[list[tuple[str, str | None, str, str, str | None, str | None, str, str | None, str | None, str | None, str | None]], list[tuple[str, str, str]]]:
+def _load_catalog_rows(source_path: Path) -> tuple[list[tuple[str, str | None, str, str, str | None, str | None, str, str | None, str | None, str | None, str | None, str | None]], list[tuple[str, str, str]]]:
     raw_cards = json.loads(source_path.read_text(encoding="utf-8"))
     if not isinstance(raw_cards, list):
         raise ValueError("Catalog source JSON must contain a top-level list")
 
-    cards: list[tuple[str, str | None, str, str, str | None, str | None, str, str | None, str | None, str | None, str | None]] = []
+    cards: list[tuple[str, str | None, str, str, str | None, str | None, str, str | None, str | None, str | None, str | None, str | None]] = []
     aliases: list[tuple[str, str, str]] = []
 
     for card in raw_cards:
@@ -123,6 +124,7 @@ def _load_catalog_rows(source_path: Path) -> tuple[list[tuple[str, str | None, s
                 _clean_optional(card.get("type_line")),
                 _clean_optional(card.get("oracle_text")),
                 _clean_optional(card.get("flavor_text")),
+                _extract_image_uri(card),
             )
         )
 
@@ -170,7 +172,8 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             layout TEXT,
             type_line TEXT,
             oracle_text TEXT,
-            flavor_text TEXT
+            flavor_text TEXT,
+            image_uri TEXT
         );
 
         CREATE TABLE aliases (
@@ -198,3 +201,25 @@ def _clean_optional(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _extract_image_uri(card: dict) -> str | None:
+    image_uris = card.get("image_uris")
+    if isinstance(image_uris, dict):
+        for key in ("png", "large", "normal"):
+            if image_uris.get(key):
+                return _clean_optional(image_uris.get(key))
+
+    card_faces = card.get("card_faces")
+    if isinstance(card_faces, list):
+        for face in card_faces:
+            if not isinstance(face, dict):
+                continue
+            face_uris = face.get("image_uris")
+            if not isinstance(face_uris, dict):
+                continue
+            for key in ("png", "large", "normal"):
+                if face_uris.get(key):
+                    return _clean_optional(face_uris.get(key))
+
+    return None

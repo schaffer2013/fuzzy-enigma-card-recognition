@@ -21,6 +21,7 @@ def test_build_catalog_creates_cards_aliases_and_metadata(tmp_path):
                     "type_line": "Instant",
                     "oracle_text": "Lightning Bolt deals 3 damage to any target.",
                     "flavor_text": "The sparkmage shrieked, calling on the rage of the storms of his youth.",
+                    "image_uris": {"png": "https://img.example/bolt.png"},
                     "printed_name": "Lightning Bolt",
                 },
                 {
@@ -35,7 +36,7 @@ def test_build_catalog_creates_cards_aliases_and_metadata(tmp_path):
                     "oracle_text": "Choose one or both.",
                     "flavor_text": "Double trouble.",
                     "card_faces": [
-                        {"name": "Fire", "printed_name": "Fire"},
+                        {"name": "Fire", "printed_name": "Fire", "image_uris": {"png": "https://img.example/fire.png"}},
                         {"name": "Ice", "printed_name": "Ice"},
                     ],
                 },
@@ -68,19 +69,20 @@ def test_build_catalog_creates_cards_aliases_and_metadata(tmp_path):
 
     with sqlite3.connect(db_path) as conn:
         cards = conn.execute(
-            "SELECT name, layout, type_line, oracle_text, flavor_text FROM cards ORDER BY name"
+            "SELECT name, layout, type_line, oracle_text, flavor_text, image_uri FROM cards ORDER BY name"
         ).fetchall()
         aliases = conn.execute("SELECT alias, normalized_alias FROM aliases ORDER BY alias").fetchall()
         metadata = dict(conn.execute("SELECT key, value FROM catalog_metadata").fetchall())
 
     assert cards == [
-        ("Fire // Ice", "split", "Instant", "Choose one or both.", "Double trouble."),
+        ("Fire // Ice", "split", "Instant", "Choose one or both.", "Double trouble.", "https://img.example/fire.png"),
         (
             "Lightning Bolt",
             "normal",
             "Instant",
             "Lightning Bolt deals 3 damage to any target.",
             "The sparkmage shrieked, calling on the rage of the storms of his youth.",
+            "https://img.example/bolt.png",
         ),
     ]
     assert aliases == [
@@ -89,4 +91,4 @@ def test_build_catalog_creates_cards_aliases_and_metadata(tmp_path):
     ]
     assert metadata["card_count"] == "2"
     assert metadata["alias_count"] == "2"
-    assert metadata["schema_version"] == "2"
+    assert metadata["schema_version"] == "3"

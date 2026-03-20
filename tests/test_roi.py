@@ -9,7 +9,7 @@ def test_roi_ordering_respects_cycle_then_remainder():
 def test_resolve_roi_groups_for_split_layout_includes_split_panels():
     groups = resolve_roi_groups_for_layout("split")
 
-    assert groups == ["standard", "type_line", "lower_text", "split_left", "split_right"]
+    assert groups == ["standard", "type_line", "set_symbol", "lower_text", "split_left", "split_right"]
 
 
 def test_roi_group_bboxes_projects_relative_rois_inside_card_bbox():
@@ -22,6 +22,12 @@ def test_roi_group_bboxes_supports_type_line_group():
     entries = roi_group_bboxes((10, 20, 100, 200), "type_line")
 
     assert entries == [("type_line", (18, 58, 84, 16))]
+
+
+def test_roi_group_bboxes_supports_set_symbol_group():
+    entries = roi_group_bboxes((10, 20, 100, 200), "set_symbol")
+
+    assert entries == [("set_symbol", (91, 58, 10, 18))]
 
 
 def test_roi_group_bboxes_applies_global_override():

@@ -41,7 +41,7 @@ def test_recognize_card_reports_layout_specific_tried_rois():
     result = recognize_card(SplitLayoutImage())
 
     assert result.active_roi == "standard"
-    assert result.tried_rois == ["standard", "type_line", "lower_text", "split_left", "split_right"]
+    assert result.tried_rois == ["standard", "type_line", "set_symbol", "lower_text", "split_left", "split_right"]
     assert "split_left" in result.debug["normalization"]["roi_groups"]
 
 
@@ -207,6 +207,46 @@ def test_recognize_card_reports_progress(monkeypatch):
     assert "Normalizing card image..." in messages
     assert "Running OCR for ROI: standard..." in messages
     assert messages[-1].startswith("Recognition complete:")
+
+
+def test_recognize_card_can_skip_secondary_ocr_after_set_symbol_match(monkeypatch):
+    seen_roi_labels: list[str] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_roi_labels.append(roi_label)
+        lines_by_roi = {
+            "standard": ["Commander's Plate"],
+            "type_line": ["Artifact Equipment"],
+            "lower_text": ["Armor changes, but Iron Man endures."],
+        }
+        return OCRResult(
+            lines=lines_by_roi.get(roi_label, []),
+            confidence=0.95,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Commander's Plate", normalized_name="", set_code="SLD", collector_number="1733", layout="normal"),
+            CatalogRecord(name="Commander's Plate", normalized_name="", set_code="CMR", collector_number="305", layout="normal"),
+        ]
+    )
+
+    def fake_set_symbol_rerank(candidates, *, observed_crop, catalog, progress_callback=None):
+        boosted = list(candidates)
+        boosted[0].score = 0.95
+        boosted[0].notes = ["exact", "set_symbol_match"]
+        return type("Result", (), {"candidates": boosted, "debug": {"used": True}})()
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr("card_engine.api.rerank_candidates_by_set_symbol", fake_set_symbol_rerank)
+
+    result = recognize_card(DummyImage())
+
+    assert seen_roi_labels == ["standard"]
+    assert result.best_name == "Commander's Plate"
+    assert result.debug["set_symbol"]["used"] is True
 
 
 def _minimal_png(*, width: int, height: int) -> bytes:

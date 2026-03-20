@@ -63,6 +63,8 @@ The goal is to keep the engine focused, fast, and easy to integrate without leak
 
 - Full-card image hashing is **not part of v1**.
 - A narrow exception is allowed for tie-breaking: after OCR and catalog ranking have reduced the search to a small top-candidate set, the engine may compare a small normalized ROI around the set symbol area.
+- The preferred flow is to OCR the name first, then use the set-symbol ROI hash against the top name candidates before spending time on other OCR regions.
+- If the name plus set-symbol comparison is already confident enough, the engine should skip additional OCR passes on secondary ROIs.
 - This should be treated as a lightweight discriminator, not a primary recognition path.
 - The architecture should leave room for broader visual fingerprinting in v2, but v1 should remain OCR-first and metadata-driven.
 
@@ -248,6 +250,8 @@ Matching strategy:
 
 - Exact normalized title match.
 - Fuzzy title match.
+- Use title OCR to generate the first candidate set as early as possible.
+- Use set-symbol ROI hashing to break near-ties among same-name or near-equal title candidates before running more expensive secondary OCR when possible.
 - Use other OCR regions and card properties to narrow candidates.
 - Rerank candidates based on consistency across multiple OCR regions.
 - When top candidates remain tied or near-tied, optionally compare a small set-symbol ROI against candidate-specific references using a lightweight image hash.
@@ -271,6 +275,7 @@ Combine signals into a final ranked result.
 Possible features:
 
 - OCR title similarity.
+- Early set-symbol hash agreement after title OCR.
 - Alternate ROI agreement.
 - Type-line agreement.
 - Layout compatibility.
@@ -516,12 +521,11 @@ What is effectively done today:
 - [ ] Milestone 6 is partially complete.
 - [ ] Milestone 7 is partially complete.
 - [ ] Milestone 8 is partially complete.
-- [ ] Milestone 9 has not started.
+- [ ] Milestone 9 is partially complete.
 
 Recommended next step:
 
-- Finish **Milestone 5: OCR MVP** by validating PaddleOCR on real cropped image inputs instead of simulated hints alone.
-- Continue **Milestone 6: Matching and Scoring MVP** with fixture-driven tuning, especially improving tie-breaking from OCR noise and validating confidence on a curated card set.
+- Continue **Milestone 9: Accuracy and Hardening** by finishing the set-symbol ROI hash tie-breaker, then measuring whether the fast title-plus-symbol path lets the engine skip secondary OCR while still improving top-1 accuracy on near-tied printings.
 
 ### Implementation Sequencing Adjustment
 
@@ -754,10 +758,11 @@ Recommended early implementation order:
 
 **Status**
 
-- [ ] Fixture-based evaluation tool.
+- [x] Fixture-based evaluation tool.
 - [ ] Confidence calibration.
 - [ ] Better tie-breaking from non-collector OCR regions.
 - [ ] Set-symbol ROI hash tie-breaker for near-equal top candidates.
+- [ ] Fast-path skip of secondary OCR when title plus set-symbol evidence is already confident enough.
 - [ ] Improved region cropping.
 - [ ] Documented extension points for image hashing in v2.
 - [ ] Performance profiling.
@@ -768,6 +773,7 @@ Recommended early implementation order:
 - Confidence calibration.
 - Better tie-breaking from non-collector OCR regions.
 - Set-symbol ROI hash tie-breaker for near-equal top candidates.
+- Fast-path skip of secondary OCR when title plus set-symbol evidence is already confident enough.
 - Improved region cropping.
 - Documented extension points for image hashing in v2.
 - Performance profiling.
@@ -778,6 +784,7 @@ Recommended early implementation order:
 - Reproducible eval workflow exists.
 - Common failure modes are documented.
 - Same-name printings with distinct set symbols can be separated when OCR text alone is insufficient.
+- Secondary OCR passes can be skipped on a meaningful subset of fixtures without hurting baseline accuracy.
 - v2 path for visual fingerprinting is defined without affecting v1 simplicity.
 
 ---
