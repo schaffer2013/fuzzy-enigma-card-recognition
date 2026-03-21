@@ -213,5 +213,6 @@ __marimo__/
 *.jpg
 
 data/cache/*
+data/sample_outputs/
 .pytest*
 *default-cards.json

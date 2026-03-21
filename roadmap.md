@@ -7,7 +7,7 @@ Build a lightweight card recognition engine in its own repository that:
 - Takes an input image.
 - Finds the probable card bounding box.
 - Crops and normalizes the card region.
-- Performs OCR with PaddleOCR.
+- Performs OCR on targeted card regions.
 - Matches OCR and structural signals against a local card catalog derived from Scryfall/Scrython data.
 - Exposes a small, stable adapter that can be incorporated into `SortingMachineArray` as a git submodule.
 - Includes a Pygame-based UI for debugging, inspection, and fixture review.
@@ -25,7 +25,7 @@ The goal is to keep the engine focused, fast, and easy to integrate without leak
    - Warp the detected card to a canonical size/orientation.
    - Produce stable crops for OCR and matching.
 3. **OCR-first recognition**
-   - Use PaddleOCR on targeted regions of the normalized card.
+   - Use a practical OCR backend on targeted regions of the normalized card.
    - Extract likely card title and supporting properties.
 4. **Local offline catalog**
    - Maintain a local searchable catalog of ~50k-60k unique cards.
@@ -228,7 +228,7 @@ The system does not need to fully classify every layout perfectly before OCR. It
 
 ### 5. OCR Layer
 
-Use PaddleOCR on targeted regions, not the entire source image.
+Use OCR on targeted regions, not the entire source image.
 
 Primary OCR targets for v1:
 
@@ -524,15 +524,15 @@ What is effectively done today:
 - [x] Milestone 2 is complete.
 - [x] Milestone 3 is complete.
 - [x] Milestone 4 is complete.
-- [ ] Milestone 5 is partially complete.
-- [ ] Milestone 6 is partially complete.
+- [x] Milestone 5 is complete.
+- [x] Milestone 6 is complete.
 - [ ] Milestone 7 is partially complete.
 - [ ] Milestone 8 is partially complete.
 - [ ] Milestone 9 is partially complete.
 
 Recommended next step:
 
-- Continue **Milestone 9: Accuracy and Hardening** by finishing the set-symbol ROI hash tie-breaker, then measuring whether the fast title-plus-symbol path lets the engine skip secondary OCR while still improving top-1 accuracy on near-tied printings.
+- Continue **Milestone 9: Accuracy and Hardening** by expanding fixture evaluation, calibrating confidence, and measuring name/set/art accuracy on larger random samples.
 
 ### Implementation Sequencing Adjustment
 
@@ -667,7 +667,7 @@ Recommended early implementation order:
 
 **Status**
 
-- [ ] PaddleOCR integration.
+- [x] OCR backend integration.
 - [x] Title-region OCR.
 - [x] Alternate-ROI OCR.
 - [x] OCR result normalization.
@@ -675,7 +675,7 @@ Recommended early implementation order:
 
 **Deliverables**
 
-- PaddleOCR integration.
+- OCR backend integration.
 - Title-region OCR.
 - Alternate-ROI OCR.
 - OCR result normalization.
@@ -845,6 +845,8 @@ Add a script to run batch evaluation against fixture folders and output:
 
 - Top-1 accuracy.
 - Top-5 accuracy.
+- Set accuracy.
+- Art/printing accuracy.
 - Average confidence.
 - Common error classes.
 - ROI usage statistics for atypical layouts.

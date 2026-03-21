@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 SCRYFALL_BULK_DATA_URL = "https://api.scryfall.com/bulk-data/default-cards"
 USER_AGENT = "card-recognition-engine/0.1.0"
+DEFAULT_RANDOM_CARD_CACHE_LIMIT = 60
 REQUEST_HEADERS = {
     "User-Agent": USER_AGENT,
     "Accept": "application/json;q=0.9,*/*;q=0.8",
@@ -36,6 +37,7 @@ def fetch_random_card_image(
     *,
     client_factory=None,
     downloader=None,
+    max_cached_cards: int = DEFAULT_RANDOM_CARD_CACHE_LIMIT,
 ) -> Path:
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -57,7 +59,42 @@ def fetch_random_card_image(
         json.dumps(_build_fixture_sidecar(card), indent=2, sort_keys=True),
         encoding="utf-8",
     )
+    prune_random_card_cache(output_root, max_cards=max_cached_cards)
     return output_path
+
+
+def prune_random_card_cache(
+    output_dir: str | Path,
+    *,
+    max_cards: int = DEFAULT_RANDOM_CARD_CACHE_LIMIT,
+) -> int:
+    if max_cards < 1:
+        raise ValueError("max_cards must be at least 1.")
+
+    output_root = Path(output_dir)
+    if not output_root.exists():
+        return 0
+
+    grouped: dict[str, list[Path]] = {}
+    for path in output_root.iterdir():
+        if not path.is_file():
+            continue
+        grouped.setdefault(path.stem, []).append(path)
+
+    if len(grouped) <= max_cards:
+        return 0
+
+    ordered_groups = sorted(
+        grouped.items(),
+        key=lambda item: max(member.stat().st_mtime for member in item[1]),
+        reverse=True,
+    )
+    removed_count = 0
+    for _stem, paths in ordered_groups[max_cards:]:
+        for path in paths:
+            path.unlink(missing_ok=True)
+        removed_count += 1
+    return removed_count
 
 
 def _build_random_card_client():
@@ -147,6 +184,8 @@ def _build_fixture_sidecar(card) -> dict:
     type_line = _extract_card_value(card, "type_line", default="")
     oracle_text = _extract_card_value(card, "oracle_text", default="")
     layout = _extract_card_value(card, "layout", default="normal")
+    set_code = _extract_card_value(card, "set", default="")
+    collector_number = _extract_card_value(card, "collector_number", default="")
     face_payload = _extract_card_value(card, "card_faces", default=[])
 
     ocr_text_by_roi: dict[str, str] = {}
@@ -161,6 +200,9 @@ def _build_fixture_sidecar(card) -> dict:
         ocr_text_by_roi.update(_face_roi_mapping(face_payload, layout))
 
     return {
+        "expected_name": card_name or None,
+        "expected_set_code": set_code or None,
+        "expected_collector_number": str(collector_number) if collector_number else None,
         "layout_hint": layout,
         "ocr_text_by_roi": ocr_text_by_roi,
     }

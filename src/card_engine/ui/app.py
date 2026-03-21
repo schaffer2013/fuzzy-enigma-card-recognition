@@ -9,7 +9,7 @@ from tkinter import ttk
 
 from card_engine.api import recognize_card
 from card_engine.catalog.maintenance import catalog_refresh_needed, ensure_catalog_ready
-from card_engine.catalog.scryfall_sync import fetch_random_card_image
+from card_engine.catalog.scryfall_sync import fetch_random_card_image, prune_random_card_cache
 from card_engine.roi import DEFAULT_ENABLED_ROI_GROUPS, roi_group_bboxes
 from card_engine.utils.geometry import Quad, quad_from_bbox
 from card_engine.utils.image_io import load_image
@@ -138,6 +138,7 @@ class CardEngineDebugUI:
 
         self._build_layout()
         self._bind_shortcuts()
+        self._prune_random_cache_if_needed()
         self._ensure_catalog()
         self._refresh()
 
@@ -739,6 +740,16 @@ class CardEngineDebugUI:
             self.state.status_message = (
                 f"Catalog reused ({status.age_days:.1f} days old)." if status.age_days is not None else "Catalog reused."
             )
+
+    def _prune_random_cache_if_needed(self) -> None:
+        random_cache_dir = Path(_default_random_cache_dir()).resolve()
+        active_fixtures_dir = Path(self.fixtures_dir).resolve()
+        if active_fixtures_dir != random_cache_dir:
+            return
+
+        removed_cards = prune_random_card_cache(random_cache_dir)
+        if removed_cards > 0:
+            self.state.status_message = f"Pruned {removed_cards} old random card fixture(s) from cache."
 
     def _on_close(self) -> None:
         self._save_overrides()

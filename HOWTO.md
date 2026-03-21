@@ -23,6 +23,15 @@ For fixture-level accuracy checks outside the UI, run:
 .\.venv\Scripts\python.exe scripts\eval_fixture_set.py --fixtures-dir data\cache\random_cards
 ```
 
+For a fresh 100-card random accuracy run, use:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\eval_fixture_set.py `
+  --random-sample 100 `
+  --random-output-dir data\sample_outputs\random_eval_cards `
+  --json-out data\sample_outputs\random-eval-summary.json
+```
+
 ## Main Window
 
 There is one page today: the main debug window.
@@ -60,8 +69,9 @@ or ROI edits that are currently in effect.
 
 `Random Card`
 Fetches a random card image using Scrython, stores it under
-`data/cache/random_cards`, inserts it at the top of the fixture list, and
-immediately runs recognition on it.
+`data/cache/random_cards`, inserts it at the top of the fixture list, prunes
+older random-card fixtures beyond the cache cap, and immediately runs
+recognition on it.
 
 `Reset BBox`
 Clears the saved manual bbox/quad override for the selected fixture.
@@ -188,6 +198,10 @@ panel will explain why.
 Random downloads are cached locally so you can inspect them again without
 having to keep them only in memory.
 
+The random-card cache is capped automatically at 60 cards so it does not grow
+forever. Older random-card image-plus-sidecar pairs are pruned, keeping the
+newest downloads.
+
 ## Evaluation Workflow
 
 Use the evaluation script when you want repeatable accuracy metrics on a folder
@@ -205,15 +219,21 @@ The script currently reports:
 
 - fixture count
 - scored fixture count
-- top-1 accuracy
-- top-5 accuracy
+- set-scored fixture count
+- art-scored fixture count
+- name top-1 accuracy
+- name top-5 accuracy
+- set accuracy
+- art accuracy
 - average confidence
 - ROI usage
 - error-class counts
 - a short list of top mismatches
 
 Expected names come from sidecar metadata when available, with a filename
-fallback for cached random-card images.
+fallback for cached random-card images. Set accuracy uses the expected set code
+from the sidecar. Art accuracy means exact printing accuracy, using the
+expected set code plus collector number from the sidecar.
 
 ## Recognition Flow Notes
 

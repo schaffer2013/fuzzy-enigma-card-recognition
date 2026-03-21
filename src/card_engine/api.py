@@ -60,9 +60,10 @@ def recognize_card(image: Any, *, progress_callback=None) -> RecognitionResult:
     active_index = next((index for index, result in enumerate(ocr_results) if result.lines), 0)
     active_roi = title_rois[active_index] if title_rois else None
     ocr = ocr_results[active_index] if ocr_results else run_ocr(normalized.normalized_image, roi_label=None)
+    title_match_lines = list(ocr.lines)
     _notify(progress_callback, "Matching OCR text against catalog...")
     candidates = match_candidates(
-        ocr.lines,
+        title_match_lines,
         limit=candidate_pool_limit,
         catalog=catalog,
         results_by_roi=results_by_roi,
@@ -117,7 +118,7 @@ def recognize_card(image: Any, *, progress_callback=None) -> RecognitionResult:
         )
         _notify(progress_callback, "Re-ranking with secondary OCR signals...")
         candidates = match_candidates(
-            ocr.lines,
+            title_match_lines,
             limit=candidate_pool_limit,
             catalog=catalog,
             results_by_roi=results_by_roi,
