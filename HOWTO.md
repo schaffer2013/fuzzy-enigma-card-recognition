@@ -32,6 +32,23 @@ For a fresh random accuracy run with a 10-minute cap, use:
   --json-out data\sample_outputs\random-eval-summary.json
 ```
 
+To override engine behavior without editing code, create `data\config\engine.json`
+or point `CARD_ENGINE_CONFIG_PATH` at a JSON file. A starter example lives at
+`data\config\engine.sample.json`.
+
+Useful lazy optimization toggles include:
+
+- `lazy_group_basic_land_printings`: collapse same-name basic lands to one
+  default printing before visual tie-break work
+- `lazy_default_printing_by_name`: collapse every card name to one default
+  printing before visual tie-break work
+- `max_visual_tiebreak_candidates`: cap how many near-tied printings enter the
+  set-symbol and art comparison steps
+- `max_visual_tiebreak_seconds_per_card`: stop visual tie-break work once a
+  card has spent this much time in those steps
+- `reference_download_timeout_seconds`: cap per-reference download waits during
+  visual comparisons
+
 ## Main Window
 
 There is one page today: the main debug window.
@@ -238,9 +255,10 @@ from the sidecar. Art accuracy means exact printing accuracy, using the
 expected set code plus collector number from the sidecar.
 
 When you use `--random-time-limit-minutes`, the script fetches and evaluates
-random cards until the time budget is exhausted. The limit is checked between
-cards, so the final card in progress may slightly overrun the exact wall-clock
-budget.
+random cards until the time budget is exhausted. The deadline is enforced both
+between cards and inside recognition's expensive visual tie-break path, so the
+final card is now bounded instead of running indefinitely on pathological
+same-name pools.
 
 For confidence tuning, compare each bin's `avg_confidence` to its actual
 `accuracy`. High-confidence bins with noticeably lower realized accuracy are

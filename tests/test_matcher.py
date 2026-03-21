@@ -1,4 +1,5 @@
 from card_engine.catalog.local_index import CatalogRecord, LocalCatalogIndex
+from card_engine.config import EngineConfig
 from card_engine.matcher import match_candidates
 
 
@@ -139,6 +140,44 @@ def test_matcher_expands_strong_fuzzy_match_to_all_same_name_printings():
 
     assert len(candidates) == 30
     assert all(candidate.name == "Evolving Wilds" for candidate in candidates)
+
+
+def test_matcher_can_collapse_basic_land_printings_with_lazy_config():
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Swamp", normalized_name="", set_code="A", collector_number="1", type_line="Basic Land - Swamp"),
+            CatalogRecord(name="Swamp", normalized_name="", set_code="B", collector_number="2", type_line="Basic Land - Swamp"),
+            CatalogRecord(name="Swamp", normalized_name="", set_code="C", collector_number="3", type_line="Basic Land - Swamp"),
+        ]
+    )
+
+    candidates = match_candidates(
+        ["Swamp"],
+        catalog=catalog,
+        config=EngineConfig(lazy_group_basic_land_printings=True),
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].name == "Swamp"
+
+
+def test_matcher_can_collapse_all_printings_to_default_when_enabled():
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Opt", normalized_name="", set_code="XLN", collector_number="65", type_line="Instant"),
+            CatalogRecord(name="Opt", normalized_name="", set_code="STA", collector_number="19", type_line="Instant"),
+            CatalogRecord(name="Opt", normalized_name="", set_code="DOM", collector_number="60", type_line="Instant"),
+        ]
+    )
+
+    candidates = match_candidates(
+        ["Opt"],
+        catalog=catalog,
+        config=EngineConfig(lazy_default_printing_by_name=True),
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].name == "Opt"
 
 
 def test_matcher_falls_back_when_catalog_missing():

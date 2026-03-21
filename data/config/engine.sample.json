@@ -1,0 +1,7 @@
+{
+  "lazy_group_basic_land_printings": true,
+  "lazy_default_printing_by_name": false,
+  "max_visual_tiebreak_candidates": 4,
+  "max_visual_tiebreak_seconds_per_card": 10.0,
+  "reference_download_timeout_seconds": 5.0
+}

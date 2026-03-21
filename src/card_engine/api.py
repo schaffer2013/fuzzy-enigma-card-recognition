@@ -1,11 +1,13 @@
 from pathlib import Path
 from functools import lru_cache
 from typing import Any
+import inspect
+import time
 
 from .art_match import rerank_candidates_by_art
 from .catalog.maintenance import ensure_catalog_ready
 from .catalog.local_index import LocalCatalogIndex
-from .config import EngineConfig
+from .config import EngineConfig, load_engine_config
 from .detector import detect_card
 from .matcher import match_candidates
 from .models import RecognitionResult
@@ -20,10 +22,16 @@ TITLE_FIRST_ROIS = {"standard", "split_left", "split_right", "adventure", "trans
 VISUAL_ONLY_ROIS = {"set_symbol", "art_match"}
 
 
-def recognize_card(image: Any, *, progress_callback=None) -> RecognitionResult:
+def recognize_card(
+    image: Any,
+    *,
+    progress_callback=None,
+    deadline: float | None = None,
+    config: EngineConfig | None = None,
+) -> RecognitionResult:
     _notify(progress_callback, "Preparing image input...")
     prepared_image = _prepare_image_input(image)
-    config = EngineConfig()
+    config = config or load_engine_config()
     candidate_pool_limit = max(config.candidate_count * 4, config.candidate_count)
     catalog = _load_catalog(config.catalog_path)
     _notify(progress_callback, "Detecting card bounds...")
@@ -68,36 +76,52 @@ def recognize_card(image: Any, *, progress_callback=None) -> RecognitionResult:
         catalog=catalog,
         results_by_roi=results_by_roi,
         layout_hint=layout_hint,
+        config=config,
     )
     set_symbol_debug = {"used": False, "reason": "not_attempted"}
     art_match_debug = {"used": False, "reason": "not_attempted"}
     set_symbol_crop = _first_crop_for_group(normalized.crops, "set_symbol")
     art_match_crop = _first_crop_for_group(normalized.crops, "art_match")
-    if candidates and set_symbol_crop is not None:
+    visual_deadline = _resolve_visual_deadline(deadline, config)
+    if candidates and set_symbol_crop is not None and not _deadline_exceeded(deadline):
         _notify(progress_callback, "Comparing set symbol against top candidates...")
-        set_symbol_result = rerank_candidates_by_set_symbol(
+        set_symbol_result = _call_with_supported_kwargs(
+            rerank_candidates_by_set_symbol,
             candidates,
             observed_crop=set_symbol_crop,
             catalog=catalog,
             progress_callback=progress_callback,
+            max_comparisons=config.max_visual_tiebreak_candidates,
+            deadline=visual_deadline,
+            download_timeout_seconds=config.reference_download_timeout_seconds,
         )
         candidates = set_symbol_result.candidates
         set_symbol_debug = set_symbol_result.debug
-    if candidates and art_match_crop is not None:
+    elif candidates and set_symbol_crop is not None:
+        set_symbol_debug = {"used": False, "reason": "deadline_exceeded"}
+    if candidates and art_match_crop is not None and not _deadline_exceeded(deadline):
         _notify(progress_callback, "Comparing art region against top candidates...")
-        art_match_result = rerank_candidates_by_art(
+        art_match_result = _call_with_supported_kwargs(
+            rerank_candidates_by_art,
             candidates,
             observed_crop=art_match_crop,
             catalog=catalog,
             progress_callback=progress_callback,
+            max_comparisons=config.max_visual_tiebreak_candidates,
+            deadline=visual_deadline,
+            download_timeout_seconds=config.reference_download_timeout_seconds,
         )
         candidates = art_match_result.candidates
         art_match_debug = art_match_result.debug
+    elif candidates and art_match_crop is not None:
+        art_match_debug = {"used": False, "reason": "deadline_exceeded"}
     _notify(progress_callback, "Scoring candidates...")
     best_name, confidence = score_candidates(candidates)
 
-    if secondary_rois and not should_skip_secondary_ocr(candidates, confidence):
+    if secondary_rois and not _deadline_exceeded(deadline) and not should_skip_secondary_ocr(candidates, confidence):
         for roi_group in secondary_rois:
+            if _deadline_exceeded(deadline):
+                break
             _notify(progress_callback, f"Running OCR for ROI: {roi_group}...")
             result = run_ocr(
                 normalized.normalized_image,
@@ -123,22 +147,31 @@ def recognize_card(image: Any, *, progress_callback=None) -> RecognitionResult:
             catalog=catalog,
             results_by_roi=results_by_roi,
             layout_hint=layout_hint,
+            config=config,
         )
-        if set_symbol_crop is not None:
-            set_symbol_result = rerank_candidates_by_set_symbol(
+        if set_symbol_crop is not None and not _deadline_exceeded(deadline):
+            set_symbol_result = _call_with_supported_kwargs(
+                rerank_candidates_by_set_symbol,
                 candidates,
                 observed_crop=set_symbol_crop,
                 catalog=catalog,
                 progress_callback=progress_callback,
+                max_comparisons=config.max_visual_tiebreak_candidates,
+                deadline=visual_deadline,
+                download_timeout_seconds=config.reference_download_timeout_seconds,
             )
             candidates = set_symbol_result.candidates
             set_symbol_debug = set_symbol_result.debug
-        if art_match_crop is not None:
-            art_match_result = rerank_candidates_by_art(
+        if art_match_crop is not None and not _deadline_exceeded(deadline):
+            art_match_result = _call_with_supported_kwargs(
+                rerank_candidates_by_art,
                 candidates,
                 observed_crop=art_match_crop,
                 catalog=catalog,
                 progress_callback=progress_callback,
+                max_comparisons=config.max_visual_tiebreak_candidates,
+                deadline=visual_deadline,
+                download_timeout_seconds=config.reference_download_timeout_seconds,
             )
             candidates = art_match_result.candidates
             art_match_debug = art_match_result.debug
@@ -199,7 +232,37 @@ def _load_catalog(db_path: str) -> LocalCatalogIndex:
 
 def _notify(callback, message: str) -> None:
     if callback is not None:
-        callback(message)
+        try:
+            callback(message)
+        except UnicodeEncodeError:
+            callback(str(message).encode("ascii", "replace").decode("ascii"))
+
+
+def _call_with_supported_kwargs(function, *args, **kwargs):
+    signature = inspect.signature(function)
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
+        return function(*args, **kwargs)
+
+    supported_kwargs = {
+        key: value
+        for key, value in kwargs.items()
+        if key in signature.parameters
+    }
+    return function(*args, **supported_kwargs)
+
+
+def _deadline_exceeded(deadline: float | None) -> bool:
+    return deadline is not None and time.monotonic() >= deadline
+
+
+def _resolve_visual_deadline(deadline: float | None, config: EngineConfig) -> float | None:
+    per_card_cap = max(0.0, config.max_visual_tiebreak_seconds_per_card)
+    if per_card_cap <= 0:
+        return deadline
+    capped_deadline = time.monotonic() + per_card_cap
+    if deadline is None:
+        return capped_deadline
+    return min(deadline, capped_deadline)
 
 
 class OCR_like:

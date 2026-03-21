@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import re
 import shutil
@@ -11,6 +12,7 @@ from typing import Callable
 
 from .api import recognize_card
 from .catalog.scryfall_sync import fetch_random_card_image
+from .config import EngineConfig, load_engine_config
 from .utils.image_io import LoadedImage, load_image
 
 SUPPORTED_SUFFIXES = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
@@ -121,12 +123,23 @@ def discover_fixture_paths(fixtures_dir: str | Path) -> list[Path]:
     )
 
 
-def evaluate_fixture_set(fixtures_dir: str | Path, *, limit: int | None = None) -> EvaluationSummary:
+def evaluate_fixture_set(
+    fixtures_dir: str | Path,
+    *,
+    limit: int | None = None,
+    deadline: float | None = None,
+    config: EngineConfig | None = None,
+) -> EvaluationSummary:
     fixture_paths = discover_fixture_paths(fixtures_dir)
     if limit is not None:
         fixture_paths = fixture_paths[: max(0, limit)]
 
-    evaluations = [evaluate_fixture(path) for path in fixture_paths]
+    config = config or load_engine_config()
+    evaluations: list[FixtureEvaluation] = []
+    for path in fixture_paths:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
+        evaluations.append(_call_with_supported_kwargs(evaluate_fixture, path, deadline=deadline, config=config))
     return _summarize_evaluations(evaluations)
 
 
@@ -141,6 +154,7 @@ def evaluate_random_sample(
         raise ValueError("time_limit_seconds must be greater than 0.")
 
     deadline = clock() + time_limit_seconds
+    config = load_engine_config()
     output_root = Path(output_dir)
     if output_root.exists():
         shutil.rmtree(output_root)
@@ -153,7 +167,7 @@ def evaluate_random_sample(
         _notify(progress_callback, f"Fetched random card {card_index}: {path.name}")
         if clock() >= deadline:
             break
-        evaluations.append(evaluate_fixture(path))
+        evaluations.append(_call_with_supported_kwargs(evaluate_fixture, path, deadline=deadline, config=config))
         _notify(progress_callback, f"Evaluated random card {card_index}: {path.name}")
 
     return _summarize_evaluations(evaluations)
@@ -202,11 +216,16 @@ def _summarize_evaluations(evaluations: list[FixtureEvaluation]) -> EvaluationSu
     )
 
 
-def evaluate_fixture(path: str | Path) -> FixtureEvaluation:
+def evaluate_fixture(
+    path: str | Path,
+    *,
+    deadline: float | None = None,
+    config: EngineConfig | None = None,
+) -> FixtureEvaluation:
     fixture_path = Path(path)
     loaded_image = load_image(fixture_path)
     expected = infer_fixture_expectation(loaded_image)
-    result = recognize_card(loaded_image)
+    result = _call_with_supported_kwargs(recognize_card, loaded_image, deadline=deadline, config=config)
     best_candidate = result.top_k_candidates[0] if result.top_k_candidates else None
     candidate_names = [candidate.name for candidate in result.top_k_candidates]
     predicted_set_code = best_candidate.set_code if best_candidate else None
@@ -431,7 +450,23 @@ def _coerce_string(value: object) -> str | None:
 
 def _notify(callback: ProgressCallback | None, message: str) -> None:
     if callback is not None:
-        callback(message)
+        try:
+            callback(message)
+        except UnicodeEncodeError:
+            callback(str(message).encode("ascii", "replace").decode("ascii"))
+
+
+def _call_with_supported_kwargs(function, *args, **kwargs):
+    signature = inspect.signature(function)
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
+        return function(*args, **kwargs)
+
+    supported_kwargs = {
+        key: value
+        for key, value in kwargs.items()
+        if key in signature.parameters
+    }
+    return function(*args, **supported_kwargs)
 
 
 def _infer_name_from_path(path: Path) -> str | None:

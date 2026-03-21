@@ -3,6 +3,7 @@ from __future__ import annotations
 from difflib import SequenceMatcher
 
 from .catalog.local_index import CatalogMatch, LocalCatalogIndex
+from .config import EngineConfig
 from .models import Candidate
 from .utils.text_normalize import normalize_text
 
@@ -15,6 +16,19 @@ LOWER_TEXT_MISMATCH_PENALTY = 0.05
 LAYOUT_MISMATCH_PENALTY = 0.08
 NOISY_TITLE_PENALTY = 0.04
 FUZZY_PRINTING_EXPANSION_THRESHOLD = 0.84
+BASIC_LAND_NAMES = {
+    "plains",
+    "island",
+    "swamp",
+    "mountain",
+    "forest",
+    "wastes",
+    "snow covered plains",
+    "snow covered island",
+    "snow covered swamp",
+    "snow covered mountain",
+    "snow covered forest",
+}
 
 
 def match_candidates(
@@ -24,7 +38,9 @@ def match_candidates(
     *,
     results_by_roi: dict[str, dict] | None = None,
     layout_hint: str | None = None,
+    config: EngineConfig | None = None,
 ) -> list[Candidate]:
+    config = config or EngineConfig()
     title_query = _select_title_query(ocr_lines, results_by_roi)
     if not title_query:
         return []
@@ -35,7 +51,11 @@ def match_candidates(
     if catalog is not None:
         matches = catalog.search_name(title_query, limit=max(limit * 3, limit))
         if matches:
-            matches, expanded_for_printing_tiebreak = _expand_matches_for_printing_tiebreak(matches, catalog)
+            matches, collapsed_for_lazy_optimization = _apply_lazy_printing_optimizations(matches, config)
+            if collapsed_for_lazy_optimization:
+                expanded_for_printing_tiebreak = False
+            else:
+                matches, expanded_for_printing_tiebreak = _expand_matches_for_printing_tiebreak(matches, catalog)
             reranked = [
                 _candidate_from_catalog_match(
                     match,
@@ -47,7 +67,10 @@ def match_candidates(
                 for match in matches
             ]
             reranked.sort(key=lambda candidate: (-candidate.score, candidate.name))
-            if any(match.match_type == "exact" for match in matches) or expanded_for_printing_tiebreak:
+            if (
+                not collapsed_for_lazy_optimization
+                and (any(match.match_type == "exact" for match in matches) or expanded_for_printing_tiebreak)
+            ):
                 return reranked
             return reranked[:limit]
 
@@ -243,3 +266,36 @@ def _expand_matches_for_printing_tiebreak(
         )
         seen.add(key)
     return expanded, len(expanded) > len(matches)
+
+
+def _apply_lazy_printing_optimizations(
+    matches: list[CatalogMatch],
+    config: EngineConfig,
+) -> tuple[list[CatalogMatch], bool]:
+    if not matches:
+        return matches, False
+    if config.lazy_default_printing_by_name:
+        return _collapse_matches_to_default_printing(matches), True
+    if config.lazy_group_basic_land_printings and _is_basic_land_record(matches[0].record):
+        return _collapse_matches_to_default_printing(matches), True
+    return matches, False
+
+
+def _collapse_matches_to_default_printing(matches: list[CatalogMatch]) -> list[CatalogMatch]:
+    collapsed: list[CatalogMatch] = []
+    seen_names: set[str] = set()
+    for match in matches:
+        normalized_name = normalize_text(match.record.name)
+        if normalized_name in seen_names:
+            continue
+        seen_names.add(normalized_name)
+        collapsed.append(match)
+    return collapsed
+
+
+def _is_basic_land_record(record) -> bool:
+    normalized_name = normalize_text(record.name)
+    if normalized_name in BASIC_LAND_NAMES:
+        return True
+    normalized_type_line = normalize_text(record.type_line or "")
+    return normalized_type_line.startswith("basic land")

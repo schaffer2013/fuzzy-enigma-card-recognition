@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
@@ -46,6 +47,9 @@ def rerank_candidates_by_art(
     observed_crop: CropRegion | None,
     catalog: LocalCatalogIndex | None,
     progress_callback: Callable[[str], None] | None = None,
+    max_comparisons: int | None = None,
+    deadline: float | None = None,
+    download_timeout_seconds: float = 10.0,
 ) -> ArtRerankResult:
     if not candidates or catalog is None:
         return ArtRerankResult(candidates=candidates, debug={"used": False, "reason": "missing_inputs"})
@@ -58,13 +62,17 @@ def rerank_candidates_by_art(
     if observed_fingerprint is None:
         return ArtRerankResult(candidates=candidates, debug={"used": False, "reason": "unhashable_observed"})
 
-    comparison_indices = _candidate_indices_for_art_compare(candidates)
+    comparison_indices = _candidate_indices_for_art_compare(candidates, max_comparisons=max_comparisons)
     if not comparison_indices:
         return ArtRerankResult(candidates=candidates, debug={"used": False, "reason": "not_needed"})
 
     comparisons: list[dict] = []
     similarity_by_index: dict[int, float] = {}
+    deadline_exceeded = False
     for index in comparison_indices:
+        if deadline is not None and time.monotonic() >= deadline:
+            deadline_exceeded = True
+            break
         candidate = candidates[index]
         record = _lookup_record_for_candidate(catalog, candidate)
         if record is None or not record.image_uri:
@@ -73,6 +81,7 @@ def rerank_candidates_by_art(
             record,
             observed_fingerprint=observed_fingerprint,
             progress_callback=progress_callback,
+            download_timeout_seconds=download_timeout_seconds,
         )
         if similarity is None:
             continue
@@ -93,7 +102,7 @@ def rerank_candidates_by_art(
                 "used": False,
                 "comparisons": comparisons,
                 "observed_crop_label": observed_crop.label,
-                "reason": "no_reference_match",
+                "reason": _comparison_reason(comparisons, deadline_exceeded),
             },
         )
 
@@ -153,7 +162,7 @@ def rerank_candidates_by_art(
                 "edge_dhash_prefix": observed_fingerprint["edge_dhash"][:24],
                 "mean_bgr": observed_fingerprint["mean_bgr"],
             },
-            "reason": "applied" if comparisons else "no_reference_match",
+            "reason": _comparison_reason(comparisons, deadline_exceeded),
         },
     )
 
@@ -167,7 +176,11 @@ def _should_apply_art_tiebreak(candidates: list[Candidate]) -> bool:
     return abs(first.score - second.score) <= 0.1
 
 
-def _candidate_indices_for_art_compare(candidates: list[Candidate]) -> list[int]:
+def _candidate_indices_for_art_compare(
+    candidates: list[Candidate],
+    *,
+    max_comparisons: int | None = None,
+) -> list[int]:
     if not candidates:
         return []
     best = candidates[0]
@@ -178,6 +191,8 @@ def _candidate_indices_for_art_compare(candidates: list[Candidate]) -> list[int]
         if (best.score - candidate.score) > ART_MATCH_SCORE_WINDOW:
             continue
         indices.append(index)
+        if max_comparisons is not None and max_comparisons > 0 and len(indices) >= max_comparisons:
+            break
     if len(indices) < 2:
         return []
     return indices
@@ -200,8 +215,13 @@ def _reference_similarity_for_record(
     *,
     observed_fingerprint: dict[str, float | str | list[float]],
     progress_callback: Callable[[str], None] | None = None,
+    download_timeout_seconds: float = 10.0,
 ) -> float | None:
-    reference_fingerprint = _load_or_compute_reference_fingerprint(record, progress_callback=progress_callback)
+    reference_fingerprint = _load_or_compute_reference_fingerprint(
+        record,
+        progress_callback=progress_callback,
+        download_timeout_seconds=download_timeout_seconds,
+    )
     if reference_fingerprint is None:
         return None
     return _fingerprint_similarity(observed_fingerprint, reference_fingerprint)
@@ -211,6 +231,7 @@ def _load_or_compute_reference_fingerprint(
     record: CatalogRecord,
     *,
     progress_callback: Callable[[str], None] | None = None,
+    download_timeout_seconds: float = 10.0,
 ) -> dict[str, float | str | list[float]] | None:
     if not record.image_uri:
         return None
@@ -225,10 +246,9 @@ def _load_or_compute_reference_fingerprint(
         if _is_valid_fingerprint(payload):
             return payload
 
-    if progress_callback is not None:
-        progress_callback(f"Comparing art region for {record.set_code or '?'} {record.collector_number or ''}...")
+    _notify(progress_callback, f"Comparing art region for {record.set_code or '?'} {record.collector_number or ''}...")
 
-    image = _download_reference_image(record.image_uri)
+    image = _download_reference_image(record.image_uri, download_timeout_seconds=download_timeout_seconds)
     if image is None:
         return None
     normalized = normalize_card(
@@ -252,10 +272,10 @@ def _load_or_compute_reference_fingerprint(
     return reference_fingerprint
 
 
-def _download_reference_image(image_uri: str) -> _ReferenceImage | None:
+def _download_reference_image(image_uri: str, *, download_timeout_seconds: float = 10.0) -> _ReferenceImage | None:
     request = Request(image_uri, headers=REQUEST_HEADERS)
     try:
-        with urlopen(request) as response:
+        with urlopen(request, timeout=download_timeout_seconds) as response:
             payload = response.read()
     except Exception:
         return None
@@ -388,3 +408,22 @@ def _is_valid_fingerprint(payload: object) -> bool:
         key in payload
         for key in ("gray_dhash", "edge_dhash", "hsv_histogram", "mean_bgr")
     )
+
+
+def _notify(callback: Callable[[str], None] | None, message: str) -> None:
+    if callback is None:
+        return
+    try:
+        callback(message)
+    except UnicodeEncodeError:
+        callback(str(message).encode("ascii", "replace").decode("ascii"))
+
+
+def _comparison_reason(comparisons: list[dict], deadline_exceeded: bool) -> str:
+    if deadline_exceeded and comparisons:
+        return "deadline_exceeded_partial"
+    if deadline_exceeded:
+        return "deadline_exceeded"
+    if comparisons:
+        return "applied"
+    return "no_reference_match"

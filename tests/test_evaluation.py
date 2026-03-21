@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import time
 
 from card_engine.evaluation import (
     build_random_sample,
@@ -11,6 +12,7 @@ from card_engine.evaluation import (
     render_summary,
     summary_to_json,
 )
+from card_engine.config import EngineConfig
 from card_engine.models import Candidate, RecognitionResult
 from card_engine.utils.image_io import load_image
 
@@ -229,6 +231,39 @@ def test_evaluate_random_sample_stops_when_time_limit_is_exhausted(monkeypatch, 
     assert evaluated_paths == ["card-001.png"]
     assert summary.fixture_count == 1
     assert summary.top1_accuracy == 1.0
+
+
+def test_evaluate_fixture_set_passes_deadline_and_config_to_recognizer(monkeypatch, tmp_path):
+    fixture_path = tmp_path / "opt-deadbeef.png"
+    fixture_path.write_bytes(_minimal_png(width=80, height=100))
+    fixture_path.with_suffix(".json").write_text(
+        json.dumps({"expected_name": "Opt"}),
+        encoding="utf-8",
+    )
+
+    seen: dict[str, object] = {}
+
+    def fake_recognize_card(image, *, deadline=None, config=None):
+        seen["deadline"] = deadline
+        seen["config"] = config
+        return RecognitionResult(
+            bbox=(0, 0, 80, 100),
+            best_name="Opt",
+            confidence=0.91,
+            top_k_candidates=[Candidate(name="Opt", score=0.9, set_code="XLN", collector_number="65")],
+            active_roi="standard",
+            tried_rois=["standard"],
+        )
+
+    monkeypatch.setattr("card_engine.evaluation.recognize_card", fake_recognize_card)
+
+    config = EngineConfig(lazy_default_printing_by_name=True)
+    deadline = time.monotonic() + 123.0
+    summary = evaluate_fixture_set(tmp_path, deadline=deadline, config=config)
+
+    assert summary.fixture_count == 1
+    assert seen["deadline"] == deadline
+    assert seen["config"] is config
 
 
 def _minimal_png(*, width: int, height: int) -> bytes:

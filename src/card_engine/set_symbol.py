@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
@@ -46,6 +47,9 @@ def rerank_candidates_by_set_symbol(
     observed_crop: CropRegion | None,
     catalog: LocalCatalogIndex | None,
     progress_callback: Callable[[str], None] | None = None,
+    max_comparisons: int | None = None,
+    deadline: float | None = None,
+    download_timeout_seconds: float = 10.0,
 ) -> SetSymbolRerankResult:
     if not candidates or catalog is None:
         return SetSymbolRerankResult(candidates=candidates, debug={"used": False, "reason": "missing_inputs"})
@@ -60,39 +64,44 @@ def rerank_candidates_by_set_symbol(
 
     updated: list[Candidate] = []
     comparisons: list[dict] = []
-    comparison_indices = set(_candidate_indices_for_symbol_compare(candidates))
+    comparison_indices = set(_candidate_indices_for_symbol_compare(candidates, max_comparisons=max_comparisons))
+    deadline_exceeded = False
 
     for index, candidate in enumerate(candidates):
         updated_candidate = candidate
         if index in comparison_indices:
-            record = _lookup_record_for_candidate(catalog, candidate)
-            if record is not None and record.set_code and record.image_uri:
-                similarity = _reference_similarity_for_record(
-                    record,
-                    observed_fingerprint=observed_fingerprint,
-                    progress_callback=progress_callback,
-                )
-                if similarity is not None:
-                    score_delta = round((similarity - 0.5) * 0.24, 4)
-                    notes = list(candidate.notes or [])
-                    if similarity >= SET_SYMBOL_MATCH_THRESHOLD:
-                        notes.append("set_symbol_match")
-                    else:
-                        notes.append("set_symbol_weak")
-                    updated_candidate = replace(
-                        candidate,
-                        score=max(0.0, min(1.0, round(candidate.score + score_delta, 4))),
-                        notes=notes,
+            if deadline is not None and time.monotonic() >= deadline:
+                deadline_exceeded = True
+            else:
+                record = _lookup_record_for_candidate(catalog, candidate)
+                if record is not None and record.set_code and record.image_uri:
+                    similarity = _reference_similarity_for_record(
+                        record,
+                        observed_fingerprint=observed_fingerprint,
+                        progress_callback=progress_callback,
+                        download_timeout_seconds=download_timeout_seconds,
                     )
-                    comparisons.append(
-                        {
-                            "candidate": candidate.name,
-                            "set_code": candidate.set_code,
-                            "collector_number": candidate.collector_number,
-                            "similarity": round(similarity, 4),
-                            "score_delta": score_delta,
-                        }
-                    )
+                    if similarity is not None:
+                        score_delta = round((similarity - 0.5) * 0.24, 4)
+                        notes = list(candidate.notes or [])
+                        if similarity >= SET_SYMBOL_MATCH_THRESHOLD:
+                            notes.append("set_symbol_match")
+                        else:
+                            notes.append("set_symbol_weak")
+                        updated_candidate = replace(
+                            candidate,
+                            score=max(0.0, min(1.0, round(candidate.score + score_delta, 4))),
+                            notes=notes,
+                        )
+                        comparisons.append(
+                            {
+                                "candidate": candidate.name,
+                                "set_code": candidate.set_code,
+                                "collector_number": candidate.collector_number,
+                                "similarity": round(similarity, 4),
+                                "score_delta": score_delta,
+                            }
+                        )
         updated.append(updated_candidate)
 
     updated.sort(key=lambda candidate: (-candidate.score, candidate.name, candidate.set_code or "", candidate.collector_number or ""))
@@ -106,7 +115,7 @@ def rerank_candidates_by_set_symbol(
                 "binary_mask_prefix": observed_fingerprint["binary_mask"][:24],
                 "dhash_prefix": observed_fingerprint["gray_dhash"][:24],
             },
-            "reason": "applied" if comparisons else "no_reference_match",
+            "reason": _comparison_reason(comparisons, deadline_exceeded),
         },
     )
 
@@ -148,8 +157,13 @@ def _reference_similarity_for_record(
     *,
     observed_fingerprint: dict[str, float | str],
     progress_callback: Callable[[str], None] | None = None,
+    download_timeout_seconds: float = 10.0,
 ) -> float | None:
-    reference_fingerprint = _load_or_compute_reference_hash(record, progress_callback=progress_callback)
+    reference_fingerprint = _load_or_compute_reference_hash(
+        record,
+        progress_callback=progress_callback,
+        download_timeout_seconds=download_timeout_seconds,
+    )
     if reference_fingerprint is None:
         return None
     return _fingerprint_similarity(observed_fingerprint, reference_fingerprint)
@@ -159,6 +173,7 @@ def _load_or_compute_reference_hash(
     record: CatalogRecord,
     *,
     progress_callback: Callable[[str], None] | None = None,
+    download_timeout_seconds: float = 10.0,
 ) -> dict[str, float | str] | None:
     if not record.set_code or not record.image_uri:
         return None
@@ -173,10 +188,9 @@ def _load_or_compute_reference_hash(
         if _is_valid_fingerprint(payload):
             return payload
 
-    if progress_callback is not None:
-        progress_callback(f"Comparing set symbol for {record.set_code} {record.collector_number or ''}...")
+    _notify(progress_callback, f"Comparing set symbol for {record.set_code} {record.collector_number or ''}...")
 
-    image = _download_reference_image(record.image_uri)
+    image = _download_reference_image(record.image_uri, download_timeout_seconds=download_timeout_seconds)
     if image is None:
         return None
     normalized = normalize_card(
@@ -200,10 +214,10 @@ def _load_or_compute_reference_hash(
     return reference_hash
 
 
-def _download_reference_image(image_uri: str) -> _ReferenceImage | None:
+def _download_reference_image(image_uri: str, *, download_timeout_seconds: float = 10.0) -> _ReferenceImage | None:
     request = Request(image_uri, headers=REQUEST_HEADERS)
     try:
-        with urlopen(request) as response:
+        with urlopen(request, timeout=download_timeout_seconds) as response:
             payload = response.read()
     except Exception:
         return None
@@ -374,7 +388,11 @@ def _pack_binary_mask(binary_mask) -> str:
     return f"{int(bits, 2):0{len(bits) // 4}x}"
 
 
-def _candidate_indices_for_symbol_compare(candidates: list[Candidate]) -> list[int]:
+def _candidate_indices_for_symbol_compare(
+    candidates: list[Candidate],
+    *,
+    max_comparisons: int | None = None,
+) -> list[int]:
     if not candidates:
         return []
     best = candidates[0]
@@ -385,9 +403,30 @@ def _candidate_indices_for_symbol_compare(candidates: list[Candidate]) -> list[i
         if (best.score - candidate.score) > SET_SYMBOL_SCORE_WINDOW:
             continue
         indices.append(index)
+        if max_comparisons is not None and max_comparisons > 0 and len(indices) >= max_comparisons:
+            break
     if len(indices) < 2:
         return []
     return indices
+
+
+def _notify(callback: Callable[[str], None] | None, message: str) -> None:
+    if callback is None:
+        return
+    try:
+        callback(message)
+    except UnicodeEncodeError:
+        callback(str(message).encode("ascii", "replace").decode("ascii"))
+
+
+def _comparison_reason(comparisons: list[dict], deadline_exceeded: bool) -> str:
+    if deadline_exceeded and comparisons:
+        return "deadline_exceeded_partial"
+    if deadline_exceeded:
+        return "deadline_exceeded"
+    if comparisons:
+        return "applied"
+    return "no_reference_match"
 
 
 def _reference_cache_name(record: CatalogRecord) -> str:
