@@ -20,6 +20,8 @@ def score_candidates(candidates: list[Candidate]) -> tuple[str | None, float]:
         confidence += 0.05
     if best.notes and "set_symbol_match" in best.notes:
         confidence += 0.05
+    if best.notes and "art_match" in best.notes:
+        confidence += 0.05
     if best.notes and "layout_match" in best.notes:
         confidence += 0.03
     if best.notes and "layout_mismatch" in best.notes:

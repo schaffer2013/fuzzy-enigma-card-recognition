@@ -62,8 +62,11 @@ The goal is to keep the engine focused, fast, and easy to integrate without leak
 ### Image Hashing
 
 - Full-card image hashing is **not part of v1**.
-- A narrow exception is allowed for tie-breaking: after OCR and catalog ranking have reduced the search to a small top-candidate set, the engine may compare a small normalized ROI around the set symbol area.
+- Narrow exceptions are allowed for tie-breaking: after OCR and catalog ranking have reduced the search to a small top-candidate set, the engine may compare small normalized ROIs around the set symbol area and, when needed, the art box.
 - The preferred flow is to OCR the name first, then use the set-symbol ROI hash against the top name candidates before spending time on other OCR regions.
+- If the set symbol is still too weak to separate same-name printings, the engine may apply an art-region fingerprint against the same near-tied candidate pool before falling back to more OCR.
+- The first implementation step for visual fingerprints should be **lazy caching on first use**: compute and persist candidate-specific ROI fingerprints only when a recognition run actually needs them.
+- The final implementation should be an **optional offline warm-cache step** that can prebuild visual fingerprints ahead of time, but it must never be required at normal app startup.
 - Set-symbol comparison should apply to all near-tied same-name candidates, not just an arbitrary small prefix of the ranked list.
 - If the name plus set-symbol comparison is already confident enough, the engine should skip additional OCR passes on secondary ROIs.
 - This should be treated as a lightweight discriminator, not a primary recognition path.
@@ -253,6 +256,7 @@ Matching strategy:
 - Fuzzy title match.
 - Use title OCR to generate the first candidate set as early as possible.
 - Use set-symbol ROI hashing to break near-ties among same-name or near-equal title candidates before running more expensive secondary OCR when possible.
+- Use a small art-region fingerprint as a second late-stage tie-breaker when the set-symbol ROI is not distinctive enough, especially for basics and art-driven reprints.
 - Use other OCR regions and card properties to narrow candidates.
 - Rerank candidates based on consistency across multiple OCR regions.
 - When top candidates remain tied or near-tied, optionally compare a small set-symbol ROI against candidate-specific references using a lightweight image hash.
@@ -277,6 +281,7 @@ Possible features:
 
 - OCR title similarity.
 - Early set-symbol hash agreement after title OCR.
+- Late-stage art-region fingerprint agreement for same-name printings with weak or ambiguous set symbols.
 - Alternate ROI agreement.
 - Type-line agreement.
 - Layout compatibility.
@@ -411,6 +416,7 @@ Use:
 - Preserve layout metadata needed for ROI-aware matching.
 - Build SQLite database.
 - Atomically replace the old database.
+- Do not block normal startup on precomputing visual fingerprint caches for the whole catalog.
 
 Runtime recognition should only read from the local catalog.
 
@@ -762,8 +768,9 @@ Recommended early implementation order:
 - [x] Fixture-based evaluation tool.
 - [ ] Confidence calibration.
 - [ ] Better tie-breaking from non-collector OCR regions.
-- [ ] Set-symbol ROI hash tie-breaker for near-equal top candidates.
-- [ ] Fast-path skip of secondary OCR when title plus set-symbol evidence is already confident enough.
+- [x] Set-symbol ROI hash tie-breaker for near-equal top candidates.
+- [x] Art-region fingerprint tie-breaker for same-name printings when set symbols are weak.
+- [x] Fast-path skip of secondary OCR when title plus set-symbol evidence is already confident enough.
 - [ ] Improved region cropping.
 - [ ] Documented extension points for image hashing in v2.
 - [ ] Performance profiling.
@@ -774,10 +781,18 @@ Recommended early implementation order:
 - Confidence calibration.
 - Better tie-breaking from non-collector OCR regions.
 - Set-symbol ROI hash tie-breaker for near-equal top candidates.
+- Art-region fingerprint tie-breaker for same-name printings when set symbols are weak.
 - Fast-path skip of secondary OCR when title plus set-symbol evidence is already confident enough.
 - Improved region cropping.
 - Documented extension points for image hashing in v2.
 - Performance profiling.
+
+**Visual Fingerprint Rollout**
+
+1. First step:
+   Use lazy on-demand caching for set-symbol and art-region fingerprints. When a recognition run needs a candidate-specific visual comparison, compute that fingerprint then persist it to a separate cache for reuse.
+2. Final implementation:
+   Add an optional offline warm-cache script that can precompute visual fingerprints from the local catalog or from frequently seen eval candidates. This should be a maintenance action, not a startup requirement.
 
 **Exit Criteria**
 
@@ -785,6 +800,7 @@ Recommended early implementation order:
 - Reproducible eval workflow exists.
 - Common failure modes are documented.
 - Same-name printings with distinct set symbols can be separated when OCR text alone is insufficient.
+- Same-name printings with weak or ambiguous set symbols can still be separated using a small art-region fingerprint when that signal is more distinctive.
 - Secondary OCR passes can be skipped on a meaningful subset of fixtures without hurting baseline accuracy.
 - v2 path for visual fingerprinting is defined without affecting v1 simplicity.
 
@@ -863,7 +879,7 @@ Exact latency targets can be added after the first working baseline.
 - **Risk:** Catalog gets bloated or slow.
   - **Mitigation:** Store metadata only; avoid full images and defer image hashing to v2.
 - **Risk:** Same-name printings remain tied after OCR because visible text is identical.
-  - **Mitigation:** Add a small normalized set-symbol ROI hash as a late-stage tie-breaker for the top candidate set only.
+  - **Mitigation:** Add a small normalized set-symbol ROI hash first, then an art-region fingerprint for stubborn same-name ties where the symbol is not distinctive enough.
 - **Risk:** Confidence is poorly calibrated.
   - **Mitigation:** Build a fixture-based evaluation loop and tune thresholds from actual results.
 

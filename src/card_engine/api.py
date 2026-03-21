@@ -2,6 +2,7 @@ from pathlib import Path
 from functools import lru_cache
 from typing import Any
 
+from .art_match import rerank_candidates_by_art
 from .catalog.maintenance import ensure_catalog_ready
 from .catalog.local_index import LocalCatalogIndex
 from .config import EngineConfig
@@ -16,6 +17,7 @@ from .set_symbol import rerank_candidates_by_set_symbol, should_skip_secondary_o
 from .utils.image_io import load_image
 
 TITLE_FIRST_ROIS = {"standard", "split_left", "split_right", "adventure", "transform_back"}
+VISUAL_ONLY_ROIS = {"set_symbol", "art_match"}
 
 
 def recognize_card(image: Any, *, progress_callback=None) -> RecognitionResult:
@@ -37,7 +39,7 @@ def recognize_card(image: Any, *, progress_callback=None) -> RecognitionResult:
 
     results_by_roi: dict[str, dict] = {}
     title_rois = [roi_group for roi_group in tried_rois if roi_group in TITLE_FIRST_ROIS]
-    secondary_rois = [roi_group for roi_group in tried_rois if roi_group not in TITLE_FIRST_ROIS and roi_group != "set_symbol"]
+    secondary_rois = [roi_group for roi_group in tried_rois if roi_group not in TITLE_FIRST_ROIS and roi_group not in VISUAL_ONLY_ROIS]
 
     ocr_results = []
     for roi_group in title_rois:
@@ -67,7 +69,9 @@ def recognize_card(image: Any, *, progress_callback=None) -> RecognitionResult:
         layout_hint=layout_hint,
     )
     set_symbol_debug = {"used": False, "reason": "not_attempted"}
+    art_match_debug = {"used": False, "reason": "not_attempted"}
     set_symbol_crop = _first_crop_for_group(normalized.crops, "set_symbol")
+    art_match_crop = _first_crop_for_group(normalized.crops, "art_match")
     if candidates and set_symbol_crop is not None:
         _notify(progress_callback, "Comparing set symbol against top candidates...")
         set_symbol_result = rerank_candidates_by_set_symbol(
@@ -78,6 +82,16 @@ def recognize_card(image: Any, *, progress_callback=None) -> RecognitionResult:
         )
         candidates = set_symbol_result.candidates
         set_symbol_debug = set_symbol_result.debug
+    if candidates and art_match_crop is not None:
+        _notify(progress_callback, "Comparing art region against top candidates...")
+        art_match_result = rerank_candidates_by_art(
+            candidates,
+            observed_crop=art_match_crop,
+            catalog=catalog,
+            progress_callback=progress_callback,
+        )
+        candidates = art_match_result.candidates
+        art_match_debug = art_match_result.debug
     _notify(progress_callback, "Scoring candidates...")
     best_name, confidence = score_candidates(candidates)
 
@@ -118,10 +132,19 @@ def recognize_card(image: Any, *, progress_callback=None) -> RecognitionResult:
             )
             candidates = set_symbol_result.candidates
             set_symbol_debug = set_symbol_result.debug
+        if art_match_crop is not None:
+            art_match_result = rerank_candidates_by_art(
+                candidates,
+                observed_crop=art_match_crop,
+                catalog=catalog,
+                progress_callback=progress_callback,
+            )
+            candidates = art_match_result.candidates
+            art_match_debug = art_match_result.debug
         _notify(progress_callback, "Scoring candidates...")
         best_name, confidence = score_candidates(candidates)
     elif secondary_rois:
-        _notify(progress_callback, "Skipping secondary OCR after confident title and set-symbol match...")
+        _notify(progress_callback, "Skipping secondary OCR after confident title and visual tie-break match...")
     _notify(progress_callback, f"Recognition complete: {best_name or 'no match'}")
 
     return RecognitionResult(
@@ -148,6 +171,7 @@ def recognize_card(image: Any, *, progress_callback=None) -> RecognitionResult:
                 **ocr.debug,
             },
             "set_symbol": set_symbol_debug,
+            "art_match": art_match_debug,
         },
     )
 

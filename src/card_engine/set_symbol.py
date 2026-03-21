@@ -118,7 +118,7 @@ def should_skip_secondary_ocr(candidates: list[Candidate], confidence: float) ->
     return (
         confidence >= SET_SYMBOL_CONFIDENCE_THRESHOLD
         and bool(best.notes)
-        and "set_symbol_match" in best.notes
+        and ("set_symbol_match" in best.notes or "art_match" in best.notes)
     )
 
 

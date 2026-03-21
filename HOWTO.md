@@ -223,8 +223,11 @@ The current recognition flow is moving toward a Milestone 9 fast path:
 2. Use the set-symbol ROI as a lightweight visual tie-breaker for near-tied
    title candidates, using a refined symbol fingerprint rather than a full-card
    image comparison.
-3. Only run the remaining ROIs such as `type_line` and `lower_text` if the
-   title-plus-set-symbol evidence is still not confident enough.
+3. If the set symbol is still too weak for same-name printings, use the
+   `art_match` ROI as a second visual tie-breaker over the same near-tied
+   candidates.
+4. Only run the remaining ROIs such as `type_line` and `lower_text` if the
+   title-plus-visual evidence is still not confident enough.
 
 ## Current Limitations
 

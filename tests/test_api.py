@@ -41,7 +41,7 @@ def test_recognize_card_reports_layout_specific_tried_rois():
     result = recognize_card(SplitLayoutImage())
 
     assert result.active_roi == "standard"
-    assert result.tried_rois == ["standard", "type_line", "set_symbol", "lower_text", "split_left", "split_right"]
+    assert result.tried_rois == ["standard", "art_match", "type_line", "set_symbol", "lower_text", "split_left", "split_right"]
     assert "split_left" in result.debug["normalization"]["roi_groups"]
 
 
@@ -289,6 +289,48 @@ def test_recognize_card_keeps_wider_candidate_pool_before_final_top_k(monkeypatc
     assert result.best_name == "Ancient Craving"
     assert result.top_k_candidates[0].set_code == "J22"
     assert len(result.top_k_candidates) == 5
+
+
+def test_recognize_card_can_promote_candidate_with_art_tiebreak(monkeypatch):
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        lines_by_roi = {
+            "standard": ["Plains"],
+        }
+        return OCRResult(
+            lines=lines_by_roi.get(roi_label, []),
+            confidence=0.9,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Plains", normalized_name="", set_code="M13", collector_number="230", layout="normal"),
+            CatalogRecord(name="Plains", normalized_name="", set_code="DOM", collector_number="250", layout="normal"),
+        ]
+    )
+
+    def fake_set_symbol_rerank(candidates, *, observed_crop, catalog, progress_callback=None):
+        return type("Result", (), {"candidates": list(candidates), "debug": {"used": False, "reason": "not_needed"}})()
+
+    def fake_art_rerank(candidates, *, observed_crop, catalog, progress_callback=None):
+        updated = list(candidates)
+        for index, candidate in enumerate(updated):
+            if candidate.set_code == "DOM":
+                updated[index].score = 0.97
+                updated[index].notes = ["exact", "layout_match", "art_match"]
+        updated.sort(key=lambda candidate: (-candidate.score, candidate.name))
+        return type("Result", (), {"candidates": updated, "debug": {"used": True}})()
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr("card_engine.api.rerank_candidates_by_set_symbol", fake_set_symbol_rerank)
+    monkeypatch.setattr("card_engine.api.rerank_candidates_by_art", fake_art_rerank)
+
+    result = recognize_card(DummyImage())
+
+    assert result.best_name == "Plains"
+    assert result.top_k_candidates[0].set_code == "DOM"
+    assert result.debug["art_match"]["used"] is True
 
 
 def _minimal_png(*, width: int, height: int) -> bytes:
