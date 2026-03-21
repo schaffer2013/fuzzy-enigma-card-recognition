@@ -629,7 +629,7 @@ What is effectively done today:
 
 Recommended next step:
 
-- Continue **Milestone 9: Accuracy and Hardening** by expanding fixture evaluation, calibrating confidence, and measuring name/set/art accuracy on larger random samples.
+- Continue **Milestone 9: Accuracy and Hardening** by running larger unseen random evals, tuning confidence against those results, and finishing the remaining tie-breaking, cropping, and profiling work.
 
 ### Implementation Sequencing Adjustment
 
@@ -864,26 +864,40 @@ Recommended early implementation order:
 **Status**
 
 - [x] Fixture-based evaluation tool.
-- [ ] Confidence calibration.
+- [ ] Confidence calibration tuning and validation on larger unseen samples.
 - [ ] Better tie-breaking from non-collector OCR regions.
 - [x] Set-symbol ROI hash tie-breaker for near-equal top candidates.
 - [x] Art-region fingerprint tie-breaker for same-name printings when set symbols are weak.
 - [x] Fast-path skip of secondary OCR when title plus set-symbol evidence is already confident enough.
 - [ ] Improved region cropping.
 - [ ] Documented extension points for image hashing in v2.
-- [ ] Performance profiling.
+- [ ] Performance profiling and benchmark write-up.
+
+**Current Progress Notes**
+
+- Fixture evaluation is in place and now supports timed random sampling plus
+  name/set/art accuracy reporting.
+- Confidence-calibration reporting is in place, including confidence bins and
+  expected calibration error (ECE), but the remaining work is to validate and
+  tune confidence on larger unseen random samples.
+- Same-name printing tie-breaking is materially improved through set-symbol and
+  art-region visual comparisons plus a fast path that skips secondary OCR when
+  title and visual evidence are already strong.
+- Pathological long-running cases are now bounded by deadline-aware recognition,
+  capped visual tie-break work, and download timeouts, but the repo still needs
+  more formal profiling data and benchmark notes.
 
 **Deliverables**
 
 - Fixture-based evaluation tool.
-- Confidence calibration.
+- Confidence calibration reporting, plus confidence tuning validated on larger unseen samples.
 - Better tie-breaking from non-collector OCR regions.
 - Set-symbol ROI hash tie-breaker for near-equal top candidates.
 - Art-region fingerprint tie-breaker for same-name printings when set symbols are weak.
 - Fast-path skip of secondary OCR when title plus set-symbol evidence is already confident enough.
 - Improved region cropping.
 - Documented extension points for image hashing in v2.
-- Performance profiling.
+- Performance profiling and benchmark write-up.
 
 **Visual Fingerprint Rollout**
 
@@ -897,9 +911,13 @@ Recommended early implementation order:
 - Measurable improvement over MVP.
 - Reproducible eval workflow exists.
 - Common failure modes are documented.
+- Confidence is calibrated against larger unseen samples rather than only
+  reported.
 - Same-name printings with distinct set symbols can be separated when OCR text alone is insufficient.
 - Same-name printings with weak or ambiguous set symbols can still be separated using a small art-region fingerprint when that signal is more distinctive.
 - Secondary OCR passes can be skipped on a meaningful subset of fixtures without hurting baseline accuracy.
+- Recognition runtime is bounded on pathological same-name pools, and those
+  bounds are reflected in profiling or benchmark notes.
 - v2 path for visual fingerprinting is defined without affecting v1 simplicity.
 
 ### Milestone 10: Operational Recognition Modes
