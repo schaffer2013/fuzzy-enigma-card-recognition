@@ -262,16 +262,24 @@ def test_recognize_card_keeps_wider_candidate_pool_before_final_top_k(monkeypatc
         )
 
     records = [
-        CatalogRecord(name="Ancient Craving", normalized_name="", set_code="A25", collector_number="79", layout="normal"),
-        CatalogRecord(name="Ancient Craving", normalized_name="", set_code="C15", collector_number="114", layout="normal"),
-        CatalogRecord(name="Ancient Craving", normalized_name="", set_code="C21", collector_number="135", layout="normal"),
-        CatalogRecord(name="Ancient Craving", normalized_name="", set_code="DDK", collector_number="28", layout="normal"),
-        CatalogRecord(name="Ancient Craving", normalized_name="", set_code="S99", collector_number="64", layout="normal"),
-        CatalogRecord(name="Ancient Craving", normalized_name="", set_code="J22", collector_number="376", layout="normal"),
+        CatalogRecord(
+            name="Ancient Craving",
+            normalized_name="",
+            set_code=f"S{i:02d}",
+            collector_number=str(100 + i),
+            layout="normal",
+        )
+        for i in range(24)
     ]
+    records.append(
+        CatalogRecord(name="Ancient Craving", normalized_name="", set_code="J22", collector_number="376", layout="normal")
+    )
     catalog = LocalCatalogIndex.from_records(records)
+    seen_candidate_count = 0
 
     def fake_set_symbol_rerank(candidates, *, observed_crop, catalog, progress_callback=None):
+        nonlocal seen_candidate_count
+        seen_candidate_count = len(candidates)
         updated = list(candidates)
         for index, candidate in enumerate(updated):
             if candidate.set_code == "J22":
@@ -288,6 +296,7 @@ def test_recognize_card_keeps_wider_candidate_pool_before_final_top_k(monkeypatc
 
     assert result.best_name == "Ancient Craving"
     assert result.top_k_candidates[0].set_code == "J22"
+    assert seen_candidate_count == 25
     assert len(result.top_k_candidates) == 5
 
 

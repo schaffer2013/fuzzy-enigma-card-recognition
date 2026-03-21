@@ -97,6 +97,8 @@ This repo should be a focused recognition engine, not a second full application.
 - **Inspectable**: every stage should be easy to debug in the Pygame UI.
 - **Rebuildable**: local card data should be generated from a repeatable build process.
 - **Layout-aware**: recognition should support multiple ROIs and ordered region cycling for atypical cards.
+- **Mode-aware**: the engine should support both open-ended recognition and constrained matching flows so repeated sorter scans do not always pay full-catalog cost.
+- **Explicit state**: any tracked candidate pool must be intentionally created, inspectable, and clearable instead of being hidden implicit state.
 
 ---
 
@@ -306,12 +308,102 @@ The adapter should map the engine’s richer output into the minimal parent-proj
 
 ## Public API
 
+### Recognition Modes
+
+The engine should eventually support a stateless default mode plus several
+specialized operating modes. These modes have heavy implementation overlap and
+should share the same detector,
+normalization, ROI, OCR, and scoring primitives wherever possible. The main
+difference between modes is how the candidate pool is constructed and how the
+final confidence should be interpreted.
+
+1. **Default recognition**
+   - Stateless baseline behavior.
+   - Similar to greenfield recognition, but without any tracked-pool
+     management.
+   - The scanned card may be any card in the catalog.
+   - Use the full matching pipeline against the full local catalog.
+   - This should remain the simplest entry point and the default API behavior.
+
+2. **Greenfield recognition**
+   - Open-ended recognition with optional tracked-pool accumulation.
+   - The scanned card may be any card in the catalog.
+   - Use the full matching pipeline against the full local catalog.
+   - Unlike default mode, this mode may add confirmed results into a tracked
+     pool that later constrained modes can reuse.
+   - This is useful when building up a working set of cards during an active
+     sorting session.
+
+3. **Re-evaluation**
+   - The system already has an expected card or printing and wants to verify
+     whether the new scan agrees or whether the true card is something else.
+   - This mode should bias the expected card heavily, surface agreement versus
+     disagreement signals explicitly, and still be able to recover to the true
+     card if the expectation is wrong.
+   - This is useful for rescans, audit passes, and sorter confirmation after an
+     earlier tentative identification.
+
+4. **Small-pool recognition**
+   - The scanned card is known to come from a pre-confirmed pool of candidate
+     cards or printings.
+   - The engine should only rank candidates from that supplied pool instead of
+     searching the entire catalog.
+   - This mode is important for pile sorting and repeated scans where the same
+     local set of cards may be seen many times and full-catalog search would be
+     unnecessary overhead.
+
+5. **Confirmation / expected-printing scoring**
+   - The caller already knows the expected printed card and wants a confidence
+     score that the photo matches that exact printing.
+   - This mode should return a confirmation score plus the strongest supporting
+     and contradicting signals, rather than primarily acting like an open-ended
+     search.
+   - This is the narrowest and cheapest mode when the task is strict
+     photo-versus-printing verification.
+
+### Tracked Pool Lifecycle
+
+Pool-backed workflows need explicit state management.
+
+- There should be a tracked pool abstraction representing the cards or
+  printings that are currently in scope for a sorting session.
+- Greenfield and re-evaluation flows may add confirmed results into that pool
+  when the caller opts into session-based tracking.
+- Small-pool mode may consume either a caller-supplied pool or the current
+  tracked pool.
+- The system should expose a way to inspect the current tracked pool.
+- The system should expose a way to clear or reset the tracked pool at any
+  time.
+- Default recognition should not implicitly create or mutate a tracked pool.
+
+These modes do not need separate pipelines. A practical design
+is to keep one shared recognition core and expose:
+
+- a stateless full-catalog entry point for default mode
+- a full-catalog candidate generator with optional pool updates for greenfield mode
+- a constrained candidate generator for small-pool mode
+- an expectation-aware reranker for re-evaluation mode
+- a direct comparison / confirmation wrapper for expected-printing mode
+
 ### Core Engine API
 
 Target API shape:
 
 ```python
 result = recognize_card(image)
+```
+
+Future mode-aware API shape could look more like:
+
+```python
+result = recognize_card(image)
+result = recognize_card(image, mode="greenfield")
+result = recognize_card(image, mode="small_pool", candidate_pool=pool)
+result = recognize_card(image, mode="recheck", expected_card=expected)
+result = confirm_printing(image, expected_card=expected)
+
+session_pool = recognizer.get_tracked_pool()
+recognizer.clear_tracked_pool()
 ```
 
 Where `result` contains:
@@ -503,6 +595,10 @@ The parent repo should only need:
 Support config values such as:
 
 - Catalog path.
+- Recognition mode.
+- Optional expected card / printing.
+- Optional constrained candidate pool.
+- Optional tracked-pool persistence policy.
 - OCR language/model settings.
 - Debug enabled.
 - Detection thresholds.
@@ -529,6 +625,7 @@ What is effectively done today:
 - [ ] Milestone 7 is partially complete.
 - [ ] Milestone 8 is partially complete.
 - [ ] Milestone 9 is partially complete.
+- [ ] Milestone 10 is not started.
 
 Recommended next step:
 
@@ -556,6 +653,7 @@ Recommended early implementation order:
 7. Debug UI.
 8. Parent-project adapter.
 9. Accuracy and hardening.
+10. Operational recognition modes.
 
 ### Milestone 1: Project Skeleton
 
@@ -803,6 +901,46 @@ Recommended early implementation order:
 - Same-name printings with weak or ambiguous set symbols can still be separated using a small art-region fingerprint when that signal is more distinctive.
 - Secondary OCR passes can be skipped on a meaningful subset of fixtures without hurting baseline accuracy.
 - v2 path for visual fingerprinting is defined without affecting v1 simplicity.
+
+### Milestone 10: Operational Recognition Modes
+
+**Status**
+
+- [ ] Default stateless mode formalized as the baseline API behavior.
+- [ ] Greenfield mode formalized as the baseline API behavior.
+- [ ] Re-evaluation mode.
+- [ ] Small-pool recognition mode.
+- [ ] Confirmation / expected-printing scoring mode.
+- [ ] Tracked pool abstraction and lifecycle management.
+- [ ] Clear/reset tracked-pool action.
+- [ ] Shared mode-aware candidate generation interfaces.
+- [ ] Adapter and UI hooks for supplying expected cards or constrained pools.
+- [ ] Benchmarks comparing full-catalog versus constrained-pool runs.
+- [ ] Tests covering mode-specific confidence semantics.
+
+**Deliverables**
+
+- A stateless default recognition entry point.
+- A mode-aware recognition entry point.
+- A tracked pool abstraction with inspect and clear operations.
+- Shared candidate-pool abstractions.
+- Re-evaluation flow that can both verify and overturn a bad expectation.
+- Small-pool flow that only ranks within a supplied pool.
+- Confirmation flow that returns a confidence score for a specific expected printing.
+- Adapter-level support for sorter workflows that repeatedly scan known piles.
+- Benchmarks showing the runtime benefit of constrained modes.
+
+**Exit Criteria**
+
+- Callers can choose between open-ended recognition and constrained matching
+  without maintaining separate pipelines.
+- Default recognition remains simple and does not require pool state.
+- Repeated scans against a known pile no longer require full-catalog search.
+- Re-evaluation and confirmation flows expose confidence in a way that is
+  useful for sorter decisions and audit passes.
+- Tracked pool state can be inspected and cleared deterministically by the
+  caller.
+- Mode-specific behavior is documented and covered by automated tests.
 
 ---
 

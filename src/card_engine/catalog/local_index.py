@@ -143,7 +143,7 @@ class LocalCatalogIndex:
         if exact_matches:
             return [
                 CatalogMatch(record=record, score=1.0, match_type="exact")
-                for record in exact_matches[:limit]
+                for record in exact_matches
             ]
 
         ranked: list[CatalogMatch] = []

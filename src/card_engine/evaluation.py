@@ -59,9 +59,21 @@ class EvaluationSummary:
     art_accuracy: float
     average_confidence: float
     average_scored_confidence: float
+    calibration_error: float
+    calibration_bins: list["ConfidenceCalibrationBin"]
     roi_usage: dict[str, int]
     error_classes: dict[str, int]
     fixtures: list[FixtureEvaluation]
+
+
+@dataclass(frozen=True)
+class ConfidenceCalibrationBin:
+    lower_bound: float
+    upper_bound: float
+    fixture_count: int
+    average_confidence: float
+    empirical_accuracy: float
+    calibration_gap: float
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -168,6 +180,8 @@ def _summarize_evaluations(evaluations: list[FixtureEvaluation]) -> EvaluationSu
     art_hits = sum(1 for evaluation in art_scored if evaluation.art_hit)
     total_confidence = sum(evaluation.confidence for evaluation in evaluations)
     scored_confidence = sum(evaluation.confidence for evaluation in scored)
+    calibration_bins = _build_confidence_calibration_bins(scored)
+    calibration_error = _expected_calibration_error(calibration_bins, scored_count)
 
     return EvaluationSummary(
         fixture_count=fixture_count,
@@ -180,6 +194,8 @@ def _summarize_evaluations(evaluations: list[FixtureEvaluation]) -> EvaluationSu
         art_accuracy=_safe_ratio(art_hits, art_scored_count),
         average_confidence=_safe_ratio(total_confidence, fixture_count),
         average_scored_confidence=_safe_ratio(scored_confidence, scored_count),
+        calibration_error=calibration_error,
+        calibration_bins=calibration_bins,
         roi_usage=roi_usage,
         error_classes=error_classes,
         fixtures=evaluations,
@@ -300,9 +316,29 @@ def render_summary(summary: EvaluationSummary) -> str:
         f"Art accuracy: {summary.art_accuracy:.3f}",
         f"Average confidence: {summary.average_confidence:.3f}",
         f"Average scored confidence: {summary.average_scored_confidence:.3f}",
+        f"Calibration error (ECE): {summary.calibration_error:.3f}",
+        "",
+        "Confidence calibration:",
+    ]
+    if summary.calibration_bins:
+        lines.extend(
+            "  - "
+            f"{calibration_bin.lower_bound:.1f}-{calibration_bin.upper_bound:.1f}: "
+            f"count={calibration_bin.fixture_count}, "
+            f"avg_confidence={calibration_bin.average_confidence:.3f}, "
+            f"accuracy={calibration_bin.empirical_accuracy:.3f}, "
+            f"gap={calibration_bin.calibration_gap:.3f}"
+            for calibration_bin in summary.calibration_bins
+        )
+    else:
+        lines.append("  - none")
+
+    lines.extend(
+        [
         "",
         "ROI usage:",
-    ]
+        ]
+    )
     if summary.roi_usage:
         lines.extend(f"  - {roi}: {count}" for roi, count in sorted(summary.roi_usage.items()))
     else:
@@ -344,6 +380,8 @@ def summary_to_json(summary: EvaluationSummary) -> dict:
         "art_accuracy": summary.art_accuracy,
         "average_confidence": summary.average_confidence,
         "average_scored_confidence": summary.average_scored_confidence,
+        "calibration_error": summary.calibration_error,
+        "calibration_bins": [asdict(calibration_bin) for calibration_bin in summary.calibration_bins],
         "roi_usage": summary.roi_usage,
         "error_classes": summary.error_classes,
         "fixtures": [asdict(fixture) for fixture in summary.fixtures],
@@ -445,6 +483,57 @@ def _count_by_key(values) -> dict[str, int]:
     for value in values:
         counts[value] = counts.get(value, 0) + 1
     return counts
+
+
+def _build_confidence_calibration_bins(
+    evaluations: list[FixtureEvaluation],
+    *,
+    bin_width: float = 0.2,
+) -> list[ConfidenceCalibrationBin]:
+    if not evaluations:
+        return []
+
+    bins: list[ConfidenceCalibrationBin] = []
+    lower_bound = 0.0
+    while lower_bound < 1.0:
+        upper_bound = min(1.0, round(lower_bound + bin_width, 10))
+        in_bin = [
+            evaluation
+            for evaluation in evaluations
+            if _confidence_in_bin(evaluation.confidence, lower_bound, upper_bound)
+        ]
+        if in_bin:
+            average_confidence = _safe_ratio(sum(evaluation.confidence for evaluation in in_bin), len(in_bin))
+            empirical_accuracy = _safe_ratio(sum(1 for evaluation in in_bin if evaluation.top1_hit), len(in_bin))
+            calibration_gap = round(abs(average_confidence - empirical_accuracy), 4)
+            bins.append(
+                ConfidenceCalibrationBin(
+                    lower_bound=round(lower_bound, 1),
+                    upper_bound=round(upper_bound, 1),
+                    fixture_count=len(in_bin),
+                    average_confidence=average_confidence,
+                    empirical_accuracy=empirical_accuracy,
+                    calibration_gap=calibration_gap,
+                )
+            )
+        lower_bound = upper_bound
+    return bins
+
+
+def _confidence_in_bin(confidence: float, lower_bound: float, upper_bound: float) -> bool:
+    if upper_bound >= 1.0:
+        return lower_bound <= confidence <= upper_bound
+    return lower_bound <= confidence < upper_bound
+
+
+def _expected_calibration_error(
+    calibration_bins: list[ConfidenceCalibrationBin],
+    scored_count: int,
+) -> float:
+    if scored_count <= 0:
+        return 0.0
+    total_gap = sum(calibration_bin.calibration_gap * calibration_bin.fixture_count for calibration_bin in calibration_bins)
+    return round(total_gap / scored_count, 4)
 
 
 def _safe_ratio(numerator: float, denominator: int) -> float:

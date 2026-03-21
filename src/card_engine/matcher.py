@@ -14,6 +14,7 @@ TYPE_LINE_MISMATCH_PENALTY = 0.08
 LOWER_TEXT_MISMATCH_PENALTY = 0.05
 LAYOUT_MISMATCH_PENALTY = 0.08
 NOISY_TITLE_PENALTY = 0.04
+FUZZY_PRINTING_EXPANSION_THRESHOLD = 0.84
 
 
 def match_candidates(
@@ -34,6 +35,7 @@ def match_candidates(
     if catalog is not None:
         matches = catalog.search_name(title_query, limit=max(limit * 3, limit))
         if matches:
+            matches, expanded_for_printing_tiebreak = _expand_matches_for_printing_tiebreak(matches, catalog)
             reranked = [
                 _candidate_from_catalog_match(
                     match,
@@ -45,6 +47,8 @@ def match_candidates(
                 for match in matches
             ]
             reranked.sort(key=lambda candidate: (-candidate.score, candidate.name))
+            if any(match.match_type == "exact" for match in matches) or expanded_for_printing_tiebreak:
+                return reranked
             return reranked[:limit]
 
     return [Candidate(name=title_query, score=0.2, notes=["catalog_unavailable", "title_only"])][:limit]
@@ -204,3 +208,38 @@ def _record_lower_text_candidates(record) -> list[str]:
     if combined:
         candidates.append(combined)
     return candidates
+
+
+def _expand_matches_for_printing_tiebreak(
+    matches: list[CatalogMatch],
+    catalog: LocalCatalogIndex,
+) -> tuple[list[CatalogMatch], bool]:
+    if not matches:
+        return matches, False
+
+    top_match = matches[0]
+    if top_match.match_type != "fuzzy" or top_match.score < FUZZY_PRINTING_EXPANSION_THRESHOLD:
+        return matches, False
+
+    exact_printings = catalog.exact_lookup(top_match.record.name)
+    if len(exact_printings) <= 1:
+        return matches, False
+
+    expanded = list(matches)
+    seen = {
+        (match.record.name, match.record.set_code, match.record.collector_number)
+        for match in matches
+    }
+    for record in exact_printings:
+        key = (record.name, record.set_code, record.collector_number)
+        if key in seen:
+            continue
+        expanded.append(
+            CatalogMatch(
+                record=record,
+                score=top_match.score,
+                match_type=top_match.match_type,
+            )
+        )
+        seen.add(key)
+    return expanded, len(expanded) > len(matches)

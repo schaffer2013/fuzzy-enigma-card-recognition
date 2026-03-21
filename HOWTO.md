@@ -226,6 +226,8 @@ The script currently reports:
 - set accuracy
 - art accuracy
 - average confidence
+- expected calibration error (ECE)
+- confidence-bin calibration breakdown
 - ROI usage
 - error-class counts
 - a short list of top mismatches
@@ -239,6 +241,10 @@ When you use `--random-time-limit-minutes`, the script fetches and evaluates
 random cards until the time budget is exhausted. The limit is checked between
 cards, so the final card in progress may slightly overrun the exact wall-clock
 budget.
+
+For confidence tuning, compare each bin's `avg_confidence` to its actual
+`accuracy`. High-confidence bins with noticeably lower realized accuracy are
+the first place to trim or rebalance scoring bonuses.
 
 ## Recognition Flow Notes
 

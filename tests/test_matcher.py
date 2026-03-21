@@ -114,6 +114,33 @@ def test_matcher_uses_lower_text_to_separate_same_name_printings():
     assert candidates[0].score > candidates[1].score
 
 
+def test_matcher_keeps_all_exact_same_name_printings_for_late_tiebreaks():
+    records = [
+        CatalogRecord(name="Evolving Wilds", normalized_name="", set_code=f"S{i:02d}", collector_number=str(i))
+        for i in range(30)
+    ]
+    catalog = LocalCatalogIndex.from_records(records)
+
+    candidates = match_candidates(["Evolving Wilds"], limit=5, catalog=catalog)
+
+    assert len(candidates) == 30
+    assert {candidate.set_code for candidate in candidates} == {f"S{i:02d}" for i in range(30)}
+
+
+def test_matcher_expands_strong_fuzzy_match_to_all_same_name_printings():
+    records = [
+        CatalogRecord(name="Evolving Wilds", normalized_name="", set_code=f"S{i:02d}", collector_number=str(i))
+        for i in range(30)
+    ]
+    records.append(CatalogRecord(name="Evolving Shores", normalized_name="", set_code="ALT", collector_number="1"))
+    catalog = LocalCatalogIndex.from_records(records)
+
+    candidates = match_candidates(["Evolving gWilds"], limit=5, catalog=catalog)
+
+    assert len(candidates) == 30
+    assert all(candidate.name == "Evolving Wilds" for candidate in candidates)
+
+
 def test_matcher_falls_back_when_catalog_missing():
     candidates = match_candidates(["Lightning", "Bolt"])
 

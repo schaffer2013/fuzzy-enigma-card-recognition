@@ -8,6 +8,8 @@ from card_engine.evaluation import (
     infer_expected_name,
     infer_fixture_expectation,
     FixtureEvaluation,
+    render_summary,
+    summary_to_json,
 )
 from card_engine.models import Candidate, RecognitionResult
 from card_engine.utils.image_io import load_image
@@ -113,8 +115,31 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
     assert summary.top5_accuracy == 1.0
     assert summary.set_accuracy == 1.0
     assert summary.art_accuracy == 0.5
+    assert summary.calibration_error == 0.23
+    assert len(summary.calibration_bins) == 2
+    assert summary.calibration_bins[0].lower_bound == 0.6
+    assert summary.calibration_bins[0].upper_bound == 0.8
+    assert summary.calibration_bins[0].fixture_count == 1
+    assert summary.calibration_bins[0].average_confidence == 0.63
+    assert summary.calibration_bins[0].empirical_accuracy == 1.0
+    assert summary.calibration_bins[0].calibration_gap == 0.37
+    assert summary.calibration_bins[1].lower_bound == 0.8
+    assert summary.calibration_bins[1].upper_bound == 1.0
+    assert summary.calibration_bins[1].fixture_count == 1
+    assert summary.calibration_bins[1].average_confidence == 0.91
+    assert summary.calibration_bins[1].empirical_accuracy == 1.0
+    assert summary.calibration_bins[1].calibration_gap == 0.09
     assert summary.roi_usage == {"lower_text": 1, "standard": 1}
     assert summary.error_classes == {"correct_top1": 1, "wrong_art": 1}
+
+    rendered = render_summary(summary)
+    payload = summary_to_json(summary)
+
+    assert "Calibration error (ECE): 0.230" in rendered
+    assert "0.6-0.8: count=1, avg_confidence=0.630, accuracy=1.000, gap=0.370" in rendered
+    assert payload["calibration_error"] == 0.23
+    assert payload["calibration_bins"][0]["lower_bound"] == 0.6
+    assert payload["calibration_bins"][1]["upper_bound"] == 1.0
 
 
 def test_build_random_sample_fetches_until_time_limit(monkeypatch, tmp_path):
