@@ -23,11 +23,11 @@ For fixture-level accuracy checks outside the UI, run:
 .\.venv\Scripts\python.exe scripts\eval_fixture_set.py --fixtures-dir data\cache\random_cards
 ```
 
-For a fresh 100-card random accuracy run, use:
+For a fresh random accuracy run with a 10-minute cap, use:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\eval_fixture_set.py `
-  --random-sample 100 `
+  --random-time-limit-minutes 10 `
   --random-output-dir data\sample_outputs\random_eval_cards `
   --json-out data\sample_outputs\random-eval-summary.json
 ```
@@ -234,6 +234,11 @@ Expected names come from sidecar metadata when available, with a filename
 fallback for cached random-card images. Set accuracy uses the expected set code
 from the sidecar. Art accuracy means exact printing accuracy, using the
 expected set code plus collector number from the sidecar.
+
+When you use `--random-time-limit-minutes`, the script fetches and evaluates
+random cards until the time budget is exhausted. The limit is checked between
+cards, so the final card in progress may slightly overrun the exact wall-clock
+budget.
 
 ## Recognition Flow Notes
 

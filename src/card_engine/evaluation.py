@@ -4,6 +4,7 @@ import argparse
 import json
 import re
 import shutil
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
@@ -15,6 +16,7 @@ from .utils.image_io import LoadedImage, load_image
 SUPPORTED_SUFFIXES = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
 HASHED_NAME_SUFFIX = re.compile(r"-(?P<hash>[0-9a-f]{8})$", re.IGNORECASE)
 ProgressCallback = Callable[[str], None]
+MAX_RANDOM_TEST_MINUTES = 10.0
 
 
 @dataclass(frozen=True)
@@ -81,15 +83,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Optional path to write a JSON summary.",
     )
     parser.add_argument(
-        "--random-sample",
-        type=int,
-        default=0,
-        help="Fetch this many random cards into a dedicated evaluation folder before scoring them.",
+        "--random-time-limit-minutes",
+        type=float,
+        default=0.0,
+        help=(
+            "Fetch and score random cards until the runtime budget is exhausted. "
+            "The limit is checked between cards and may not exceed 10 minutes."
+        ),
     )
     parser.add_argument(
         "--random-output-dir",
         default="data/sample_outputs/random_eval_cards",
-        help="Output directory used when --random-sample is provided.",
+        help="Output directory used when --random-time-limit-minutes is provided.",
     )
     return parser
 
@@ -110,6 +115,39 @@ def evaluate_fixture_set(fixtures_dir: str | Path, *, limit: int | None = None) 
         fixture_paths = fixture_paths[: max(0, limit)]
 
     evaluations = [evaluate_fixture(path) for path in fixture_paths]
+    return _summarize_evaluations(evaluations)
+
+
+def evaluate_random_sample(
+    output_dir: str | Path,
+    *,
+    time_limit_seconds: float,
+    progress_callback: ProgressCallback | None = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> EvaluationSummary:
+    if time_limit_seconds <= 0:
+        raise ValueError("time_limit_seconds must be greater than 0.")
+
+    deadline = clock() + time_limit_seconds
+    output_root = Path(output_dir)
+    if output_root.exists():
+        shutil.rmtree(output_root)
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    evaluations: list[FixtureEvaluation] = []
+    while clock() < deadline:
+        card_index = len(evaluations) + 1
+        path = fetch_random_card_image(output_root, max_cached_cards=card_index)
+        _notify(progress_callback, f"Fetched random card {card_index}: {path.name}")
+        if clock() >= deadline:
+            break
+        evaluations.append(evaluate_fixture(path))
+        _notify(progress_callback, f"Evaluated random card {card_index}: {path.name}")
+
+    return _summarize_evaluations(evaluations)
+
+
+def _summarize_evaluations(evaluations: list[FixtureEvaluation]) -> EvaluationSummary:
     fixture_count = len(evaluations)
     scored = [evaluation for evaluation in evaluations if evaluation.expected_name]
     set_scored = [evaluation for evaluation in evaluations if evaluation.expected_set_code]
@@ -229,20 +267,24 @@ def infer_fixture_expectation(image: LoadedImage) -> FixtureExpectation:
 def build_random_sample(
     output_dir: str | Path,
     *,
-    count: int,
+    time_limit_seconds: float,
     progress_callback: ProgressCallback | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> Path:
-    if count < 1:
-        raise ValueError("count must be at least 1.")
+    if time_limit_seconds <= 0:
+        raise ValueError("time_limit_seconds must be greater than 0.")
 
+    deadline = clock() + time_limit_seconds
     output_root = Path(output_dir)
     if output_root.exists():
         shutil.rmtree(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
 
-    for index in range(count):
-        path = fetch_random_card_image(output_root, max_cached_cards=count)
-        _notify(progress_callback, f"Fetched random card {index + 1}/{count}: {path.name}")
+    fetched_count = 0
+    while clock() < deadline:
+        fetched_count += 1
+        path = fetch_random_card_image(output_root, max_cached_cards=fetched_count)
+        _notify(progress_callback, f"Fetched random card {fetched_count}: {path.name}")
     return output_root
 
 
@@ -311,17 +353,18 @@ def summary_to_json(summary: EvaluationSummary) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
-    fixtures_dir = args.fixtures_dir
-    if args.random_sample:
-        fixtures_dir = str(
-            build_random_sample(
-                args.random_output_dir,
-                count=args.random_sample,
-                progress_callback=print,
+    if args.random_time_limit_minutes:
+        if args.random_time_limit_minutes > MAX_RANDOM_TEST_MINUTES:
+            parser.error(
+                f"--random-time-limit-minutes may not exceed {MAX_RANDOM_TEST_MINUTES:g} minutes."
             )
+        summary = evaluate_random_sample(
+            args.random_output_dir,
+            time_limit_seconds=args.random_time_limit_minutes * 60.0,
+            progress_callback=print,
         )
-
-    summary = evaluate_fixture_set(fixtures_dir, limit=args.limit)
+    else:
+        summary = evaluate_fixture_set(args.fixtures_dir, limit=args.limit)
     print(render_summary(summary))
 
     if args.json_out:
