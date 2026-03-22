@@ -1,6 +1,6 @@
-# Card Recognition Engine
+# Fuzzy Enigma Card Recognition
 
-`card-recognition-engine` is a Python card recognizer meant to live well as a
+`fuzzy-enigma-card-recognition` is a Python card recognizer meant to live well as a
 git submodule inside a larger project.
 
 The intended shape is:
@@ -75,13 +75,13 @@ python -m pytest
 
 Recommended parent-repo locations:
 
-- `third_party/card-recognition-engine`
-- `external/card-recognition-engine`
+- `third_party/fuzzy-enigma-card-recognition`
+- `external/fuzzy-enigma-card-recognition`
 
 Example submodule add:
 
 ```powershell
-git submodule add https://github.com/schaffer2013/fuzzy-enigma-card-recognition.git third_party/card-recognition-engine
+git submodule add https://github.com/schaffer2013/fuzzy-enigma-card-recognition.git third_party/fuzzy-enigma-card-recognition
 ```
 
 The parent project should ideally do only four things:

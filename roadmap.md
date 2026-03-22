@@ -1,4 +1,4 @@
-# Card Recognition Engine Roadmap
+# Fuzzy Enigma Card Recognition Roadmap
 
 ## Project Summary
 
@@ -105,7 +105,7 @@ This repo should be a focused recognition engine, not a second full application.
 ## Proposed Repository Structure
 
 ```text
-card-recognition-engine/
+fuzzy-enigma-card-recognition/
   README.md
   roadmap.md
   pyproject.toml
@@ -556,8 +556,8 @@ The Pygame app is a developer/debugging tool, not the primary application.
 
 Recommended parent-repo placement:
 
-- `third_party/card-recognition-engine`
-- `external/card-recognition-engine`
+- `third_party/fuzzy-enigma-card-recognition`
+- `external/fuzzy-enigma-card-recognition`
 
 ### Integration Rules
 

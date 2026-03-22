@@ -9,7 +9,7 @@ from urllib.request import Request, urlopen
 
 
 SCRYFALL_BULK_DATA_URL = "https://api.scryfall.com/bulk-data/default-cards"
-USER_AGENT = "card-recognition-engine/0.1.0"
+USER_AGENT = "fuzzy-enigma-card-recognition/0.1.0"
 DEFAULT_RANDOM_CARD_CACHE_LIMIT = 60
 REQUEST_HEADERS = {
     "User-Agent": USER_AGENT,
