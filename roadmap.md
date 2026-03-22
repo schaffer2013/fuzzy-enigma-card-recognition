@@ -626,6 +626,7 @@ What is effectively done today:
 - [ ] Milestone 8 is partially complete.
 - [ ] Milestone 9 is partially complete.
 - [ ] Milestone 10 is not started.
+- [ ] Milestone 11 is not started.
 
 Recommended next step:
 
@@ -874,8 +875,9 @@ Recommended early implementation order:
 - [x] Art-region fingerprint tie-breaker for same-name printings when set symbols are weak.
 - [x] Fast-path skip of secondary OCR when title plus set-symbol evidence is already confident enough.
 - [ ] Improved region cropping.
+- [ ] Lightweight per-stage timing in eval/debug output.
 - [ ] Documented extension points for image hashing in v2.
-- [ ] Performance profiling and benchmark write-up.
+- [ ] Lightweight profiling and benchmark write-up for current pipeline stages.
 
 **Current Progress Notes**
 
@@ -889,7 +891,7 @@ Recommended early implementation order:
   title and visual evidence are already strong.
 - Pathological long-running cases are now bounded by deadline-aware recognition,
   capped visual tie-break work, and download timeouts, but the repo still needs
-  more formal profiling data and benchmark notes.
+  lightweight stage-level timing visibility plus benchmark notes.
 
 **Deliverables**
 
@@ -900,8 +902,9 @@ Recommended early implementation order:
 - Art-region fingerprint tie-breaker for same-name printings when set symbols are weak.
 - Fast-path skip of secondary OCR when title plus set-symbol evidence is already confident enough.
 - Improved region cropping.
+- Lightweight per-stage timing in eval/debug output.
 - Documented extension points for image hashing in v2.
-- Performance profiling and benchmark write-up.
+- Lightweight profiling and benchmark write-up for current pipeline stages.
 
 **Visual Fingerprint Rollout**
 
@@ -921,7 +924,7 @@ Recommended early implementation order:
 - Same-name printings with weak or ambiguous set symbols can still be separated using a small art-region fingerprint when that signal is more distinctive.
 - Secondary OCR passes can be skipped on a meaningful subset of fixtures without hurting baseline accuracy.
 - Recognition runtime is bounded on pathological same-name pools, and those
-  bounds are reflected in profiling or benchmark notes.
+  bounds are reflected in lightweight timing output plus benchmark notes.
 - v2 path for visual fingerprinting is defined without affecting v1 simplicity.
 
 ### Milestone 10: Operational Recognition Modes
@@ -963,6 +966,44 @@ Recommended early implementation order:
 - Tracked pool state can be inspected and cleared deterministically by the
   caller.
 - Mode-specific behavior is documented and covered by automated tests.
+
+### Milestone 11: Pipeline Benchmarking and Performance Engineering
+
+**Status**
+
+- [ ] Persistent benchmark harness beyond ad hoc eval/debug timing.
+- [ ] Benchmark harness for repeated runs against representative fixture sets.
+- [ ] Version-to-version benchmark reporting for pipeline changes.
+- [ ] Baseline latency and throughput targets for common workflows.
+- [ ] Hotspot analysis for OCR, visual tie-breaks, catalog lookup, and image preprocessing.
+- [ ] Investigation of multithreading opportunities.
+- [ ] Investigation of GPU-accelerated paths where available.
+- [ ] Optimization backlog prioritized by measured impact.
+
+**Deliverables**
+
+- A repeatable benchmark workflow that records end-to-end recognition time
+  beyond the lightweight instrumentation already added for hardening.
+- Durable benchmark reports for major pipeline phases such as detection,
+  normalization, OCR, matching, set-symbol comparison, art comparison, and
+  final scoring.
+- Benchmark reports that can compare different versions of the pipeline on the
+  same fixture sets.
+- Baseline measurements for single-image recognition, repeated-pile scanning,
+  and constrained-pool recognition once those modes exist.
+- A documented list of candidate optimizations, including CPU parallelism,
+  caching, multithreading, and GPU acceleration where justified.
+
+**Exit Criteria**
+
+- Developers can measure how long recognition takes end to end and by stage.
+- Pipeline changes can be compared against prior versions using the same
+  benchmark workflow.
+- The slowest stages are identified from measured data rather than intuition.
+- The roadmap contains a prioritized speedup plan informed by benchmark
+  results.
+- At least one measured optimization pass has reduced real benchmark latency on
+  representative fixtures.
 
 ---
 
