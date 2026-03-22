@@ -131,7 +131,7 @@ The adapter lives in [sortingmachine.py](src/card_engine/adapters/sortingmachine
 Runtime configuration is defined by `EngineConfig` in
 [config.py](src/card_engine/config.py).
 
-Config can come from:
+Config can come from, in practice:
 
 - direct construction in Python
 - `CARD_ENGINE_CONFIG_PATH`
@@ -140,17 +140,40 @@ Config can come from:
 A starter config file is included at
 [engine.sample.json](data/config/engine.sample.json).
 
-Useful integration-facing settings include:
+When loading from disk, unknown keys are ignored and missing keys fall back to
+the built-in defaults.
 
-- `catalog_path`
-- `candidate_count`
-- `enabled_roi_groups`
-- `roi_cycle_order`
-- `lazy_group_basic_land_printings`
-- `lazy_default_printing_by_name`
-- `max_visual_tiebreak_candidates`
-- `max_visual_tiebreak_seconds_per_card`
-- `reference_download_timeout_seconds`
+Current `EngineConfig` fields:
+
+- `catalog_path`: path to the local SQLite catalog. Default:
+  `data/catalog/cards.sqlite3`.
+- `debug_enabled`: reserved debug toggle. Present in config today, but not yet
+  deeply wired into every stage.
+- `candidate_count`: number of top candidates returned in the final result.
+  The recognizer may keep a wider internal pool before trimming to this count.
+- `detection_min_area_ratio`: minimum contour-area ratio for card detection
+  heuristics.
+- `max_image_edge`: maximum normalized image edge size used before downstream
+  processing.
+- `enabled_roi_groups`: ROI groups the recognizer is allowed to use.
+- `roi_cycle_order`: deterministic order for trying ROI groups.
+- `layout_heuristics_enabled`: toggle for layout-driven ROI heuristics.
+- `lazy_group_basic_land_printings`: performance optimization that collapses
+  same-name basic-land printings to a default printing before expensive visual
+  tie-break work.
+- `lazy_default_printing_by_name`: broader performance optimization that
+  collapses all same-name printings to a default printing before expensive
+  visual tie-break work.
+- `max_visual_tiebreak_candidates`: hard cap on how many candidates are sent
+  into set-symbol and art-region comparison.
+- `max_visual_tiebreak_seconds_per_card`: per-card time budget for visual
+  tie-break work.
+- `reference_download_timeout_seconds`: timeout for fetching uncached reference
+  images used by visual tie-break steps.
+
+The config surface is still growing. As new mode-aware and integration-facing
+features land, this section should be kept in sync with `EngineConfig` so the
+README remains the parent-project-facing source of truth.
 
 ## Catalog Behavior
 
