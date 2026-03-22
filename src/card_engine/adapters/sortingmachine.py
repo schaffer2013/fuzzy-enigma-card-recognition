@@ -16,5 +16,5 @@ class SortingMachineRecognizer:
         self.config = config or EngineConfig()
 
     def recognize_top_card(self, frame: Any) -> SortingMachineOutput:
-        result = recognize_card(frame)
+        result = recognize_card(frame, config=self.config)
         return SortingMachineOutput(card_name=result.best_name, confidence=result.confidence)

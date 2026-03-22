@@ -843,6 +843,7 @@ Recommended early implementation order:
 **Status**
 
 - [x] Adapter compatible with SortingMachineArray.
+- [x] Adapter passes injected config through to the underlying recognition API.
 - [ ] Minimal integration docs.
 - [ ] Example configuration.
 - [x] Smoke test against parent-style frames.
@@ -850,6 +851,7 @@ Recommended early implementation order:
 **Deliverables**
 
 - Adapter compatible with SortingMachineArray.
+- Adapter honors caller-supplied engine configuration.
 - Minimal integration docs.
 - Example configuration.
 - Smoke test against parent-style frames.
@@ -857,6 +859,8 @@ Recommended early implementation order:
 **Exit Criteria**
 
 - Engine can be called from the parent repo through a single adapter.
+- Parent projects can actually influence recognition behavior through the
+  adapter's config surface.
 - No parent-level architectural changes are required beyond wiring.
 
 ### Milestone 9: Accuracy and Hardening
