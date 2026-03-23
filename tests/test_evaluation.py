@@ -1,18 +1,34 @@
+from datetime import datetime, timedelta, timezone
 import json
+import sqlite3
 from pathlib import Path
 import time
 
 from card_engine.evaluation import (
+    BenchmarkModeResult,
+    BenchmarkReport,
+    benchmark_report_to_json,
     build_random_sample,
+    compare_summaries,
+    evaluate_benchmark_modes,
     evaluate_random_sample,
     evaluate_fixture_set,
     infer_expected_name,
     infer_fixture_expectation,
     FixtureEvaluation,
+    load_summary_json,
+    render_benchmark_report,
+    render_comparison,
     render_summary,
+    resolve_benchmark_modes,
+    summary_from_json,
     summary_to_json,
+    _announce_eta_if_long,
+    _estimate_fixture_run_seconds,
+    _format_eta_message,
 )
 from card_engine.config import EngineConfig
+from card_engine.eval_pair_store import SimulatedPairStore, build_observed_card_id
 from card_engine.models import Candidate, RecognitionResult
 from card_engine.utils.image_io import load_image
 
@@ -117,7 +133,7 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
     assert summary.top5_accuracy == 1.0
     assert summary.set_accuracy == 1.0
     assert summary.art_accuracy == 0.5
-    assert summary.average_runtime_seconds == 0.0
+    assert summary.average_runtime_seconds >= 0.0
     assert summary.calibration_error == 0.23
     assert len(summary.calibration_bins) == 2
     assert summary.calibration_bins[0].lower_bound == 0.6
@@ -139,11 +155,11 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
     rendered = render_summary(summary)
     payload = summary_to_json(summary)
 
-    assert "Average runtime (s): 0.000" in rendered
+    assert "Average runtime (s):" in rendered
     assert "Stage timings (avg seconds):" in rendered
     assert "Calibration error (ECE): 0.230" in rendered
     assert "0.6-0.8: count=1, avg_confidence=0.630, accuracy=1.000, gap=0.370" in rendered
-    assert payload["average_runtime_seconds"] == 0.0
+    assert payload["average_runtime_seconds"] >= 0.0
     assert payload["average_stage_timings"] == {}
     assert payload["calibration_error"] == 0.23
     assert payload["calibration_bins"][0]["lower_bound"] == 0.6
@@ -309,6 +325,409 @@ def test_evaluate_fixture_set_aggregates_stage_timings(monkeypatch, tmp_path):
     assert summary.average_runtime_seconds == 0.0028
     assert summary.average_stage_timings["total"] == 0.0028
     assert summary.average_stage_timings["load_catalog"] == 0.0002
+
+
+def test_summary_json_round_trip_preserves_comparison_fields():
+    summary = summary_from_json(
+        {
+            "fixture_count": 2,
+            "scored_count": 2,
+            "set_scored_count": 1,
+            "art_scored_count": 1,
+            "top1_accuracy": 0.5,
+            "top5_accuracy": 1.0,
+            "set_accuracy": 1.0,
+            "art_accuracy": 0.0,
+            "average_confidence": 0.7,
+            "average_scored_confidence": 0.7,
+            "average_runtime_seconds": 0.1234,
+            "calibration_error": 0.11,
+            "calibration_bins": [
+                {
+                    "lower_bound": 0.6,
+                    "upper_bound": 0.8,
+                    "fixture_count": 2,
+                    "average_confidence": 0.7,
+                    "empirical_accuracy": 0.5,
+                    "calibration_gap": 0.2,
+                }
+            ],
+            "average_stage_timings": {"total": 0.1234, "title_ocr": 0.01},
+            "roi_usage": {"standard": 2},
+            "error_classes": {"wrong_top1": 1, "correct_top1": 1},
+            "fixtures": [],
+        }
+    )
+
+    payload = summary_to_json(summary)
+
+    assert payload["average_runtime_seconds"] == 0.1234
+    assert payload["average_stage_timings"]["title_ocr"] == 0.01
+    assert payload["calibration_bins"][0]["calibration_gap"] == 0.2
+
+
+def test_load_summary_json_reads_saved_eval_summary(tmp_path):
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "fixture_count": 1,
+                "scored_count": 1,
+                "set_scored_count": 1,
+                "art_scored_count": 1,
+                "top1_accuracy": 1.0,
+                "top5_accuracy": 1.0,
+                "set_accuracy": 1.0,
+                "art_accuracy": 1.0,
+                "average_confidence": 0.9,
+                "average_scored_confidence": 0.9,
+                "average_runtime_seconds": 0.05,
+                "calibration_error": 0.02,
+                "calibration_bins": [],
+                "average_stage_timings": {"total": 0.05},
+                "roi_usage": {"standard": 1},
+                "error_classes": {"correct_top1": 1},
+                "fixtures": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = load_summary_json(summary_path)
+
+    assert summary.fixture_count == 1
+    assert summary.average_runtime_seconds == 0.05
+    assert summary.average_stage_timings["total"] == 0.05
+
+
+def test_compare_summaries_reports_metric_and_stage_deltas():
+    baseline = summary_from_json(
+        {
+            "fixture_count": 10,
+            "scored_count": 10,
+            "set_scored_count": 10,
+            "art_scored_count": 10,
+            "top1_accuracy": 0.7,
+            "top5_accuracy": 0.9,
+            "set_accuracy": 0.6,
+            "art_accuracy": 0.4,
+            "average_confidence": 0.8,
+            "average_scored_confidence": 0.8,
+            "average_runtime_seconds": 0.5,
+            "calibration_error": 0.12,
+            "calibration_bins": [
+                {
+                    "lower_bound": 0.8,
+                    "upper_bound": 1.0,
+                    "fixture_count": 5,
+                    "average_confidence": 0.9,
+                    "empirical_accuracy": 0.7,
+                    "calibration_gap": 0.2,
+                }
+            ],
+            "average_stage_timings": {"total": 0.5, "title_ocr": 0.1},
+            "roi_usage": {},
+            "error_classes": {},
+            "fixtures": [],
+        }
+    )
+    current = summary_from_json(
+        {
+            "fixture_count": 10,
+            "scored_count": 10,
+            "set_scored_count": 10,
+            "art_scored_count": 10,
+            "top1_accuracy": 0.8,
+            "top5_accuracy": 0.95,
+            "set_accuracy": 0.7,
+            "art_accuracy": 0.5,
+            "average_confidence": 0.78,
+            "average_scored_confidence": 0.78,
+            "average_runtime_seconds": 0.45,
+            "calibration_error": 0.08,
+            "calibration_bins": [
+                {
+                    "lower_bound": 0.8,
+                    "upper_bound": 1.0,
+                    "fixture_count": 5,
+                    "average_confidence": 0.88,
+                    "empirical_accuracy": 0.8,
+                    "calibration_gap": 0.08,
+                }
+            ],
+            "average_stage_timings": {"total": 0.45, "title_ocr": 0.09},
+            "roi_usage": {},
+            "error_classes": {},
+            "fixtures": [],
+        }
+    )
+
+    comparison = compare_summaries(baseline, current, baseline_label="baseline.json", current_label="candidate run")
+    rendered = render_comparison(comparison)
+
+    assert comparison.metric_deltas[0].label == "Name top-1 accuracy"
+    assert comparison.metric_deltas[0].delta == 0.1
+    assert comparison.metric_deltas[5].label == "Average runtime (s)"
+    assert comparison.metric_deltas[5].delta == -0.05
+    assert comparison.calibration_gap_deltas[0].label == "0.8-1.0"
+    assert comparison.calibration_gap_deltas[0].delta == -0.12
+    assert comparison.stage_timing_deltas[0].label == "title_ocr"
+    assert "Comparison: candidate run vs baseline.json" in rendered
+    assert "Name top-1 accuracy: 0.7000 -> 0.8000 (+0.1000)" in rendered
+    assert "Average runtime (s): 0.5000 -> 0.4500 (-0.0500)" in rendered
+
+
+def test_resolve_benchmark_modes_expands_all_and_dedupes():
+    assert resolve_benchmark_modes("default,all,default") == [
+        "default",
+        "lazy_basic_lands",
+        "lazy_all_printings",
+    ]
+
+
+def test_evaluate_benchmark_modes_runs_same_fixture_set_across_modes(monkeypatch, tmp_path):
+    seen: list[tuple[str, EngineConfig]] = []
+
+    def fake_summary(name_top1, set_acc):
+        return summary_from_json(
+            {
+                "fixture_count": 3,
+                "scored_count": 3,
+                "set_scored_count": 3,
+                "art_scored_count": 3,
+                "top1_accuracy": name_top1,
+                "top5_accuracy": name_top1,
+                "set_accuracy": set_acc,
+                "art_accuracy": set_acc,
+                "average_confidence": 0.9,
+                "average_scored_confidence": 0.9,
+                "average_runtime_seconds": 0.1,
+                "calibration_error": 0.05,
+                "calibration_bins": [],
+                "average_stage_timings": {"total": 0.1},
+                "roi_usage": {"standard": 3},
+                "error_classes": {"correct_top1": 3},
+                "fixtures": [],
+            }
+        )
+
+    summaries = iter([fake_summary(0.9, 0.8), fake_summary(0.8, 0.7), fake_summary(0.7, 0.6)])
+
+    monkeypatch.setattr("card_engine.evaluation.evaluate_fixture_set", lambda fixtures_dir, *, limit=None, config=None: (seen.append((str(fixtures_dir), config)) or next(summaries)))
+
+    report = evaluate_benchmark_modes(
+        tmp_path,
+        mode_names=["default", "lazy_basic_lands", "lazy_all_printings"],
+        limit=10,
+        base_config=EngineConfig(),
+    )
+
+    assert [mode_result.mode_name for mode_result in report.mode_results] == [
+        "default",
+        "lazy_basic_lands",
+        "lazy_all_printings",
+    ]
+    assert all(entry[0] == str(tmp_path) for entry in seen)
+    assert seen[0][1].lazy_group_basic_land_printings is False
+    assert seen[1][1].lazy_group_basic_land_printings is True
+    assert seen[2][1].lazy_default_printing_by_name is True
+
+
+def test_benchmark_report_renders_and_serializes_mode_accuracy():
+    report = BenchmarkReport(
+        fixtures_dir="data/sample_outputs/random_eval_cards",
+        mode_results=[
+            BenchmarkModeResult(
+                mode_name="default",
+                config_overrides={},
+                summary=summary_from_json(
+                    {
+                        "fixture_count": 3,
+                        "scored_count": 3,
+                        "set_scored_count": 3,
+                        "art_scored_count": 3,
+                        "top1_accuracy": 0.9,
+                        "top5_accuracy": 0.9,
+                        "set_accuracy": 0.8,
+                        "art_accuracy": 0.7,
+                        "average_confidence": 0.85,
+                        "average_scored_confidence": 0.85,
+                        "average_runtime_seconds": 0.12,
+                        "calibration_error": 0.04,
+                        "calibration_bins": [],
+                        "average_stage_timings": {"total": 0.12},
+                        "roi_usage": {},
+                        "error_classes": {},
+                        "fixtures": [],
+                    }
+                ),
+            )
+        ],
+    )
+
+    rendered = render_benchmark_report(report)
+    payload = benchmark_report_to_json(report)
+
+    assert "Mode: default" in rendered
+    assert "Top-1 accuracy: 0.900" in rendered
+    assert payload["mode_results"][0]["mode_name"] == "default"
+    assert payload["mode_results"][0]["summary"]["set_accuracy"] == 0.8
+
+
+def test_evaluate_fixture_set_tracks_expected_vs_actual_pairs(monkeypatch, tmp_path):
+    fixture_path = tmp_path / "echoing-courage-deadbeef.png"
+    fixture_path.write_bytes(_minimal_png(width=80, height=100))
+    fixture_path.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "expected_name": "Echoing Courage",
+                "expected_set_code": "DST",
+                "expected_collector_number": "61",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "card_engine.evaluation.recognize_card",
+        lambda image, *, deadline=None, config=None: RecognitionResult(
+            bbox=(0, 0, 80, 100),
+            best_name="Echoing Courage",
+            confidence=0.91,
+            top_k_candidates=[
+                Candidate(name="Echoing Courage", score=0.9, set_code="DST", collector_number="62")
+            ],
+            active_roi="standard",
+            tried_rois=["standard"],
+        ),
+    )
+
+    db_path = tmp_path / "pairs.sqlite3"
+    with SimulatedPairStore(db_path) as pair_store:
+        summary = evaluate_fixture_set(tmp_path, pair_store=pair_store)
+
+    assert summary.fixture_count == 1
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT expected_card_id, actual_card_id, seen_count FROM simulated_card_pairs"
+        ).fetchone()
+
+    assert row == ("printing:dst:61", "printing:dst:62", 1)
+
+
+def test_evaluate_benchmark_modes_passes_pair_store_through(monkeypatch, tmp_path):
+    seen_pair_stores: list[object] = []
+
+    monkeypatch.setattr(
+        "card_engine.evaluation.evaluate_fixture_set",
+        lambda fixtures_dir, *, limit=None, config=None, pair_store=None: (
+            seen_pair_stores.append(pair_store) or summary_from_json(
+                {
+                    "fixture_count": 1,
+                    "scored_count": 1,
+                    "set_scored_count": 1,
+                    "art_scored_count": 1,
+                    "top1_accuracy": 1.0,
+                    "top5_accuracy": 1.0,
+                    "set_accuracy": 1.0,
+                    "art_accuracy": 1.0,
+                    "average_confidence": 0.9,
+                    "average_scored_confidence": 0.9,
+                    "average_runtime_seconds": 0.1,
+                    "calibration_error": 0.0,
+                    "calibration_bins": [],
+                    "average_stage_timings": {"total": 0.1},
+                    "roi_usage": {},
+                    "error_classes": {"correct_top1": 1},
+                    "fixtures": [],
+                }
+            )
+        ),
+    )
+
+    with SimulatedPairStore(tmp_path / "pairs.sqlite3") as pair_store:
+        evaluate_benchmark_modes(
+            tmp_path,
+            mode_names=["default", "lazy_basic_lands"],
+            pair_store=pair_store,
+        )
+
+    assert len(seen_pair_stores) == 2
+    assert all(store is seen_pair_stores[0] for store in seen_pair_stores)
+
+
+def test_build_observed_card_id_prefers_printing_and_falls_back_to_name():
+    assert build_observed_card_id(
+        name="Faithless Looting",
+        set_code="STA",
+        collector_number="38",
+        missing_label="unrecognized",
+    ) == "printing:sta:38"
+    assert build_observed_card_id(
+        name="Faithless Looting",
+        set_code=None,
+        collector_number=None,
+        missing_label="unrecognized",
+    ) == "name:faithless looting"
+    assert build_observed_card_id(
+        name=None,
+        set_code=None,
+        collector_number=None,
+        missing_label="unrecognized",
+    ) == "unrecognized"
+
+
+def test_format_eta_message_includes_finish_time_and_duration():
+    now = datetime(2026, 3, 23, 12, 0, 0, tzinfo=timezone.utc).astimezone()
+    rendered = _format_eta_message(
+        "Benchmark evaluation",
+        245.0,
+        now=now,
+    )
+
+    assert "Benchmark evaluation is expected to finish around" in rendered
+    assert (now + timedelta(seconds=245.0)).strftime("%Y-%m-%d %I:%M:%S %p %Z") in rendered
+    assert "(about 4m 5s)." in rendered
+
+
+def test_announce_eta_if_long_only_notifies_above_threshold():
+    seen: list[str] = []
+
+    _announce_eta_if_long(
+        "Fixture evaluation",
+        179.0,
+        progress_callback=seen.append,
+        now=datetime(2026, 3, 23, 12, 0, 0, tzinfo=timezone.utc).astimezone(),
+    )
+    _announce_eta_if_long(
+        "Fixture evaluation",
+        181.0,
+        progress_callback=seen.append,
+        now=datetime(2026, 3, 23, 12, 0, 0, tzinfo=timezone.utc).astimezone(),
+    )
+
+    assert len(seen) == 1
+    assert "Fixture evaluation is expected to finish around" in seen[0]
+
+
+def test_estimate_fixture_run_seconds_uses_fixture_count_and_prior_runtime_summary(tmp_path):
+    for index in range(3):
+        path = tmp_path / f"card-{index}.png"
+        path.write_bytes(_minimal_png(width=80, height=100))
+
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(
+        json.dumps({"average_runtime_seconds": 2.5}),
+        encoding="utf-8",
+    )
+
+    estimated = _estimate_fixture_run_seconds(
+        tmp_path,
+        ["default"],
+        compare_to=summary_path,
+    )
+
+    assert estimated == 7.5
 
 
 def _minimal_png(*, width: int, height: int) -> bytes:

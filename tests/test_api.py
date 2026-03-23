@@ -147,6 +147,7 @@ def test_recognize_card_preserves_pixels_for_ui_editable_images(monkeypatch, tmp
         width=80,
         height=100,
         layout_hint="normal",
+        content_hash="deadbeef" * 8,
         image_array=numpy.zeros((100, 80, 3), dtype=numpy.uint8),
         card_quad=None,
         roi_overrides={},

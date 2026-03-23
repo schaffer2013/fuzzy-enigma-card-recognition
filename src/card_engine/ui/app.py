@@ -4,10 +4,12 @@ import argparse
 from dataclasses import dataclass
 import math
 from pathlib import Path
+import sqlite3
 import tkinter as tk
 from tkinter import ttk
 
 from card_engine.api import recognize_card
+from card_engine.art_match import ART_MATCH_CACHE_DIR
 from card_engine.catalog.maintenance import catalog_refresh_needed, ensure_catalog_ready
 from card_engine.catalog.scryfall_sync import fetch_random_card_image, prune_random_card_cache
 from card_engine.roi import DEFAULT_ENABLED_ROI_GROUPS, roi_group_bboxes
@@ -44,6 +46,7 @@ class EditableLoadedImage:
     width: int
     height: int
     layout_hint: str | None
+    content_hash: str | None
     image_array: object | None
     card_quad: Quad | None
     roi_overrides: dict[str, dict[str, tuple[float, float, float, float]]]
@@ -208,11 +211,14 @@ class CardEngineDebugUI:
         footer = ttk.Frame(self.root, padding=(12, 0, 12, 12))
         footer.grid(row=2, column=0, columnspan=3, sticky="ew")
         footer.columnconfigure(0, weight=1)
+        footer.columnconfigure(1, weight=0)
 
         self.footer_var = tk.StringVar(
             value="Use Left/Right to browse fixtures, drag green corners for bbox, drag orange corners for ROI, then click Re-evaluate."
         )
         ttk.Label(footer, textvariable=self.footer_var).grid(row=0, column=0, sticky="w")
+        self.prehash_var = tk.StringVar(value="0/0 cards pre-hashed")
+        ttk.Label(footer, textvariable=self.prehash_var).grid(row=0, column=1, sticky="e")
 
     def _bind_shortcuts(self) -> None:
         self.root.bind("<Left>", lambda _event: self._select_previous_fixture())
@@ -328,6 +334,7 @@ class CardEngineDebugUI:
             ),
         )
         set_readonly_text(self.status_text, format_status_summary(self.state))
+        self._refresh_prehash_summary()
         self._refresh_preview()
 
     def _load_selected_fixture_state(self, *, run_recognition: bool) -> None:
@@ -694,6 +701,7 @@ class CardEngineDebugUI:
             width=self.state.current_image.width,
             height=self.state.current_image.height,
             layout_hint=self.state.current_image.layout_hint,
+            content_hash=self.state.current_image.content_hash,
             image_array=self.state.current_image.image_array,
             card_quad=manual_quad,
             roi_overrides=manual_roi_overrides,
@@ -712,6 +720,7 @@ class CardEngineDebugUI:
             self.state.status_message = (
                 f"Catalog ready ({age_days:.1f} days old)." if age_days is not None else "Catalog ready."
             )
+            self._refresh_prehash_summary()
             return
 
         splash = OperationSplash(
@@ -740,6 +749,7 @@ class CardEngineDebugUI:
             self.state.status_message = (
                 f"Catalog reused ({status.age_days:.1f} days old)." if status.age_days is not None else "Catalog reused."
             )
+        self._refresh_prehash_summary()
 
     def _prune_random_cache_if_needed(self) -> None:
         random_cache_dir = Path(_default_random_cache_dir()).resolve()
@@ -757,6 +767,11 @@ class CardEngineDebugUI:
 
     def run(self) -> None:
         self.root.mainloop()
+
+    def _refresh_prehash_summary(self) -> None:
+        total_cards = _count_hashable_catalog_cards(_default_catalog_path())
+        prehashed_cards = min(total_cards, _count_prehash_cache_entries())
+        self.prehash_var.set(f"{prehashed_cards}/{total_cards} cards pre-hashed")
 
 
 def _default_fixtures_dir() -> str:
@@ -777,6 +792,31 @@ def _default_random_cache_dir() -> str:
 
 def _default_overrides_path() -> str:
     return str(Path("data") / "cache" / "ui_overrides.json")
+
+
+def _count_hashable_catalog_cards(catalog_path: str | Path) -> int:
+    database = Path(catalog_path)
+    if not database.exists():
+        return 0
+    try:
+        with sqlite3.connect(database) as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM cards
+                WHERE image_uri IS NOT NULL
+                  AND TRIM(image_uri) != ''
+                """
+            ).fetchone()
+    except sqlite3.Error:
+        return 0
+    return int(row[0]) if row else 0
+
+
+def _count_prehash_cache_entries() -> int:
+    if not ART_MATCH_CACHE_DIR.exists():
+        return 0
+    return sum(1 for path in ART_MATCH_CACHE_DIR.glob("*.json") if path.name != "_cache_meta.json")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

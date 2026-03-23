@@ -5,20 +5,34 @@ import inspect
 import json
 import re
 import shutil
+import sys
 import time
-from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from .api import recognize_card
 from .catalog.scryfall_sync import fetch_random_card_image
 from .config import EngineConfig, load_engine_config
+from .eval_pair_store import (
+    DEFAULT_SIMULATED_PAIR_DB_PATH,
+    SimulatedPairStore,
+    build_observed_card_id,
+)
 from .utils.image_io import LoadedImage, load_image
 
 SUPPORTED_SUFFIXES = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
 HASHED_NAME_SUFFIX = re.compile(r"-(?P<hash>[0-9a-f]{8})$", re.IGNORECASE)
 ProgressCallback = Callable[[str], None]
 MAX_RANDOM_TEST_MINUTES = 10.0
+DEFAULT_BENCHMARK_MODES = ("default", "lazy_basic_lands", "lazy_all_printings")
+LONG_RUN_ETA_THRESHOLD_SECONDS = 180.0
+DEFAULT_MODE_RUNTIME_ESTIMATES = {
+    "default": 7.0,
+    "lazy_basic_lands": 6.0,
+    "lazy_all_printings": 9.5,
+}
 
 
 @dataclass(frozen=True)
@@ -82,6 +96,36 @@ class ConfidenceCalibrationBin:
     calibration_gap: float
 
 
+@dataclass(frozen=True)
+class MetricDelta:
+    label: str
+    baseline: float
+    current: float
+    delta: float
+
+
+@dataclass(frozen=True)
+class EvaluationSummaryComparison:
+    baseline_label: str
+    current_label: str
+    metric_deltas: list[MetricDelta]
+    calibration_gap_deltas: list[MetricDelta]
+    stage_timing_deltas: list[MetricDelta]
+
+
+@dataclass(frozen=True)
+class BenchmarkModeResult:
+    mode_name: str
+    config_overrides: dict[str, Any]
+    summary: EvaluationSummary
+
+
+@dataclass(frozen=True)
+class BenchmarkReport:
+    fixtures_dir: str
+    mode_results: list[BenchmarkModeResult]
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Evaluate recognition accuracy on a fixture folder.")
     parser.add_argument(
@@ -101,6 +145,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Optional path to write a JSON summary.",
     )
     parser.add_argument(
+        "--compare-to",
+        default=None,
+        help="Optional path to a prior JSON summary to compare against the current run.",
+    )
+    parser.add_argument(
+        "--benchmark-modes",
+        default="default",
+        help=(
+            "Comma-separated benchmark config modes to run against the same fixture set. "
+            "Use 'all' for the built-in suite."
+        ),
+    )
+    parser.add_argument(
         "--random-time-limit-minutes",
         type=float,
         default=0.0,
@@ -113,6 +170,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--random-output-dir",
         default="data/sample_outputs/random_eval_cards",
         help="Output directory used when --random-time-limit-minutes is provided.",
+    )
+    parser.add_argument(
+        "--pair-db",
+        default=str(DEFAULT_SIMULATED_PAIR_DB_PATH),
+        help=(
+            "SQLite database used to track expected-vs-actual card ID pairs for simulated evaluations. "
+            "Counts are aggregated across runs and capped to 10,000 unique pairs."
+        ),
     )
     return parser
 
@@ -133,6 +198,7 @@ def evaluate_fixture_set(
     limit: int | None = None,
     deadline: float | None = None,
     config: EngineConfig | None = None,
+    pair_store: SimulatedPairStore | None = None,
 ) -> EvaluationSummary:
     fixture_paths = discover_fixture_paths(fixtures_dir)
     if limit is not None:
@@ -143,7 +209,15 @@ def evaluate_fixture_set(
     for path in fixture_paths:
         if deadline is not None and time.monotonic() >= deadline:
             break
-        evaluations.append(_call_with_supported_kwargs(evaluate_fixture, path, deadline=deadline, config=config))
+        evaluations.append(
+            _call_with_supported_kwargs(
+                evaluate_fixture,
+                path,
+                deadline=deadline,
+                config=config,
+                pair_store=pair_store,
+            )
+        )
     return _summarize_evaluations(evaluations)
 
 
@@ -153,6 +227,7 @@ def evaluate_random_sample(
     time_limit_seconds: float,
     progress_callback: ProgressCallback | None = None,
     clock: Callable[[], float] = time.monotonic,
+    pair_store: SimulatedPairStore | None = None,
 ) -> EvaluationSummary:
     if time_limit_seconds <= 0:
         raise ValueError("time_limit_seconds must be greater than 0.")
@@ -171,10 +246,50 @@ def evaluate_random_sample(
         _notify(progress_callback, f"Fetched random card {card_index}: {path.name}")
         if clock() >= deadline:
             break
-        evaluations.append(_call_with_supported_kwargs(evaluate_fixture, path, deadline=deadline, config=config))
+        evaluations.append(
+            _call_with_supported_kwargs(
+                evaluate_fixture,
+                path,
+                deadline=deadline,
+                config=config,
+                pair_store=pair_store,
+            )
+        )
         _notify(progress_callback, f"Evaluated random card {card_index}: {path.name}")
 
     return _summarize_evaluations(evaluations)
+
+
+def evaluate_benchmark_modes(
+    fixtures_dir: str | Path,
+    *,
+    mode_names: list[str],
+    limit: int | None = None,
+    base_config: EngineConfig | None = None,
+    pair_store: SimulatedPairStore | None = None,
+) -> BenchmarkReport:
+    resolved_mode_names = resolve_benchmark_modes(mode_names)
+    config = base_config or load_engine_config()
+    mode_results: list[BenchmarkModeResult] = []
+    for mode_name in resolved_mode_names:
+        mode_config = config_for_benchmark_mode(config, mode_name)
+        mode_results.append(
+            BenchmarkModeResult(
+                mode_name=mode_name,
+                config_overrides=_benchmark_mode_overrides(mode_name),
+                summary=_call_with_supported_kwargs(
+                    evaluate_fixture_set,
+                    fixtures_dir,
+                    limit=limit,
+                    config=mode_config,
+                    pair_store=pair_store,
+                ),
+            )
+        )
+    return BenchmarkReport(
+        fixtures_dir=str(fixtures_dir),
+        mode_results=mode_results,
+    )
 
 
 def _summarize_evaluations(evaluations: list[FixtureEvaluation]) -> EvaluationSummary:
@@ -228,6 +343,7 @@ def evaluate_fixture(
     *,
     deadline: float | None = None,
     config: EngineConfig | None = None,
+    pair_store: SimulatedPairStore | None = None,
 ) -> FixtureEvaluation:
     fixture_path = Path(path)
     loaded_image = load_image(fixture_path)
@@ -254,6 +370,15 @@ def evaluate_fixture(
         and predicted_collector_number
         and predicted_set_code.lower() == expected.set_code.lower()
         and str(predicted_collector_number).lower() == str(expected.collector_number).lower()
+    )
+    _record_simulated_pair(
+        pair_store,
+        expected_name=expected.name,
+        expected_set_code=expected.set_code,
+        expected_collector_number=expected.collector_number,
+        predicted_name=result.best_name,
+        predicted_set_code=predicted_set_code,
+        predicted_collector_number=predicted_collector_number,
     )
 
     return FixtureEvaluation(
@@ -432,30 +557,275 @@ def summary_to_json(summary: EvaluationSummary) -> dict:
     }
 
 
+def summary_from_json(payload: dict[str, Any]) -> EvaluationSummary:
+    calibration_bins = [
+        ConfidenceCalibrationBin(**_filter_dataclass_kwargs(ConfidenceCalibrationBin, item))
+        for item in _coerce_list(payload.get("calibration_bins"))
+        if isinstance(item, dict)
+    ]
+    fixtures = [
+        FixtureEvaluation(**_filter_dataclass_kwargs(FixtureEvaluation, item))
+        for item in _coerce_list(payload.get("fixtures"))
+        if isinstance(item, dict)
+    ]
+    return EvaluationSummary(
+        fixture_count=int(payload.get("fixture_count", 0) or 0),
+        scored_count=int(payload.get("scored_count", 0) or 0),
+        set_scored_count=int(payload.get("set_scored_count", 0) or 0),
+        art_scored_count=int(payload.get("art_scored_count", 0) or 0),
+        top1_accuracy=float(payload.get("top1_accuracy", 0.0) or 0.0),
+        top5_accuracy=float(payload.get("top5_accuracy", 0.0) or 0.0),
+        set_accuracy=float(payload.get("set_accuracy", 0.0) or 0.0),
+        art_accuracy=float(payload.get("art_accuracy", 0.0) or 0.0),
+        average_confidence=float(payload.get("average_confidence", 0.0) or 0.0),
+        average_scored_confidence=float(payload.get("average_scored_confidence", 0.0) or 0.0),
+        average_runtime_seconds=float(payload.get("average_runtime_seconds", 0.0) or 0.0),
+        calibration_error=float(payload.get("calibration_error", 0.0) or 0.0),
+        calibration_bins=calibration_bins,
+        average_stage_timings=_coerce_stage_timings(payload.get("average_stage_timings", {})),
+        roi_usage=_coerce_count_dict(payload.get("roi_usage", {})),
+        error_classes=_coerce_count_dict(payload.get("error_classes", {})),
+        fixtures=fixtures,
+    )
+
+
+def load_summary_json(path: str | Path) -> EvaluationSummary:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Summary JSON must contain an object at the top level.")
+    return summary_from_json(payload)
+
+
+def compare_summaries(
+    baseline: EvaluationSummary,
+    current: EvaluationSummary,
+    *,
+    baseline_label: str = "baseline",
+    current_label: str = "current",
+) -> EvaluationSummaryComparison:
+    metric_deltas = [
+        _metric_delta("Name top-1 accuracy", baseline.top1_accuracy, current.top1_accuracy),
+        _metric_delta("Name top-5 accuracy", baseline.top5_accuracy, current.top5_accuracy),
+        _metric_delta("Set accuracy", baseline.set_accuracy, current.set_accuracy),
+        _metric_delta("Art accuracy", baseline.art_accuracy, current.art_accuracy),
+        _metric_delta("Average confidence", baseline.average_confidence, current.average_confidence),
+        _metric_delta("Average runtime (s)", baseline.average_runtime_seconds, current.average_runtime_seconds),
+        _metric_delta("Calibration error (ECE)", baseline.calibration_error, current.calibration_error),
+    ]
+
+    calibration_gap_deltas: list[MetricDelta] = []
+    current_bins = {(item.lower_bound, item.upper_bound): item for item in current.calibration_bins}
+    for baseline_bin in baseline.calibration_bins:
+        key = (baseline_bin.lower_bound, baseline_bin.upper_bound)
+        current_bin = current_bins.get(key)
+        if current_bin is None:
+            continue
+        calibration_gap_deltas.append(
+            _metric_delta(
+                f"{baseline_bin.lower_bound:.1f}-{baseline_bin.upper_bound:.1f}",
+                baseline_bin.calibration_gap,
+                current_bin.calibration_gap,
+            )
+        )
+
+    stage_timing_deltas: list[MetricDelta] = []
+    stage_names = sorted(set(baseline.average_stage_timings) | set(current.average_stage_timings))
+    for stage_name in stage_names:
+        stage_timing_deltas.append(
+            _metric_delta(
+                stage_name,
+                baseline.average_stage_timings.get(stage_name, 0.0),
+                current.average_stage_timings.get(stage_name, 0.0),
+            )
+        )
+
+    return EvaluationSummaryComparison(
+        baseline_label=baseline_label,
+        current_label=current_label,
+        metric_deltas=metric_deltas,
+        calibration_gap_deltas=calibration_gap_deltas,
+        stage_timing_deltas=stage_timing_deltas,
+    )
+
+
+def render_comparison(comparison: EvaluationSummaryComparison) -> str:
+    lines = [
+        f"Comparison: {comparison.current_label} vs {comparison.baseline_label}",
+        "",
+        "Metric deltas:",
+    ]
+    lines.extend(f"  - {_format_delta(metric)}" for metric in comparison.metric_deltas)
+
+    lines.append("")
+    lines.append("Calibration gap deltas:")
+    if comparison.calibration_gap_deltas:
+        lines.extend(f"  - {_format_delta(metric)}" for metric in comparison.calibration_gap_deltas)
+    else:
+        lines.append("  - none")
+
+    lines.append("")
+    lines.append("Stage timing deltas (avg seconds):")
+    if comparison.stage_timing_deltas:
+        lines.extend(f"  - {_format_delta(metric)}" for metric in comparison.stage_timing_deltas)
+    else:
+        lines.append("  - none")
+
+    return "\n".join(lines)
+
+
+def render_benchmark_report(report: BenchmarkReport) -> str:
+    lines = [
+        f"Benchmark fixtures dir: {report.fixtures_dir}",
+        f"Benchmark modes: {', '.join(mode_result.mode_name for mode_result in report.mode_results) or 'none'}",
+    ]
+    for mode_result in report.mode_results:
+        summary = mode_result.summary
+        lines.extend(
+            [
+                "",
+                f"Mode: {mode_result.mode_name}",
+                f"  Top-1 accuracy: {summary.top1_accuracy:.3f}",
+                f"  Top-5 accuracy: {summary.top5_accuracy:.3f}",
+                f"  Set accuracy: {summary.set_accuracy:.3f}",
+                f"  Art accuracy: {summary.art_accuracy:.3f}",
+                f"  Average confidence: {summary.average_confidence:.3f}",
+                f"  Average runtime (s): {summary.average_runtime_seconds:.3f}",
+                f"  Calibration error (ECE): {summary.calibration_error:.3f}",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def benchmark_report_to_json(report: BenchmarkReport) -> dict[str, Any]:
+    return {
+        "fixtures_dir": report.fixtures_dir,
+        "mode_results": [
+            {
+                "mode_name": mode_result.mode_name,
+                "config_overrides": mode_result.config_overrides,
+                "summary": summary_to_json(mode_result.summary),
+            }
+            for mode_result in report.mode_results
+        ],
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
-    if args.random_time_limit_minutes:
-        if args.random_time_limit_minutes > MAX_RANDOM_TEST_MINUTES:
-            parser.error(
-                f"--random-time-limit-minutes may not exceed {MAX_RANDOM_TEST_MINUTES:g} minutes."
+    try:
+        benchmark_mode_names = resolve_benchmark_modes(args.benchmark_modes)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    if args.compare_to and len(benchmark_mode_names) > 1:
+        parser.error("--compare-to currently supports single-mode runs only.")
+
+    with SimulatedPairStore(args.pair_db) as pair_store:
+        if args.random_time_limit_minutes and len(benchmark_mode_names) > 1:
+            if args.random_time_limit_minutes > MAX_RANDOM_TEST_MINUTES:
+                parser.error(
+                    f"--random-time-limit-minutes may not exceed {MAX_RANDOM_TEST_MINUTES:g} minutes."
+                )
+            _announce_eta_if_long(
+                "Random sample build",
+                args.random_time_limit_minutes * 60.0,
+                progress_callback=_print_console,
             )
-        summary = evaluate_random_sample(
-            args.random_output_dir,
-            time_limit_seconds=args.random_time_limit_minutes * 60.0,
-            progress_callback=print,
-        )
-    else:
-        summary = evaluate_fixture_set(args.fixtures_dir, limit=args.limit)
-    print(render_summary(summary))
+            sample_dir = build_random_sample(
+                args.random_output_dir,
+                time_limit_seconds=args.random_time_limit_minutes * 60.0,
+                progress_callback=_print_console,
+            )
+            _announce_eta_if_long(
+                "Benchmark evaluation",
+                _estimate_fixture_run_seconds(sample_dir, benchmark_mode_names, limit=args.limit),
+                progress_callback=_print_console,
+            )
+            report = evaluate_benchmark_modes(
+                sample_dir,
+                mode_names=benchmark_mode_names,
+                limit=args.limit,
+                pair_store=pair_store,
+            )
+            _print_console(render_benchmark_report(report))
+            _print_console(f"\nTracking simulated pairs in {Path(args.pair_db)}")
+            if args.json_out:
+                output_path = Path(args.json_out)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(json.dumps(benchmark_report_to_json(report), indent=2, sort_keys=True), encoding="utf-8")
+                _print_console(f"\nWrote JSON summary to {output_path}")
+            return 0
 
-    if args.json_out:
-        output_path = Path(args.json_out)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(summary_to_json(summary), indent=2, sort_keys=True), encoding="utf-8")
-        print(f"\nWrote JSON summary to {output_path}")
+        if args.random_time_limit_minutes:
+            if args.random_time_limit_minutes > MAX_RANDOM_TEST_MINUTES:
+                parser.error(
+                    f"--random-time-limit-minutes may not exceed {MAX_RANDOM_TEST_MINUTES:g} minutes."
+                )
+            _announce_eta_if_long(
+                "Random sample evaluation",
+                args.random_time_limit_minutes * 60.0,
+                progress_callback=_print_console,
+            )
+            summary = evaluate_random_sample(
+                args.random_output_dir,
+                time_limit_seconds=args.random_time_limit_minutes * 60.0,
+                progress_callback=_print_console,
+                pair_store=pair_store,
+            )
+        elif len(benchmark_mode_names) > 1:
+            _announce_eta_if_long(
+                "Benchmark evaluation",
+                _estimate_fixture_run_seconds(args.fixtures_dir, benchmark_mode_names, limit=args.limit),
+                progress_callback=_print_console,
+            )
+            report = evaluate_benchmark_modes(
+                args.fixtures_dir,
+                mode_names=benchmark_mode_names,
+                limit=args.limit,
+                pair_store=pair_store,
+            )
+            _print_console(render_benchmark_report(report))
+            _print_console(f"\nTracking simulated pairs in {Path(args.pair_db)}")
+            if args.json_out:
+                output_path = Path(args.json_out)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(json.dumps(benchmark_report_to_json(report), indent=2, sort_keys=True), encoding="utf-8")
+                _print_console(f"\nWrote JSON summary to {output_path}")
+            return 0
+        else:
+            _announce_eta_if_long(
+                "Fixture evaluation",
+                _estimate_fixture_run_seconds(
+                    args.fixtures_dir,
+                    benchmark_mode_names,
+                    limit=args.limit,
+                    compare_to=args.compare_to,
+                ),
+                progress_callback=_print_console,
+            )
+            summary = evaluate_fixture_set(args.fixtures_dir, limit=args.limit, pair_store=pair_store)
+        _print_console(render_summary(summary))
+        _print_console(f"\nTracking simulated pairs in {Path(args.pair_db)}")
 
-    return 0
+        if args.compare_to:
+            baseline_summary = load_summary_json(args.compare_to)
+            comparison = compare_summaries(
+                baseline_summary,
+                summary,
+                baseline_label=str(args.compare_to),
+                current_label="current run",
+            )
+            _print_console("")
+            _print_console(render_comparison(comparison))
+
+        if args.json_out:
+            output_path = Path(args.json_out)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(summary_to_json(summary), indent=2, sort_keys=True), encoding="utf-8")
+            _print_console(f"\nWrote JSON summary to {output_path}")
+
+        return 0
 
 
 def _read_sidecar_payload(image_path: Path) -> dict:
@@ -481,6 +851,17 @@ def _notify(callback: ProgressCallback | None, message: str) -> None:
             callback(str(message).encode("ascii", "replace").decode("ascii"))
 
 
+def _print_console(message: str = "") -> None:
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        safe_message = str(message).encode("ascii", "replace").decode("ascii")
+        try:
+            sys.stdout.write(safe_message + "\n")
+        except UnicodeEncodeError:
+            print(safe_message.encode("ascii", "replace").decode("ascii"))
+
+
 def _call_with_supported_kwargs(function, *args, **kwargs):
     signature = inspect.signature(function)
     if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
@@ -492,6 +873,123 @@ def _call_with_supported_kwargs(function, *args, **kwargs):
         if key in signature.parameters
     }
     return function(*args, **supported_kwargs)
+
+
+def _announce_eta_if_long(
+    label: str,
+    estimated_seconds: float | None,
+    *,
+    progress_callback: ProgressCallback | None = None,
+    now: datetime | None = None,
+) -> None:
+    if estimated_seconds is None or estimated_seconds <= LONG_RUN_ETA_THRESHOLD_SECONDS:
+        return
+    _notify(progress_callback, _format_eta_message(label, estimated_seconds, now=now))
+
+
+def _format_eta_message(label: str, estimated_seconds: float, *, now: datetime | None = None) -> str:
+    current_time = now or datetime.now().astimezone()
+    finish_time = current_time + timedelta(seconds=estimated_seconds)
+    return (
+        f"{label} is expected to finish around "
+        f"{finish_time.strftime('%Y-%m-%d %I:%M:%S %p %Z')} "
+        f"(about {_format_duration(estimated_seconds)})."
+    )
+
+
+def _format_duration(total_seconds: float) -> str:
+    rounded_seconds = max(0, int(round(total_seconds)))
+    minutes, seconds = divmod(rounded_seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m {seconds}s"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
+def _estimate_fixture_run_seconds(
+    fixtures_dir: str | Path,
+    mode_names: list[str],
+    *,
+    limit: int | None = None,
+    compare_to: str | Path | None = None,
+) -> float | None:
+    fixture_count = len(discover_fixture_paths(fixtures_dir))
+    if limit is not None:
+        fixture_count = min(fixture_count, max(0, limit))
+    if fixture_count <= 0:
+        return None
+
+    runtime_estimates = dict(DEFAULT_MODE_RUNTIME_ESTIMATES)
+    runtime_estimates.update(_load_runtime_estimates(compare_to))
+    per_fixture_seconds = sum(runtime_estimates.get(mode_name, DEFAULT_MODE_RUNTIME_ESTIMATES["default"]) for mode_name in mode_names)
+    return fixture_count * per_fixture_seconds
+
+
+def _load_runtime_estimates(summary_path: str | Path | None) -> dict[str, float]:
+    if not summary_path:
+        return {}
+    path = Path(summary_path)
+    if not path.exists():
+        return {}
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+
+    mode_results = payload.get("mode_results")
+    if isinstance(mode_results, list):
+        estimates: dict[str, float] = {}
+        for item in mode_results:
+            if not isinstance(item, dict):
+                continue
+            mode_name = _coerce_string(item.get("mode_name"))
+            summary = item.get("summary")
+            if mode_name and isinstance(summary, dict):
+                runtime_value = summary.get("average_runtime_seconds")
+                if isinstance(runtime_value, (int, float)):
+                    estimates[mode_name] = float(runtime_value)
+        return estimates
+
+    runtime_value = payload.get("average_runtime_seconds")
+    if isinstance(runtime_value, (int, float)):
+        return {"default": float(runtime_value)}
+    return {}
+
+
+def _record_simulated_pair(
+    pair_store: SimulatedPairStore | None,
+    *,
+    expected_name: str | None,
+    expected_set_code: str | None,
+    expected_collector_number: str | None,
+    predicted_name: str | None,
+    predicted_set_code: str | None,
+    predicted_collector_number: str | None,
+) -> None:
+    if pair_store is None:
+        return
+
+    expected_card_id = build_observed_card_id(
+        name=expected_name,
+        set_code=expected_set_code,
+        collector_number=expected_collector_number,
+        missing_label="missing_expected",
+    )
+    if expected_card_id == "missing_expected":
+        return
+
+    actual_card_id = build_observed_card_id(
+        name=predicted_name,
+        set_code=predicted_set_code,
+        collector_number=predicted_collector_number,
+        missing_label="unrecognized",
+    )
+    pair_store.record_pair(expected_card_id=expected_card_id, actual_card_id=actual_card_id)
 
 
 def _infer_name_from_path(path: Path) -> str | None:
@@ -545,6 +1043,69 @@ def _count_by_key(values) -> dict[str, int]:
     return counts
 
 
+def resolve_benchmark_modes(mode_names: str | list[str]) -> list[str]:
+    if isinstance(mode_names, str):
+        raw_names = [part.strip() for part in mode_names.split(",") if part.strip()]
+    else:
+        raw_names = [str(part).strip() for part in mode_names if str(part).strip()]
+
+    if not raw_names:
+        raw_names = ["default"]
+
+    expanded_names: list[str] = []
+    for name in raw_names:
+        if name == "all":
+            expanded_names.extend(DEFAULT_BENCHMARK_MODES)
+        else:
+            expanded_names.append(name)
+
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for name in expanded_names:
+        if name not in DEFAULT_BENCHMARK_MODES:
+            raise ValueError(f"Unknown benchmark mode: {name}")
+        if name in seen:
+            continue
+        seen.add(name)
+        resolved.append(name)
+    return resolved
+
+
+def config_for_benchmark_mode(base_config: EngineConfig, mode_name: str) -> EngineConfig:
+    overrides = _benchmark_mode_overrides(mode_name)
+    return replace(base_config, **overrides)
+
+
+def _benchmark_mode_overrides(mode_name: str) -> dict[str, Any]:
+    if mode_name == "default":
+        return {}
+    if mode_name == "lazy_basic_lands":
+        return {"lazy_group_basic_land_printings": True}
+    if mode_name == "lazy_all_printings":
+        return {"lazy_default_printing_by_name": True}
+    raise ValueError(f"Unknown benchmark mode: {mode_name}")
+
+
+def _metric_delta(label: str, baseline: float, current: float) -> MetricDelta:
+    baseline_value = round(float(baseline), 4)
+    current_value = round(float(current), 4)
+    return MetricDelta(
+        label=label,
+        baseline=baseline_value,
+        current=current_value,
+        delta=round(current_value - baseline_value, 4),
+    )
+
+
+def _format_delta(metric: MetricDelta) -> str:
+    sign = "+" if metric.delta >= 0 else ""
+    return (
+        f"{metric.label}: "
+        f"{metric.baseline:.4f} -> {metric.current:.4f} "
+        f"({sign}{metric.delta:.4f})"
+    )
+
+
 def _average_stage_timings(evaluations: list[FixtureEvaluation]) -> dict[str, float]:
     totals: dict[str, float] = {}
     counts: dict[str, int] = {}
@@ -559,6 +1120,18 @@ def _average_stage_timings(evaluations: list[FixtureEvaluation]) -> dict[str, fl
     }
 
 
+def _coerce_count_dict(payload: object) -> dict[str, int]:
+    if not isinstance(payload, dict):
+        return {}
+    coerced: dict[str, int] = {}
+    for key, value in payload.items():
+        try:
+            coerced[str(key)] = int(value)
+        except (TypeError, ValueError):
+            continue
+    return coerced
+
+
 def _coerce_stage_timings(payload: object) -> dict[str, float]:
     if not isinstance(payload, dict):
         return {}
@@ -569,6 +1142,19 @@ def _coerce_stage_timings(payload: object) -> dict[str, float]:
         except (TypeError, ValueError):
             continue
     return coerced
+
+
+def _filter_dataclass_kwargs(dataclass_type, payload: dict[str, Any]) -> dict[str, Any]:
+    valid_fields = {field_def.name for field_def in fields(dataclass_type)}
+    return {
+        key: value
+        for key, value in payload.items()
+        if key in valid_fields
+    }
+
+
+def _coerce_list(value: object) -> list[Any]:
+    return value if isinstance(value, list) else []
 
 
 def _build_confidence_calibration_bins(

@@ -212,6 +212,12 @@ The UI currently supports:
 - re-evaluation after manual bbox or ROI edits
 - random-card fetching for manual spot checks
 
+The hash-related ROI bounds for reference-image caching live in
+`data/config/hash_rois.json`, so they are easy to review and commit in the
+repo. Reference art and set-symbol hashes are cached only for ideal/reference
+card images, and each cache is invalidated automatically when the committed ROI
+bounds for that specific hash region change.
+
 The fuller UI walkthrough is in
 [HOWTO.md](HOWTO.md).
 
@@ -232,6 +238,30 @@ python scripts\eval_fixture_set.py `
   --json-out data\sample_outputs\random-eval-summary.json
 ```
 
+Compare a fresh run against a prior saved summary:
+
+```powershell
+python scripts\eval_fixture_set.py `
+  --fixtures-dir data\cache\random_cards `
+  --compare-to data\sample_outputs\random-eval-summary.json `
+  --json-out data\sample_outputs\random-eval-summary-new.json
+```
+
+Run the same fixture set across the built-in benchmark modes:
+
+```powershell
+python scripts\eval_fixture_set.py `
+  --fixtures-dir data\sample_outputs\random_eval_cards `
+  --benchmark-modes all `
+  --json-out data\sample_outputs\random-eval-benchmark-modes.json
+```
+
+Simulated benchmark and fixture evaluations also update a SQLite pair-tracking
+database at `data/cache/simulated_card_pairs.sqlite3` by default. Each run
+upserts `(expected_card_id, actual_card_id)` with a running `seen_count`,
+including correct recognitions, and keeps only the 10,000 most recently seen
+unique pairs. Override the location with `--pair-db`.
+
 The eval workflow reports:
 
 - top-1 and top-5 name accuracy
@@ -240,6 +270,18 @@ The eval workflow reports:
 - average runtime and stage timing summaries
 - confidence calibration bins and ECE
 - ROI usage and error-class breakdowns
+
+When `--compare-to` is provided, the script also prints metric deltas,
+calibration-gap deltas, and average stage-timing deltas versus the saved
+baseline summary.
+
+When `--benchmark-modes` contains more than one mode, the script evaluates the
+same fixtures across each named config mode and reports accuracy separately for
+each one. Today the built-in mode suite is:
+
+- `default`
+- `lazy_basic_lands`
+- `lazy_all_printings`
 
 ## Repository Layout
 

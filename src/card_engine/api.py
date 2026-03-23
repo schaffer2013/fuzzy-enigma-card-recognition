@@ -9,6 +9,7 @@ from .catalog.maintenance import ensure_catalog_ready
 from .catalog.local_index import LocalCatalogIndex
 from .config import EngineConfig, load_engine_config
 from .detector import detect_card
+from .fixture_cache import persist_saved_detection
 from .matcher import match_candidates
 from .models import RecognitionResult
 from .normalize import normalize_card
@@ -38,6 +39,7 @@ def recognize_card(
     catalog = _timed_call(stage_timings, "load_catalog", _load_catalog, config.catalog_path)
     _notify(progress_callback, "Detecting card bounds...")
     detection = _timed_call(stage_timings, "detect_card", detect_card, prepared_image)
+    _persist_saved_detection(prepared_image, detection)
     layout_hint = getattr(prepared_image, "layout_hint", getattr(prepared_image, "layout", "normal"))
     tried_rois = resolve_roi_groups_for_layout(
         layout_hint,
@@ -321,3 +323,16 @@ class OCR_like:
         self.lines = payload.get("lines", [])
         self.confidence = payload.get("confidence", 0.0)
         self.debug = payload.get("debug", {})
+
+
+def _persist_saved_detection(image: Any, detection) -> None:
+    image_path = getattr(image, "path", None)
+    image_hash = getattr(image, "content_hash", None)
+    if image_path is None or detection.bbox is None:
+        return
+    persist_saved_detection(
+        image_path,
+        image_sha256=image_hash,
+        bbox=detection.bbox,
+        quad=detection.quad,
+    )

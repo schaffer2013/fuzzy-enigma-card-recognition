@@ -7,6 +7,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from ..fixture_cache import ensure_image_prehash
+
 
 SCRYFALL_BULK_DATA_URL = "https://api.scryfall.com/bulk-data/default-cards"
 USER_AGENT = "fuzzy-enigma-card-recognition/0.1.0"
@@ -55,10 +57,9 @@ def fetch_random_card_image(
     filename = f"{_slugify(card_name)}-{str(card_id)[:8]}{suffix}"
     output_path = output_root / filename
     downloader(image_url, output_path)
-    output_path.with_suffix(".json").write_text(
-        json.dumps(_build_fixture_sidecar(card), indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
+    sidecar_payload = _build_fixture_sidecar(card)
+    sidecar_payload["image_sha256"] = ensure_image_prehash(output_path)
+    output_path.with_suffix(".json").write_text(json.dumps(sidecar_payload, indent=2, sort_keys=True), encoding="utf-8")
     prune_random_card_cache(output_root, max_cards=max_cached_cards)
     return output_path
 

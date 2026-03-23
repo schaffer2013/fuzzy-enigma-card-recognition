@@ -5,6 +5,11 @@
 The current UI is a single debug window for browsing fixture images, previewing
 the selected image, and seeing the engine's current recognition output.
 
+The committed hash ROI bounds now live in `data/config/hash_rois.json`. The
+reference-image caches for art and set-symbol hashing are tied to those ROI
+bounds and are automatically cleared for that specific ROI if the committed
+bounds change.
+
 Launch it with:
 
 ```powershell
@@ -232,6 +237,30 @@ Example:
   --json-out data\sample_outputs\eval-summary.json
 ```
 
+To compare a tuning candidate against a prior saved baseline summary:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\eval_fixture_set.py `
+  --fixtures-dir data\cache\random_cards `
+  --compare-to data\sample_outputs\eval-summary-baseline.json `
+  --json-out data\sample_outputs\eval-summary-candidate.json
+```
+
+To benchmark the same fixture set across all built-in config modes:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\eval_fixture_set.py `
+  --fixtures-dir data\sample_outputs\random_eval_cards `
+  --benchmark-modes all `
+  --json-out data\sample_outputs\eval-benchmark-modes.json
+```
+
+These simulated evaluations also populate `data/cache/simulated_card_pairs.sqlite3`
+by default so you can mine repeated expected-vs-actual printing pairs later.
+The database keeps `expected_card_id`, `actual_card_id`, and `seen_count`,
+including correct matches, and evicts the oldest unique pairs beyond 10,000.
+Use `--pair-db` to point at a different database file.
+
 The script currently reports:
 
 - fixture count
@@ -264,7 +293,13 @@ same-name pools.
 
 For confidence tuning, compare each bin's `avg_confidence` to its actual
 `accuracy`. High-confidence bins with noticeably lower realized accuracy are
-the first place to trim or rebalance scoring bonuses.
+the first place to trim or rebalance scoring bonuses. When you use
+`--compare-to`, the CLI also shows whether those calibration gaps improved or
+regressed relative to the baseline run.
+
+When you use `--benchmark-modes all`, the script runs the same saved fixtures
+through each benchmark mode and reports separate accuracy lines for each mode
+instead of mixing them together.
 
 ## Recognition Flow Notes
 
