@@ -1,4 +1,8 @@
+import json
+
+from card_engine.catalog.build_catalog import build_catalog
 from card_engine.models import Candidate, RecognitionResult
+from card_engine.ui.app import _count_hashable_catalog_cards, _count_prehash_cache_entries
 from card_engine.ui.state import UIState
 from card_engine.ui.views import discover_fixture_paths, format_fixture_summary, format_recognition_summary
 from card_engine.utils.image_io import LoadedImage
@@ -92,3 +96,48 @@ def test_format_recognition_summary_shows_error_when_recognition_failed():
 
     assert "Recognition failed." in summary
     assert "max() iterable argument is empty" in summary
+
+
+def test_count_hashable_catalog_cards_counts_rows_with_image_uris(tmp_path):
+    db_path = tmp_path / "cards.sqlite3"
+    source_path = tmp_path / "default-cards.json"
+    source_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "card-1",
+                    "name": "Opt",
+                    "set": "XLN",
+                    "collector_number": "65",
+                    "lang": "en",
+                    "layout": "normal",
+                    "image_uris": {"png": "https://img.example/opt.png"},
+                },
+                {
+                    "id": "card-2",
+                    "name": "Island",
+                    "set": "XLN",
+                    "collector_number": "267",
+                    "lang": "en",
+                    "layout": "normal",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    build_catalog(str(db_path), str(source_path))
+
+    assert _count_hashable_catalog_cards(db_path) == 1
+
+
+def test_count_prehash_cache_entries_ignores_cache_metadata(tmp_path, monkeypatch):
+    cache_dir = tmp_path / "art_match_refs"
+    cache_dir.mkdir()
+    (cache_dir / "_cache_meta.json").write_text("{}", encoding="utf-8")
+    (cache_dir / "one.json").write_text("{}", encoding="utf-8")
+    (cache_dir / "two.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr("card_engine.ui.app.ART_MATCH_CACHE_DIR", cache_dir)
+
+    assert _count_prehash_cache_entries() == 2
