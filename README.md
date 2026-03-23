@@ -262,6 +262,20 @@ upserts `(expected_card_id, actual_card_id)` with a running `seen_count`,
 including correct recognitions, and keeps only the 10,000 most recently seen
 unique pairs. Override the location with `--pair-db`.
 
+To turn repeated mismatches into a reusable regression fixture folder:
+
+```powershell
+python scripts\build_regression_fixture_set.py `
+  --fixtures-dir data\sample_outputs\random_eval_cards `
+  --output-dir data\cache\regression_fixtures `
+  --max-cases 12 `
+  --min-seen-count 3
+```
+
+That copies the matching image fixtures plus sidecars and writes a
+`regression_manifest.json` describing the expected cards and their repeated
+wrong predictions.
+
 The eval workflow reports:
 
 - top-1 and top-5 name accuracy

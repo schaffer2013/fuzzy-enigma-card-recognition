@@ -261,6 +261,21 @@ The database keeps `expected_card_id`, `actual_card_id`, and `seen_count`,
 including correct matches, and evicts the oldest unique pairs beyond 10,000.
 Use `--pair-db` to point at a different database file.
 
+To export the most repeated mismatches into a curated local regression fixture
+folder:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_regression_fixture_set.py `
+  --fixtures-dir data\sample_outputs\random_eval_cards `
+  --output-dir data\cache\regression_fixtures `
+  --max-cases 12 `
+  --min-seen-count 3
+```
+
+That command copies each matching image fixture and sidecar into the output
+folder and writes `regression_manifest.json` so you can see which expected
+printings and wrong predictions the curated set is meant to cover.
+
 The script currently reports:
 
 - fixture count
