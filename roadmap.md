@@ -626,11 +626,11 @@ What is effectively done today:
 - [ ] Milestone 8 is partially complete.
 - [ ] Milestone 9 is partially complete.
 - [ ] Milestone 10 is not started.
-- [ ] Milestone 11 is not started.
+- [ ] Milestone 11 is partially complete.
 
 Recommended next step:
 
-- Continue **Milestone 9: Accuracy and Hardening** by running larger unseen random evals, tuning confidence against those results, and finishing the remaining tie-breaking, cropping, and profiling work.
+- Continue **Milestone 9: Accuracy and Hardening** by turning the repeated expected-vs-actual benchmark mismatches into regression fixtures, tuning confidence on larger unseen samples, and improving printing-level cropping and tie-breaking before starting Milestone 10 constrained modes.
 
 ### Implementation Sequencing Adjustment
 
@@ -876,7 +876,7 @@ Recommended early implementation order:
 - [x] Fast-path skip of secondary OCR when title plus set-symbol evidence is already confident enough.
 - [ ] Improved region cropping.
 - [x] Lightweight per-stage timing in eval/debug output.
-- [ ] Documented extension points for image hashing in v2.
+- [x] Documented extension points for image hashing in v2.
 - [ ] Lightweight profiling and benchmark write-up for current pipeline stages.
 
 **Current Progress Notes**
@@ -892,8 +892,14 @@ Recommended early implementation order:
 - Pathological long-running cases are now bounded by deadline-aware recognition,
   capped visual tie-break work, and download timeouts, and the repo now exposes
   lightweight stage-level timing visibility in both recognition debug output and
-  eval summaries. The remaining performance work is benchmark notes plus a more
-  durable benchmark harness.
+  eval summaries.
+- The benchmark workflow now supports saved-summary comparisons, all-mode runs
+  against the same fixture set, simulated expected-vs-actual pair tracking, and
+  ETA reporting for long runs. The remaining performance work is a concise
+  benchmark write-up plus targeted optimizations from the measured bottlenecks.
+- Hash-related ROI bounds now live in a committed repo config, and
+  reference-image visual caches are invalidated automatically when those
+  specific ROI bounds change.
 
 **Deliverables**
 
@@ -973,9 +979,9 @@ Recommended early implementation order:
 
 **Status**
 
-- [ ] Persistent benchmark harness beyond ad hoc eval/debug timing.
-- [ ] Benchmark harness for repeated runs against representative fixture sets.
-- [ ] Version-to-version benchmark reporting for pipeline changes.
+- [x] Persistent benchmark harness beyond ad hoc eval/debug timing.
+- [x] Benchmark harness for repeated runs against representative fixture sets.
+- [x] Version-to-version benchmark reporting for pipeline changes.
 - [ ] Baseline latency and throughput targets for common workflows.
 - [ ] Hotspot analysis for OCR, visual tie-breaks, catalog lookup, and image preprocessing.
 - [ ] Investigation of multithreading opportunities.
