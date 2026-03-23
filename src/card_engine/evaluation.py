@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import fields
 import inspect
 import json
 import re
@@ -8,7 +9,7 @@ import shutil
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from .api import recognize_card
 from .catalog.scryfall_sync import fetch_random_card_image
@@ -82,6 +83,23 @@ class ConfidenceCalibrationBin:
     calibration_gap: float
 
 
+@dataclass(frozen=True)
+class MetricDelta:
+    label: str
+    baseline: float
+    current: float
+    delta: float
+
+
+@dataclass(frozen=True)
+class EvaluationSummaryComparison:
+    baseline_label: str
+    current_label: str
+    metric_deltas: list[MetricDelta]
+    calibration_gap_deltas: list[MetricDelta]
+    stage_timing_deltas: list[MetricDelta]
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Evaluate recognition accuracy on a fixture folder.")
     parser.add_argument(
@@ -99,6 +117,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--json-out",
         default=None,
         help="Optional path to write a JSON summary.",
+    )
+    parser.add_argument(
+        "--compare-to",
+        default=None,
+        help="Optional path to a prior JSON summary to compare against the current run.",
     )
     parser.add_argument(
         "--random-time-limit-minutes",
@@ -432,6 +455,122 @@ def summary_to_json(summary: EvaluationSummary) -> dict:
     }
 
 
+def summary_from_json(payload: dict[str, Any]) -> EvaluationSummary:
+    calibration_bins = [
+        ConfidenceCalibrationBin(**_filter_dataclass_kwargs(ConfidenceCalibrationBin, item))
+        for item in _coerce_list(payload.get("calibration_bins"))
+        if isinstance(item, dict)
+    ]
+    fixtures = [
+        FixtureEvaluation(**_filter_dataclass_kwargs(FixtureEvaluation, item))
+        for item in _coerce_list(payload.get("fixtures"))
+        if isinstance(item, dict)
+    ]
+    return EvaluationSummary(
+        fixture_count=int(payload.get("fixture_count", 0) or 0),
+        scored_count=int(payload.get("scored_count", 0) or 0),
+        set_scored_count=int(payload.get("set_scored_count", 0) or 0),
+        art_scored_count=int(payload.get("art_scored_count", 0) or 0),
+        top1_accuracy=float(payload.get("top1_accuracy", 0.0) or 0.0),
+        top5_accuracy=float(payload.get("top5_accuracy", 0.0) or 0.0),
+        set_accuracy=float(payload.get("set_accuracy", 0.0) or 0.0),
+        art_accuracy=float(payload.get("art_accuracy", 0.0) or 0.0),
+        average_confidence=float(payload.get("average_confidence", 0.0) or 0.0),
+        average_scored_confidence=float(payload.get("average_scored_confidence", 0.0) or 0.0),
+        average_runtime_seconds=float(payload.get("average_runtime_seconds", 0.0) or 0.0),
+        calibration_error=float(payload.get("calibration_error", 0.0) or 0.0),
+        calibration_bins=calibration_bins,
+        average_stage_timings=_coerce_stage_timings(payload.get("average_stage_timings", {})),
+        roi_usage=_coerce_count_dict(payload.get("roi_usage", {})),
+        error_classes=_coerce_count_dict(payload.get("error_classes", {})),
+        fixtures=fixtures,
+    )
+
+
+def load_summary_json(path: str | Path) -> EvaluationSummary:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Summary JSON must contain an object at the top level.")
+    return summary_from_json(payload)
+
+
+def compare_summaries(
+    baseline: EvaluationSummary,
+    current: EvaluationSummary,
+    *,
+    baseline_label: str = "baseline",
+    current_label: str = "current",
+) -> EvaluationSummaryComparison:
+    metric_deltas = [
+        _metric_delta("Name top-1 accuracy", baseline.top1_accuracy, current.top1_accuracy),
+        _metric_delta("Name top-5 accuracy", baseline.top5_accuracy, current.top5_accuracy),
+        _metric_delta("Set accuracy", baseline.set_accuracy, current.set_accuracy),
+        _metric_delta("Art accuracy", baseline.art_accuracy, current.art_accuracy),
+        _metric_delta("Average confidence", baseline.average_confidence, current.average_confidence),
+        _metric_delta("Average runtime (s)", baseline.average_runtime_seconds, current.average_runtime_seconds),
+        _metric_delta("Calibration error (ECE)", baseline.calibration_error, current.calibration_error),
+    ]
+
+    calibration_gap_deltas: list[MetricDelta] = []
+    current_bins = {(item.lower_bound, item.upper_bound): item for item in current.calibration_bins}
+    for baseline_bin in baseline.calibration_bins:
+        key = (baseline_bin.lower_bound, baseline_bin.upper_bound)
+        current_bin = current_bins.get(key)
+        if current_bin is None:
+            continue
+        calibration_gap_deltas.append(
+            _metric_delta(
+                f"{baseline_bin.lower_bound:.1f}-{baseline_bin.upper_bound:.1f}",
+                baseline_bin.calibration_gap,
+                current_bin.calibration_gap,
+            )
+        )
+
+    stage_timing_deltas: list[MetricDelta] = []
+    stage_names = sorted(set(baseline.average_stage_timings) | set(current.average_stage_timings))
+    for stage_name in stage_names:
+        stage_timing_deltas.append(
+            _metric_delta(
+                stage_name,
+                baseline.average_stage_timings.get(stage_name, 0.0),
+                current.average_stage_timings.get(stage_name, 0.0),
+            )
+        )
+
+    return EvaluationSummaryComparison(
+        baseline_label=baseline_label,
+        current_label=current_label,
+        metric_deltas=metric_deltas,
+        calibration_gap_deltas=calibration_gap_deltas,
+        stage_timing_deltas=stage_timing_deltas,
+    )
+
+
+def render_comparison(comparison: EvaluationSummaryComparison) -> str:
+    lines = [
+        f"Comparison: {comparison.current_label} vs {comparison.baseline_label}",
+        "",
+        "Metric deltas:",
+    ]
+    lines.extend(f"  - {_format_delta(metric)}" for metric in comparison.metric_deltas)
+
+    lines.append("")
+    lines.append("Calibration gap deltas:")
+    if comparison.calibration_gap_deltas:
+        lines.extend(f"  - {_format_delta(metric)}" for metric in comparison.calibration_gap_deltas)
+    else:
+        lines.append("  - none")
+
+    lines.append("")
+    lines.append("Stage timing deltas (avg seconds):")
+    if comparison.stage_timing_deltas:
+        lines.extend(f"  - {_format_delta(metric)}" for metric in comparison.stage_timing_deltas)
+    else:
+        lines.append("  - none")
+
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
@@ -448,6 +587,17 @@ def main(argv: list[str] | None = None) -> int:
     else:
         summary = evaluate_fixture_set(args.fixtures_dir, limit=args.limit)
     print(render_summary(summary))
+
+    if args.compare_to:
+        baseline_summary = load_summary_json(args.compare_to)
+        comparison = compare_summaries(
+            baseline_summary,
+            summary,
+            baseline_label=str(args.compare_to),
+            current_label="current run",
+        )
+        print("")
+        print(render_comparison(comparison))
 
     if args.json_out:
         output_path = Path(args.json_out)
@@ -545,6 +695,26 @@ def _count_by_key(values) -> dict[str, int]:
     return counts
 
 
+def _metric_delta(label: str, baseline: float, current: float) -> MetricDelta:
+    baseline_value = round(float(baseline), 4)
+    current_value = round(float(current), 4)
+    return MetricDelta(
+        label=label,
+        baseline=baseline_value,
+        current=current_value,
+        delta=round(current_value - baseline_value, 4),
+    )
+
+
+def _format_delta(metric: MetricDelta) -> str:
+    sign = "+" if metric.delta >= 0 else ""
+    return (
+        f"{metric.label}: "
+        f"{metric.baseline:.4f} -> {metric.current:.4f} "
+        f"({sign}{metric.delta:.4f})"
+    )
+
+
 def _average_stage_timings(evaluations: list[FixtureEvaluation]) -> dict[str, float]:
     totals: dict[str, float] = {}
     counts: dict[str, int] = {}
@@ -559,6 +729,18 @@ def _average_stage_timings(evaluations: list[FixtureEvaluation]) -> dict[str, fl
     }
 
 
+def _coerce_count_dict(payload: object) -> dict[str, int]:
+    if not isinstance(payload, dict):
+        return {}
+    coerced: dict[str, int] = {}
+    for key, value in payload.items():
+        try:
+            coerced[str(key)] = int(value)
+        except (TypeError, ValueError):
+            continue
+    return coerced
+
+
 def _coerce_stage_timings(payload: object) -> dict[str, float]:
     if not isinstance(payload, dict):
         return {}
@@ -569,6 +751,19 @@ def _coerce_stage_timings(payload: object) -> dict[str, float]:
         except (TypeError, ValueError):
             continue
     return coerced
+
+
+def _filter_dataclass_kwargs(dataclass_type, payload: dict[str, Any]) -> dict[str, Any]:
+    valid_fields = {field_def.name for field_def in fields(dataclass_type)}
+    return {
+        key: value
+        for key, value in payload.items()
+        if key in valid_fields
+    }
+
+
+def _coerce_list(value: object) -> list[Any]:
+    return value if isinstance(value, list) else []
 
 
 def _build_confidence_calibration_bins(

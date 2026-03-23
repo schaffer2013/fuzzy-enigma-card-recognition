@@ -4,12 +4,16 @@ import time
 
 from card_engine.evaluation import (
     build_random_sample,
+    compare_summaries,
     evaluate_random_sample,
     evaluate_fixture_set,
     infer_expected_name,
     infer_fixture_expectation,
     FixtureEvaluation,
+    load_summary_json,
+    render_comparison,
     render_summary,
+    summary_from_json,
     summary_to_json,
 )
 from card_engine.config import EngineConfig
@@ -309,6 +313,156 @@ def test_evaluate_fixture_set_aggregates_stage_timings(monkeypatch, tmp_path):
     assert summary.average_runtime_seconds == 0.0028
     assert summary.average_stage_timings["total"] == 0.0028
     assert summary.average_stage_timings["load_catalog"] == 0.0002
+
+
+def test_summary_json_round_trip_preserves_comparison_fields():
+    summary = summary_from_json(
+        {
+            "fixture_count": 2,
+            "scored_count": 2,
+            "set_scored_count": 1,
+            "art_scored_count": 1,
+            "top1_accuracy": 0.5,
+            "top5_accuracy": 1.0,
+            "set_accuracy": 1.0,
+            "art_accuracy": 0.0,
+            "average_confidence": 0.7,
+            "average_scored_confidence": 0.7,
+            "average_runtime_seconds": 0.1234,
+            "calibration_error": 0.11,
+            "calibration_bins": [
+                {
+                    "lower_bound": 0.6,
+                    "upper_bound": 0.8,
+                    "fixture_count": 2,
+                    "average_confidence": 0.7,
+                    "empirical_accuracy": 0.5,
+                    "calibration_gap": 0.2,
+                }
+            ],
+            "average_stage_timings": {"total": 0.1234, "title_ocr": 0.01},
+            "roi_usage": {"standard": 2},
+            "error_classes": {"wrong_top1": 1, "correct_top1": 1},
+            "fixtures": [],
+        }
+    )
+
+    payload = summary_to_json(summary)
+
+    assert payload["average_runtime_seconds"] == 0.1234
+    assert payload["average_stage_timings"]["title_ocr"] == 0.01
+    assert payload["calibration_bins"][0]["calibration_gap"] == 0.2
+
+
+def test_load_summary_json_reads_saved_eval_summary(tmp_path):
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "fixture_count": 1,
+                "scored_count": 1,
+                "set_scored_count": 1,
+                "art_scored_count": 1,
+                "top1_accuracy": 1.0,
+                "top5_accuracy": 1.0,
+                "set_accuracy": 1.0,
+                "art_accuracy": 1.0,
+                "average_confidence": 0.9,
+                "average_scored_confidence": 0.9,
+                "average_runtime_seconds": 0.05,
+                "calibration_error": 0.02,
+                "calibration_bins": [],
+                "average_stage_timings": {"total": 0.05},
+                "roi_usage": {"standard": 1},
+                "error_classes": {"correct_top1": 1},
+                "fixtures": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = load_summary_json(summary_path)
+
+    assert summary.fixture_count == 1
+    assert summary.average_runtime_seconds == 0.05
+    assert summary.average_stage_timings["total"] == 0.05
+
+
+def test_compare_summaries_reports_metric_and_stage_deltas():
+    baseline = summary_from_json(
+        {
+            "fixture_count": 10,
+            "scored_count": 10,
+            "set_scored_count": 10,
+            "art_scored_count": 10,
+            "top1_accuracy": 0.7,
+            "top5_accuracy": 0.9,
+            "set_accuracy": 0.6,
+            "art_accuracy": 0.4,
+            "average_confidence": 0.8,
+            "average_scored_confidence": 0.8,
+            "average_runtime_seconds": 0.5,
+            "calibration_error": 0.12,
+            "calibration_bins": [
+                {
+                    "lower_bound": 0.8,
+                    "upper_bound": 1.0,
+                    "fixture_count": 5,
+                    "average_confidence": 0.9,
+                    "empirical_accuracy": 0.7,
+                    "calibration_gap": 0.2,
+                }
+            ],
+            "average_stage_timings": {"total": 0.5, "title_ocr": 0.1},
+            "roi_usage": {},
+            "error_classes": {},
+            "fixtures": [],
+        }
+    )
+    current = summary_from_json(
+        {
+            "fixture_count": 10,
+            "scored_count": 10,
+            "set_scored_count": 10,
+            "art_scored_count": 10,
+            "top1_accuracy": 0.8,
+            "top5_accuracy": 0.95,
+            "set_accuracy": 0.7,
+            "art_accuracy": 0.5,
+            "average_confidence": 0.78,
+            "average_scored_confidence": 0.78,
+            "average_runtime_seconds": 0.45,
+            "calibration_error": 0.08,
+            "calibration_bins": [
+                {
+                    "lower_bound": 0.8,
+                    "upper_bound": 1.0,
+                    "fixture_count": 5,
+                    "average_confidence": 0.88,
+                    "empirical_accuracy": 0.8,
+                    "calibration_gap": 0.08,
+                }
+            ],
+            "average_stage_timings": {"total": 0.45, "title_ocr": 0.09},
+            "roi_usage": {},
+            "error_classes": {},
+            "fixtures": [],
+        }
+    )
+
+    comparison = compare_summaries(baseline, current, baseline_label="baseline.json", current_label="candidate run")
+    rendered = render_comparison(comparison)
+
+    assert comparison.metric_deltas[0].label == "Name top-1 accuracy"
+    assert comparison.metric_deltas[0].delta == 0.1
+    assert comparison.metric_deltas[5].label == "Average runtime (s)"
+    assert comparison.metric_deltas[5].delta == -0.05
+    assert comparison.calibration_gap_deltas[0].label == "0.8-1.0"
+    assert comparison.calibration_gap_deltas[0].delta == -0.12
+    assert comparison.stage_timing_deltas[0].label == "title_ocr"
+    assert "Comparison: candidate run vs baseline.json" in rendered
+    assert "Name top-1 accuracy: 0.7000 -> 0.8000 (+0.1000)" in rendered
+    assert "Average runtime (s): 0.5000 -> 0.4500 (-0.0500)" in rendered
 
 
 def _minimal_png(*, width: int, height: int) -> bytes:

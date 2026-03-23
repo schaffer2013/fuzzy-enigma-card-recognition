@@ -232,6 +232,15 @@ python scripts\eval_fixture_set.py `
   --json-out data\sample_outputs\random-eval-summary.json
 ```
 
+Compare a fresh run against a prior saved summary:
+
+```powershell
+python scripts\eval_fixture_set.py `
+  --fixtures-dir data\cache\random_cards `
+  --compare-to data\sample_outputs\random-eval-summary.json `
+  --json-out data\sample_outputs\random-eval-summary-new.json
+```
+
 The eval workflow reports:
 
 - top-1 and top-5 name accuracy
@@ -240,6 +249,10 @@ The eval workflow reports:
 - average runtime and stage timing summaries
 - confidence calibration bins and ECE
 - ROI usage and error-class breakdowns
+
+When `--compare-to` is provided, the script also prints metric deltas,
+calibration-gap deltas, and average stage-timing deltas versus the saved
+baseline summary.
 
 ## Repository Layout
 

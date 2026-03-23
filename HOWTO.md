@@ -232,6 +232,15 @@ Example:
   --json-out data\sample_outputs\eval-summary.json
 ```
 
+To compare a tuning candidate against a prior saved baseline summary:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\eval_fixture_set.py `
+  --fixtures-dir data\cache\random_cards `
+  --compare-to data\sample_outputs\eval-summary-baseline.json `
+  --json-out data\sample_outputs\eval-summary-candidate.json
+```
+
 The script currently reports:
 
 - fixture count
@@ -264,7 +273,9 @@ same-name pools.
 
 For confidence tuning, compare each bin's `avg_confidence` to its actual
 `accuracy`. High-confidence bins with noticeably lower realized accuracy are
-the first place to trim or rebalance scoring bonuses.
+the first place to trim or rebalance scoring bonuses. When you use
+`--compare-to`, the CLI also shows whether those calibration gaps improved or
+regressed relative to the baseline run.
 
 ## Recognition Flow Notes
 
