@@ -14,6 +14,11 @@ from typing import Any, Callable
 from .api import recognize_card
 from .catalog.scryfall_sync import fetch_random_card_image
 from .config import EngineConfig, load_engine_config
+from .eval_pair_store import (
+    DEFAULT_SIMULATED_PAIR_DB_PATH,
+    SimulatedPairStore,
+    build_observed_card_id,
+)
 from .utils.image_io import LoadedImage, load_image
 
 SUPPORTED_SUFFIXES = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
@@ -159,6 +164,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="data/sample_outputs/random_eval_cards",
         help="Output directory used when --random-time-limit-minutes is provided.",
     )
+    parser.add_argument(
+        "--pair-db",
+        default=str(DEFAULT_SIMULATED_PAIR_DB_PATH),
+        help=(
+            "SQLite database used to track expected-vs-actual card ID pairs for simulated evaluations. "
+            "Counts are aggregated across runs and capped to 10,000 unique pairs."
+        ),
+    )
     return parser
 
 
@@ -178,6 +191,7 @@ def evaluate_fixture_set(
     limit: int | None = None,
     deadline: float | None = None,
     config: EngineConfig | None = None,
+    pair_store: SimulatedPairStore | None = None,
 ) -> EvaluationSummary:
     fixture_paths = discover_fixture_paths(fixtures_dir)
     if limit is not None:
@@ -188,7 +202,15 @@ def evaluate_fixture_set(
     for path in fixture_paths:
         if deadline is not None and time.monotonic() >= deadline:
             break
-        evaluations.append(_call_with_supported_kwargs(evaluate_fixture, path, deadline=deadline, config=config))
+        evaluations.append(
+            _call_with_supported_kwargs(
+                evaluate_fixture,
+                path,
+                deadline=deadline,
+                config=config,
+                pair_store=pair_store,
+            )
+        )
     return _summarize_evaluations(evaluations)
 
 
@@ -198,6 +220,7 @@ def evaluate_random_sample(
     time_limit_seconds: float,
     progress_callback: ProgressCallback | None = None,
     clock: Callable[[], float] = time.monotonic,
+    pair_store: SimulatedPairStore | None = None,
 ) -> EvaluationSummary:
     if time_limit_seconds <= 0:
         raise ValueError("time_limit_seconds must be greater than 0.")
@@ -216,7 +239,15 @@ def evaluate_random_sample(
         _notify(progress_callback, f"Fetched random card {card_index}: {path.name}")
         if clock() >= deadline:
             break
-        evaluations.append(_call_with_supported_kwargs(evaluate_fixture, path, deadline=deadline, config=config))
+        evaluations.append(
+            _call_with_supported_kwargs(
+                evaluate_fixture,
+                path,
+                deadline=deadline,
+                config=config,
+                pair_store=pair_store,
+            )
+        )
         _notify(progress_callback, f"Evaluated random card {card_index}: {path.name}")
 
     return _summarize_evaluations(evaluations)
@@ -228,6 +259,7 @@ def evaluate_benchmark_modes(
     mode_names: list[str],
     limit: int | None = None,
     base_config: EngineConfig | None = None,
+    pair_store: SimulatedPairStore | None = None,
 ) -> BenchmarkReport:
     resolved_mode_names = resolve_benchmark_modes(mode_names)
     config = base_config or load_engine_config()
@@ -238,10 +270,12 @@ def evaluate_benchmark_modes(
             BenchmarkModeResult(
                 mode_name=mode_name,
                 config_overrides=_benchmark_mode_overrides(mode_name),
-                summary=evaluate_fixture_set(
+                summary=_call_with_supported_kwargs(
+                    evaluate_fixture_set,
                     fixtures_dir,
                     limit=limit,
                     config=mode_config,
+                    pair_store=pair_store,
                 ),
             )
         )
@@ -302,6 +336,7 @@ def evaluate_fixture(
     *,
     deadline: float | None = None,
     config: EngineConfig | None = None,
+    pair_store: SimulatedPairStore | None = None,
 ) -> FixtureEvaluation:
     fixture_path = Path(path)
     loaded_image = load_image(fixture_path)
@@ -328,6 +363,15 @@ def evaluate_fixture(
         and predicted_collector_number
         and predicted_set_code.lower() == expected.set_code.lower()
         and str(predicted_collector_number).lower() == str(expected.collector_number).lower()
+    )
+    _record_simulated_pair(
+        pair_store,
+        expected_name=expected.name,
+        expected_set_code=expected.set_code,
+        expected_collector_number=expected.collector_number,
+        predicted_name=result.best_name,
+        predicted_set_code=predicted_set_code,
+        predicted_collector_number=predicted_collector_number,
     )
 
     return FixtureEvaluation(
@@ -670,74 +714,81 @@ def main(argv: list[str] | None = None) -> int:
     if args.compare_to and len(benchmark_mode_names) > 1:
         parser.error("--compare-to currently supports single-mode runs only.")
 
-    if args.random_time_limit_minutes and len(benchmark_mode_names) > 1:
-        if args.random_time_limit_minutes > MAX_RANDOM_TEST_MINUTES:
-            parser.error(
-                f"--random-time-limit-minutes may not exceed {MAX_RANDOM_TEST_MINUTES:g} minutes."
+    with SimulatedPairStore(args.pair_db) as pair_store:
+        if args.random_time_limit_minutes and len(benchmark_mode_names) > 1:
+            if args.random_time_limit_minutes > MAX_RANDOM_TEST_MINUTES:
+                parser.error(
+                    f"--random-time-limit-minutes may not exceed {MAX_RANDOM_TEST_MINUTES:g} minutes."
+                )
+            sample_dir = build_random_sample(
+                args.random_output_dir,
+                time_limit_seconds=args.random_time_limit_minutes * 60.0,
+                progress_callback=_print_console,
             )
-        sample_dir = build_random_sample(
-            args.random_output_dir,
-            time_limit_seconds=args.random_time_limit_minutes * 60.0,
-            progress_callback=_print_console,
-        )
-        report = evaluate_benchmark_modes(
-            sample_dir,
-            mode_names=benchmark_mode_names,
-            limit=args.limit,
-        )
-        _print_console(render_benchmark_report(report))
+            report = evaluate_benchmark_modes(
+                sample_dir,
+                mode_names=benchmark_mode_names,
+                limit=args.limit,
+                pair_store=pair_store,
+            )
+            _print_console(render_benchmark_report(report))
+            _print_console(f"\nTracking simulated pairs in {Path(args.pair_db)}")
+            if args.json_out:
+                output_path = Path(args.json_out)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(json.dumps(benchmark_report_to_json(report), indent=2, sort_keys=True), encoding="utf-8")
+                _print_console(f"\nWrote JSON summary to {output_path}")
+            return 0
+
+        if args.random_time_limit_minutes:
+            if args.random_time_limit_minutes > MAX_RANDOM_TEST_MINUTES:
+                parser.error(
+                    f"--random-time-limit-minutes may not exceed {MAX_RANDOM_TEST_MINUTES:g} minutes."
+                )
+            summary = evaluate_random_sample(
+                args.random_output_dir,
+                time_limit_seconds=args.random_time_limit_minutes * 60.0,
+                progress_callback=_print_console,
+                pair_store=pair_store,
+            )
+        elif len(benchmark_mode_names) > 1:
+            report = evaluate_benchmark_modes(
+                args.fixtures_dir,
+                mode_names=benchmark_mode_names,
+                limit=args.limit,
+                pair_store=pair_store,
+            )
+            _print_console(render_benchmark_report(report))
+            _print_console(f"\nTracking simulated pairs in {Path(args.pair_db)}")
+            if args.json_out:
+                output_path = Path(args.json_out)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(json.dumps(benchmark_report_to_json(report), indent=2, sort_keys=True), encoding="utf-8")
+                _print_console(f"\nWrote JSON summary to {output_path}")
+            return 0
+        else:
+            summary = evaluate_fixture_set(args.fixtures_dir, limit=args.limit, pair_store=pair_store)
+        _print_console(render_summary(summary))
+        _print_console(f"\nTracking simulated pairs in {Path(args.pair_db)}")
+
+        if args.compare_to:
+            baseline_summary = load_summary_json(args.compare_to)
+            comparison = compare_summaries(
+                baseline_summary,
+                summary,
+                baseline_label=str(args.compare_to),
+                current_label="current run",
+            )
+            _print_console("")
+            _print_console(render_comparison(comparison))
+
         if args.json_out:
             output_path = Path(args.json_out)
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(json.dumps(benchmark_report_to_json(report), indent=2, sort_keys=True), encoding="utf-8")
+            output_path.write_text(json.dumps(summary_to_json(summary), indent=2, sort_keys=True), encoding="utf-8")
             _print_console(f"\nWrote JSON summary to {output_path}")
+
         return 0
-
-    if args.random_time_limit_minutes:
-        if args.random_time_limit_minutes > MAX_RANDOM_TEST_MINUTES:
-            parser.error(
-                f"--random-time-limit-minutes may not exceed {MAX_RANDOM_TEST_MINUTES:g} minutes."
-            )
-        summary = evaluate_random_sample(
-            args.random_output_dir,
-            time_limit_seconds=args.random_time_limit_minutes * 60.0,
-            progress_callback=_print_console,
-        )
-    elif len(benchmark_mode_names) > 1:
-        report = evaluate_benchmark_modes(
-            args.fixtures_dir,
-            mode_names=benchmark_mode_names,
-            limit=args.limit,
-        )
-        _print_console(render_benchmark_report(report))
-        if args.json_out:
-            output_path = Path(args.json_out)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(json.dumps(benchmark_report_to_json(report), indent=2, sort_keys=True), encoding="utf-8")
-            _print_console(f"\nWrote JSON summary to {output_path}")
-        return 0
-    else:
-        summary = evaluate_fixture_set(args.fixtures_dir, limit=args.limit)
-    _print_console(render_summary(summary))
-
-    if args.compare_to:
-        baseline_summary = load_summary_json(args.compare_to)
-        comparison = compare_summaries(
-            baseline_summary,
-            summary,
-            baseline_label=str(args.compare_to),
-            current_label="current run",
-        )
-        _print_console("")
-        _print_console(render_comparison(comparison))
-
-    if args.json_out:
-        output_path = Path(args.json_out)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(summary_to_json(summary), indent=2, sort_keys=True), encoding="utf-8")
-        _print_console(f"\nWrote JSON summary to {output_path}")
-
-    return 0
 
 
 def _read_sidecar_payload(image_path: Path) -> dict:
@@ -785,6 +836,37 @@ def _call_with_supported_kwargs(function, *args, **kwargs):
         if key in signature.parameters
     }
     return function(*args, **supported_kwargs)
+
+
+def _record_simulated_pair(
+    pair_store: SimulatedPairStore | None,
+    *,
+    expected_name: str | None,
+    expected_set_code: str | None,
+    expected_collector_number: str | None,
+    predicted_name: str | None,
+    predicted_set_code: str | None,
+    predicted_collector_number: str | None,
+) -> None:
+    if pair_store is None:
+        return
+
+    expected_card_id = build_observed_card_id(
+        name=expected_name,
+        set_code=expected_set_code,
+        collector_number=expected_collector_number,
+        missing_label="missing_expected",
+    )
+    if expected_card_id == "missing_expected":
+        return
+
+    actual_card_id = build_observed_card_id(
+        name=predicted_name,
+        set_code=predicted_set_code,
+        collector_number=predicted_collector_number,
+        missing_label="unrecognized",
+    )
+    pair_store.record_pair(expected_card_id=expected_card_id, actual_card_id=actual_card_id)
 
 
 def _infer_name_from_path(path: Path) -> str | None:

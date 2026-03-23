@@ -250,6 +250,12 @@ python scripts\eval_fixture_set.py `
   --json-out data\sample_outputs\random-eval-benchmark-modes.json
 ```
 
+Simulated benchmark and fixture evaluations also update a SQLite pair-tracking
+database at `data/cache/simulated_card_pairs.sqlite3` by default. Each run
+upserts `(expected_card_id, actual_card_id)` with a running `seen_count`,
+including correct recognitions, and keeps only the 10,000 most recently seen
+unique pairs. Override the location with `--pair-db`.
+
 The eval workflow reports:
 
 - top-1 and top-5 name accuracy

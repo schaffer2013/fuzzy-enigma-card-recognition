@@ -250,6 +250,12 @@ To benchmark the same fixture set across all built-in config modes:
   --json-out data\sample_outputs\eval-benchmark-modes.json
 ```
 
+These simulated evaluations also populate `data/cache/simulated_card_pairs.sqlite3`
+by default so you can mine repeated expected-vs-actual printing pairs later.
+The database keeps `expected_card_id`, `actual_card_id`, and `seen_count`,
+including correct matches, and evicts the oldest unique pairs beyond 10,000.
+Use `--pair-db` to point at a different database file.
+
 The script currently reports:
 
 - fixture count

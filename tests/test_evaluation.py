@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from pathlib import Path
 import time
 
@@ -23,6 +24,7 @@ from card_engine.evaluation import (
     summary_to_json,
 )
 from card_engine.config import EngineConfig
+from card_engine.eval_pair_store import SimulatedPairStore, build_observed_card_id
 from card_engine.models import Candidate, RecognitionResult
 from card_engine.utils.image_io import load_image
 
@@ -566,6 +568,109 @@ def test_benchmark_report_renders_and_serializes_mode_accuracy():
     assert "Top-1 accuracy: 0.900" in rendered
     assert payload["mode_results"][0]["mode_name"] == "default"
     assert payload["mode_results"][0]["summary"]["set_accuracy"] == 0.8
+
+
+def test_evaluate_fixture_set_tracks_expected_vs_actual_pairs(monkeypatch, tmp_path):
+    fixture_path = tmp_path / "echoing-courage-deadbeef.png"
+    fixture_path.write_bytes(_minimal_png(width=80, height=100))
+    fixture_path.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "expected_name": "Echoing Courage",
+                "expected_set_code": "DST",
+                "expected_collector_number": "61",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "card_engine.evaluation.recognize_card",
+        lambda image, *, deadline=None, config=None: RecognitionResult(
+            bbox=(0, 0, 80, 100),
+            best_name="Echoing Courage",
+            confidence=0.91,
+            top_k_candidates=[
+                Candidate(name="Echoing Courage", score=0.9, set_code="DST", collector_number="62")
+            ],
+            active_roi="standard",
+            tried_rois=["standard"],
+        ),
+    )
+
+    db_path = tmp_path / "pairs.sqlite3"
+    with SimulatedPairStore(db_path) as pair_store:
+        summary = evaluate_fixture_set(tmp_path, pair_store=pair_store)
+
+    assert summary.fixture_count == 1
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT expected_card_id, actual_card_id, seen_count FROM simulated_card_pairs"
+        ).fetchone()
+
+    assert row == ("printing:dst:61", "printing:dst:62", 1)
+
+
+def test_evaluate_benchmark_modes_passes_pair_store_through(monkeypatch, tmp_path):
+    seen_pair_stores: list[object] = []
+
+    monkeypatch.setattr(
+        "card_engine.evaluation.evaluate_fixture_set",
+        lambda fixtures_dir, *, limit=None, config=None, pair_store=None: (
+            seen_pair_stores.append(pair_store) or summary_from_json(
+                {
+                    "fixture_count": 1,
+                    "scored_count": 1,
+                    "set_scored_count": 1,
+                    "art_scored_count": 1,
+                    "top1_accuracy": 1.0,
+                    "top5_accuracy": 1.0,
+                    "set_accuracy": 1.0,
+                    "art_accuracy": 1.0,
+                    "average_confidence": 0.9,
+                    "average_scored_confidence": 0.9,
+                    "average_runtime_seconds": 0.1,
+                    "calibration_error": 0.0,
+                    "calibration_bins": [],
+                    "average_stage_timings": {"total": 0.1},
+                    "roi_usage": {},
+                    "error_classes": {"correct_top1": 1},
+                    "fixtures": [],
+                }
+            )
+        ),
+    )
+
+    with SimulatedPairStore(tmp_path / "pairs.sqlite3") as pair_store:
+        evaluate_benchmark_modes(
+            tmp_path,
+            mode_names=["default", "lazy_basic_lands"],
+            pair_store=pair_store,
+        )
+
+    assert len(seen_pair_stores) == 2
+    assert all(store is seen_pair_stores[0] for store in seen_pair_stores)
+
+
+def test_build_observed_card_id_prefers_printing_and_falls_back_to_name():
+    assert build_observed_card_id(
+        name="Faithless Looting",
+        set_code="STA",
+        collector_number="38",
+        missing_label="unrecognized",
+    ) == "printing:sta:38"
+    assert build_observed_card_id(
+        name="Faithless Looting",
+        set_code=None,
+        collector_number=None,
+        missing_label="unrecognized",
+    ) == "name:faithless looting"
+    assert build_observed_card_id(
+        name=None,
+        set_code=None,
+        collector_number=None,
+        missing_label="unrecognized",
+    ) == "unrecognized"
 
 
 def _minimal_png(*, width: int, height: int) -> bytes:
