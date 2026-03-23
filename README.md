@@ -238,6 +238,9 @@ python scripts\eval_fixture_set.py `
   --json-out data\sample_outputs\random-eval-summary.json
 ```
 
+Random fixture downloads now request `lang:en` from Scryfall by default so the
+sample set stays aligned with the repo's English-only catalog.
+
 Compare a fresh run against a prior saved summary:
 
 ```powershell

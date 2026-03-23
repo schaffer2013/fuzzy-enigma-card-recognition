@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import re
 from pathlib import Path
@@ -13,6 +14,7 @@ from ..fixture_cache import ensure_image_prehash
 SCRYFALL_BULK_DATA_URL = "https://api.scryfall.com/bulk-data/default-cards"
 USER_AGENT = "fuzzy-enigma-card-recognition/0.1.0"
 DEFAULT_RANDOM_CARD_CACHE_LIMIT = 60
+DEFAULT_RANDOM_CARD_QUERY = "lang:en"
 REQUEST_HEADERS = {
     "User-Agent": USER_AGENT,
     "Accept": "application/json;q=0.9,*/*;q=0.8",
@@ -40,6 +42,7 @@ def fetch_random_card_image(
     client_factory=None,
     downloader=None,
     max_cached_cards: int = DEFAULT_RANDOM_CARD_CACHE_LIMIT,
+    random_query: str = DEFAULT_RANDOM_CARD_QUERY,
 ) -> Path:
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -47,7 +50,7 @@ def fetch_random_card_image(
     client_factory = client_factory or _build_random_card_client
     downloader = downloader or _download_to_path
 
-    card = client_factory()
+    card = _create_random_card(client_factory, random_query=random_query)
     card_name = _extract_card_value(card, "name", default="random-card")
     card_id = _extract_card_value(card, "id", default="random")
     image_url = _extract_card_image_url(card)
@@ -98,7 +101,7 @@ def prune_random_card_cache(
     return removed_count
 
 
-def _build_random_card_client():
+def _build_random_card_client(*, q: str = DEFAULT_RANDOM_CARD_QUERY):
     try:
         scrython = importlib.import_module("scrython")
     except ImportError as exc:
@@ -114,7 +117,7 @@ def _build_random_card_client():
         if handler is not None and hasattr(handler, "set_user_agent"):
             handler.set_user_agent(USER_AGENT)
 
-    return scrython.cards.Random()
+    return scrython.cards.Random(q=q)
 
 
 def _extract_card_image_url(card) -> str:
@@ -185,6 +188,7 @@ def _build_fixture_sidecar(card) -> dict:
     type_line = _extract_card_value(card, "type_line", default="")
     oracle_text = _extract_card_value(card, "oracle_text", default="")
     layout = _extract_card_value(card, "layout", default="normal")
+    language = _extract_card_value(card, "lang", default="")
     set_code = _extract_card_value(card, "set", default="")
     collector_number = _extract_card_value(card, "collector_number", default="")
     face_payload = _extract_card_value(card, "card_faces", default=[])
@@ -202,11 +206,21 @@ def _build_fixture_sidecar(card) -> dict:
 
     return {
         "expected_name": card_name or None,
+        "expected_language": language or None,
         "expected_set_code": set_code or None,
         "expected_collector_number": str(collector_number) if collector_number else None,
         "layout_hint": layout,
         "ocr_text_by_roi": ocr_text_by_roi,
     }
+
+
+def _create_random_card(client_factory, *, random_query: str):
+    signature = inspect.signature(client_factory)
+    if "q" in signature.parameters:
+        return client_factory(q=random_query)
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
+        return client_factory(q=random_query)
+    return client_factory()
 
 
 def _face_roi_mapping(face_payload: list, layout: str | None) -> dict[str, str]:

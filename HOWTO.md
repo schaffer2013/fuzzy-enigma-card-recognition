@@ -37,6 +37,9 @@ For a fresh random accuracy run with a 10-minute cap, use:
   --json-out data\sample_outputs\random-eval-summary.json
 ```
 
+Random fixture downloads request `lang:en` from Scryfall by default so the
+saved sample set matches the English-only local catalog.
+
 To override engine behavior without editing code, create `data\config\engine.json`
 or point `CARD_ENGINE_CONFIG_PATH` at a JSON file. A starter example lives at
 `data\config\engine.sample.json`.
