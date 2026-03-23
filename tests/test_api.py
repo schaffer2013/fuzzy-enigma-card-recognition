@@ -17,6 +17,8 @@ def test_recognize_card_returns_result_shape():
     assert result.bbox == (0, 0, 80, 100)
     assert result.active_roi == "standard"
     assert result.debug["normalization"]["crop_count"] > 0
+    assert "total" in result.debug["timings"]
+    assert result.debug["timings"]["total"] >= 0.0
 
 
 class QuadImage:
@@ -207,6 +209,31 @@ def test_recognize_card_reports_progress(monkeypatch):
     assert "Normalizing card image..." in messages
     assert "Running OCR for ROI: standard..." in messages
     assert messages[-1].startswith("Recognition complete:")
+
+
+def test_recognize_card_reports_stage_timings_for_primary_pipeline(monkeypatch):
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        return OCRResult(
+            lines=["Opt"] if roi_label == "standard" else [],
+            confidence=0.9,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Opt", normalized_name="", set_code="XLN", collector_number="65", layout="normal"),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+
+    result = recognize_card(DummyImage())
+
+    timings = result.debug["timings"]
+    for stage_name in ("prepare_image_input", "load_catalog", "detect_card", "normalize_card", "title_ocr", "match_candidates_primary", "score_candidates_primary", "total"):
+        assert stage_name in timings
+        assert timings[stage_name] >= 0.0
 
 
 def test_recognize_card_can_skip_secondary_ocr_after_set_symbol_match(monkeypatch):

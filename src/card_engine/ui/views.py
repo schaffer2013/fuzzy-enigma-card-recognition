@@ -113,6 +113,13 @@ def format_recognition_summary(result: RecognitionResult | None, *, error_messag
     else:
         lines.append("OCR: No text detected.")
 
+    timings = result.debug.get("timings", {})
+    if timings:
+        lines.append("")
+        lines.append("Timings (s):")
+        for stage_name, elapsed in sorted(timings.items()):
+            lines.append(f"  - {stage_name}: {elapsed:.4f}")
+
     roi_results = result.debug.get("ocr", {}).get("results_by_roi", {})
     if roi_results:
         lines.append("")

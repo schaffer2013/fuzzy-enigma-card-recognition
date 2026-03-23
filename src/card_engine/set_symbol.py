@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import time
 from dataclasses import dataclass, replace
@@ -75,7 +76,8 @@ def rerank_candidates_by_set_symbol(
             else:
                 record = _lookup_record_for_candidate(catalog, candidate)
                 if record is not None and record.set_code and record.image_uri:
-                    similarity = _reference_similarity_for_record(
+                    similarity = _call_with_supported_kwargs(
+                        _reference_similarity_for_record,
                         record,
                         observed_fingerprint=observed_fingerprint,
                         progress_callback=progress_callback,
@@ -417,6 +419,19 @@ def _notify(callback: Callable[[str], None] | None, message: str) -> None:
         callback(message)
     except UnicodeEncodeError:
         callback(str(message).encode("ascii", "replace").decode("ascii"))
+
+
+def _call_with_supported_kwargs(function, *args, **kwargs):
+    signature = inspect.signature(function)
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
+        return function(*args, **kwargs)
+
+    supported_kwargs = {
+        key: value
+        for key, value in kwargs.items()
+        if key in signature.parameters
+    }
+    return function(*args, **supported_kwargs)
 
 
 def _comparison_reason(comparisons: list[dict], deadline_exceeded: bool) -> str:

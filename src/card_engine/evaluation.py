@@ -6,7 +6,7 @@ import json
 import re
 import shutil
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -47,6 +47,8 @@ class FixtureEvaluation:
     tried_rois: list[str]
     candidate_names: list[str]
     error_class: str
+    runtime_seconds: float = 0.0
+    stage_timings: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -61,8 +63,10 @@ class EvaluationSummary:
     art_accuracy: float
     average_confidence: float
     average_scored_confidence: float
+    average_runtime_seconds: float
     calibration_error: float
     calibration_bins: list["ConfidenceCalibrationBin"]
+    average_stage_timings: dict[str, float]
     roi_usage: dict[str, int]
     error_classes: dict[str, int]
     fixtures: list[FixtureEvaluation]
@@ -194,6 +198,7 @@ def _summarize_evaluations(evaluations: list[FixtureEvaluation]) -> EvaluationSu
     art_hits = sum(1 for evaluation in art_scored if evaluation.art_hit)
     total_confidence = sum(evaluation.confidence for evaluation in evaluations)
     scored_confidence = sum(evaluation.confidence for evaluation in scored)
+    total_runtime = sum(evaluation.runtime_seconds for evaluation in evaluations)
     calibration_bins = _build_confidence_calibration_bins(scored)
     calibration_error = _expected_calibration_error(calibration_bins, scored_count)
 
@@ -208,8 +213,10 @@ def _summarize_evaluations(evaluations: list[FixtureEvaluation]) -> EvaluationSu
         art_accuracy=_safe_ratio(art_hits, art_scored_count),
         average_confidence=_safe_ratio(total_confidence, fixture_count),
         average_scored_confidence=_safe_ratio(scored_confidence, scored_count),
+        average_runtime_seconds=_safe_ratio(total_runtime, fixture_count),
         calibration_error=calibration_error,
         calibration_bins=calibration_bins,
+        average_stage_timings=_average_stage_timings(evaluations),
         roi_usage=roi_usage,
         error_classes=error_classes,
         fixtures=evaluations,
@@ -225,11 +232,14 @@ def evaluate_fixture(
     fixture_path = Path(path)
     loaded_image = load_image(fixture_path)
     expected = infer_fixture_expectation(loaded_image)
+    started_at = time.monotonic()
     result = _call_with_supported_kwargs(recognize_card, loaded_image, deadline=deadline, config=config)
+    runtime_seconds = round(time.monotonic() - started_at, 4)
     best_candidate = result.top_k_candidates[0] if result.top_k_candidates else None
     candidate_names = [candidate.name for candidate in result.top_k_candidates]
     predicted_set_code = best_candidate.set_code if best_candidate else None
     predicted_collector_number = best_candidate.collector_number if best_candidate else None
+    stage_timings = _coerce_stage_timings(result.debug.get("timings", {}))
     top1_hit = bool(expected.name and result.best_name == expected.name)
     top5_hit = bool(expected.name and expected.name in candidate_names[:5])
     set_hit = bool(
@@ -272,6 +282,8 @@ def evaluate_fixture(
             predicted_collector_number=predicted_collector_number,
             candidate_names=candidate_names,
         ),
+        runtime_seconds=stage_timings.get("total", runtime_seconds),
+        stage_timings=stage_timings,
     )
 
 
@@ -335,6 +347,7 @@ def render_summary(summary: EvaluationSummary) -> str:
         f"Art accuracy: {summary.art_accuracy:.3f}",
         f"Average confidence: {summary.average_confidence:.3f}",
         f"Average scored confidence: {summary.average_scored_confidence:.3f}",
+        f"Average runtime (s): {summary.average_runtime_seconds:.3f}",
         f"Calibration error (ECE): {summary.calibration_error:.3f}",
         "",
         "Confidence calibration:",
@@ -360,6 +373,16 @@ def render_summary(summary: EvaluationSummary) -> str:
     )
     if summary.roi_usage:
         lines.extend(f"  - {roi}: {count}" for roi, count in sorted(summary.roi_usage.items()))
+    else:
+        lines.append("  - none")
+
+    lines.append("")
+    lines.append("Stage timings (avg seconds):")
+    if summary.average_stage_timings:
+        lines.extend(
+            f"  - {stage_name}: {elapsed:.4f}"
+            for stage_name, elapsed in sorted(summary.average_stage_timings.items())
+        )
     else:
         lines.append("  - none")
 
@@ -399,8 +422,10 @@ def summary_to_json(summary: EvaluationSummary) -> dict:
         "art_accuracy": summary.art_accuracy,
         "average_confidence": summary.average_confidence,
         "average_scored_confidence": summary.average_scored_confidence,
+        "average_runtime_seconds": summary.average_runtime_seconds,
         "calibration_error": summary.calibration_error,
         "calibration_bins": [asdict(calibration_bin) for calibration_bin in summary.calibration_bins],
+        "average_stage_timings": summary.average_stage_timings,
         "roi_usage": summary.roi_usage,
         "error_classes": summary.error_classes,
         "fixtures": [asdict(fixture) for fixture in summary.fixtures],
@@ -518,6 +543,32 @@ def _count_by_key(values) -> dict[str, int]:
     for value in values:
         counts[value] = counts.get(value, 0) + 1
     return counts
+
+
+def _average_stage_timings(evaluations: list[FixtureEvaluation]) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    for evaluation in evaluations:
+        for stage_name, elapsed in evaluation.stage_timings.items():
+            totals[stage_name] = totals.get(stage_name, 0.0) + elapsed
+            counts[stage_name] = counts.get(stage_name, 0) + 1
+    return {
+        stage_name: round(totals[stage_name] / counts[stage_name], 4)
+        for stage_name in sorted(totals)
+        if counts[stage_name] > 0
+    }
+
+
+def _coerce_stage_timings(payload: object) -> dict[str, float]:
+    if not isinstance(payload, dict):
+        return {}
+    coerced: dict[str, float] = {}
+    for key, value in payload.items():
+        try:
+            coerced[str(key)] = round(float(value), 4)
+        except (TypeError, ValueError):
+            continue
+    return coerced
 
 
 def _build_confidence_calibration_bins(

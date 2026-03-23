@@ -117,6 +117,7 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
     assert summary.top5_accuracy == 1.0
     assert summary.set_accuracy == 1.0
     assert summary.art_accuracy == 0.5
+    assert summary.average_runtime_seconds == 0.0
     assert summary.calibration_error == 0.23
     assert len(summary.calibration_bins) == 2
     assert summary.calibration_bins[0].lower_bound == 0.6
@@ -133,12 +134,17 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
     assert summary.calibration_bins[1].calibration_gap == 0.09
     assert summary.roi_usage == {"lower_text": 1, "standard": 1}
     assert summary.error_classes == {"correct_top1": 1, "wrong_art": 1}
+    assert summary.average_stage_timings == {}
 
     rendered = render_summary(summary)
     payload = summary_to_json(summary)
 
+    assert "Average runtime (s): 0.000" in rendered
+    assert "Stage timings (avg seconds):" in rendered
     assert "Calibration error (ECE): 0.230" in rendered
     assert "0.6-0.8: count=1, avg_confidence=0.630, accuracy=1.000, gap=0.370" in rendered
+    assert payload["average_runtime_seconds"] == 0.0
+    assert payload["average_stage_timings"] == {}
     assert payload["calibration_error"] == 0.23
     assert payload["calibration_bins"][0]["lower_bound"] == 0.6
     assert payload["calibration_bins"][1]["upper_bound"] == 1.0
@@ -264,6 +270,45 @@ def test_evaluate_fixture_set_passes_deadline_and_config_to_recognizer(monkeypat
     assert summary.fixture_count == 1
     assert seen["deadline"] == deadline
     assert seen["config"] is config
+
+
+def test_evaluate_fixture_set_aggregates_stage_timings(monkeypatch, tmp_path):
+    fixture_path = tmp_path / "opt-deadbeef.png"
+    fixture_path.write_bytes(_minimal_png(width=80, height=100))
+    fixture_path.with_suffix(".json").write_text(
+        json.dumps({"expected_name": "Opt"}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "card_engine.evaluation.recognize_card",
+        lambda image, *, deadline=None, config=None: RecognitionResult(
+            bbox=(0, 0, 80, 100),
+            best_name="Opt",
+            confidence=0.91,
+            top_k_candidates=[Candidate(name="Opt", score=0.9, set_code="XLN", collector_number="65")],
+            active_roi="standard",
+            tried_rois=["standard"],
+            debug={
+                "timings": {
+                    "prepare_image_input": 0.0001,
+                    "load_catalog": 0.0002,
+                    "detect_card": 0.0003,
+                    "normalize_card": 0.0004,
+                    "title_ocr": 0.0005,
+                    "match_candidates_primary": 0.0006,
+                    "score_candidates_primary": 0.0007,
+                    "total": 0.0028,
+                }
+            },
+        ),
+    )
+
+    summary = evaluate_fixture_set(tmp_path)
+
+    assert summary.average_runtime_seconds == 0.0028
+    assert summary.average_stage_timings["total"] == 0.0028
+    assert summary.average_stage_timings["load_catalog"] == 0.0002
 
 
 def _minimal_png(*, width: int, height: int) -> bytes:
