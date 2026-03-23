@@ -237,6 +237,7 @@ The eval workflow reports:
 - top-1 and top-5 name accuracy
 - set and exact-printing accuracy
 - confidence summaries
+- average runtime and stage timing summaries
 - confidence calibration bins and ECE
 - ROI usage and error-class breakdowns
 

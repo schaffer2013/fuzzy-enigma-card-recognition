@@ -29,13 +29,15 @@ def recognize_card(
     deadline: float | None = None,
     config: EngineConfig | None = None,
 ) -> RecognitionResult:
+    start_time = time.monotonic()
+    stage_timings: dict[str, float] = {}
     _notify(progress_callback, "Preparing image input...")
-    prepared_image = _prepare_image_input(image)
+    prepared_image = _timed_call(stage_timings, "prepare_image_input", _prepare_image_input, image)
     config = config or load_engine_config()
     candidate_pool_limit = max(config.candidate_count * 4, config.candidate_count)
-    catalog = _load_catalog(config.catalog_path)
+    catalog = _timed_call(stage_timings, "load_catalog", _load_catalog, config.catalog_path)
     _notify(progress_callback, "Detecting card bounds...")
-    detection = detect_card(prepared_image)
+    detection = _timed_call(stage_timings, "detect_card", detect_card, prepared_image)
     layout_hint = getattr(prepared_image, "layout_hint", getattr(prepared_image, "layout", "normal"))
     tried_rois = resolve_roi_groups_for_layout(
         layout_hint,
@@ -43,7 +45,15 @@ def recognize_card(
         cycle_order=config.roi_cycle_order,
     )
     _notify(progress_callback, "Normalizing card image...")
-    normalized = normalize_card(prepared_image, detection.bbox, quad=detection.quad, roi_groups=tried_rois)
+    normalized = _timed_call(
+        stage_timings,
+        "normalize_card",
+        normalize_card,
+        prepared_image,
+        detection.bbox,
+        quad=detection.quad,
+        roi_groups=tried_rois,
+    )
 
     results_by_roi: dict[str, dict] = {}
     title_rois = [roi_group for roi_group in tried_rois if roi_group in TITLE_FIRST_ROIS]
@@ -52,11 +62,13 @@ def recognize_card(
     ocr_results = []
     for roi_group in title_rois:
         _notify(progress_callback, f"Running OCR for ROI: {roi_group}...")
+        ocr_start = time.monotonic()
         result = run_ocr(
             normalized.normalized_image,
             roi_label=roi_group,
             crop_region=_first_crop_for_group(normalized.crops, roi_group),
         )
+        _record_duration(stage_timings, "title_ocr", ocr_start)
         ocr_results.append(result)
         results_by_roi[roi_group] = {
             "line_count": len(result.lines),
@@ -70,7 +82,10 @@ def recognize_card(
     ocr = ocr_results[active_index] if ocr_results else run_ocr(normalized.normalized_image, roi_label=None)
     title_match_lines = list(ocr.lines)
     _notify(progress_callback, "Matching OCR text against catalog...")
-    candidates = match_candidates(
+    candidates = _timed_call(
+        stage_timings,
+        "match_candidates_primary",
+        match_candidates,
         title_match_lines,
         limit=candidate_pool_limit,
         catalog=catalog,
@@ -85,7 +100,9 @@ def recognize_card(
     visual_deadline = _resolve_visual_deadline(deadline, config)
     if candidates and set_symbol_crop is not None and not _deadline_exceeded(deadline):
         _notify(progress_callback, "Comparing set symbol against top candidates...")
-        set_symbol_result = _call_with_supported_kwargs(
+        set_symbol_result = _timed_call_supported_kwargs(
+            stage_timings,
+            "set_symbol_compare",
             rerank_candidates_by_set_symbol,
             candidates,
             observed_crop=set_symbol_crop,
@@ -101,7 +118,9 @@ def recognize_card(
         set_symbol_debug = {"used": False, "reason": "deadline_exceeded"}
     if candidates and art_match_crop is not None and not _deadline_exceeded(deadline):
         _notify(progress_callback, "Comparing art region against top candidates...")
-        art_match_result = _call_with_supported_kwargs(
+        art_match_result = _timed_call_supported_kwargs(
+            stage_timings,
+            "art_match_compare",
             rerank_candidates_by_art,
             candidates,
             observed_crop=art_match_crop,
@@ -116,18 +135,20 @@ def recognize_card(
     elif candidates and art_match_crop is not None:
         art_match_debug = {"used": False, "reason": "deadline_exceeded"}
     _notify(progress_callback, "Scoring candidates...")
-    best_name, confidence = score_candidates(candidates)
+    best_name, confidence = _timed_call(stage_timings, "score_candidates_primary", score_candidates, candidates)
 
     if secondary_rois and not _deadline_exceeded(deadline) and not should_skip_secondary_ocr(candidates, confidence):
         for roi_group in secondary_rois:
             if _deadline_exceeded(deadline):
                 break
             _notify(progress_callback, f"Running OCR for ROI: {roi_group}...")
+            ocr_start = time.monotonic()
             result = run_ocr(
                 normalized.normalized_image,
                 roi_label=roi_group,
                 crop_region=_first_crop_for_group(normalized.crops, roi_group),
             )
+            _record_duration(stage_timings, "secondary_ocr", ocr_start)
             results_by_roi[roi_group] = {
                 "line_count": len(result.lines),
                 "lines": result.lines,
@@ -141,7 +162,10 @@ def recognize_card(
             else ocr
         )
         _notify(progress_callback, "Re-ranking with secondary OCR signals...")
-        candidates = match_candidates(
+        candidates = _timed_call(
+            stage_timings,
+            "match_candidates_secondary",
+            match_candidates,
             title_match_lines,
             limit=candidate_pool_limit,
             catalog=catalog,
@@ -150,7 +174,9 @@ def recognize_card(
             config=config,
         )
         if set_symbol_crop is not None and not _deadline_exceeded(deadline):
-            set_symbol_result = _call_with_supported_kwargs(
+            set_symbol_result = _timed_call_supported_kwargs(
+                stage_timings,
+                "set_symbol_compare",
                 rerank_candidates_by_set_symbol,
                 candidates,
                 observed_crop=set_symbol_crop,
@@ -163,7 +189,9 @@ def recognize_card(
             candidates = set_symbol_result.candidates
             set_symbol_debug = set_symbol_result.debug
         if art_match_crop is not None and not _deadline_exceeded(deadline):
-            art_match_result = _call_with_supported_kwargs(
+            art_match_result = _timed_call_supported_kwargs(
+                stage_timings,
+                "art_match_compare",
                 rerank_candidates_by_art,
                 candidates,
                 observed_crop=art_match_crop,
@@ -176,10 +204,11 @@ def recognize_card(
             candidates = art_match_result.candidates
             art_match_debug = art_match_result.debug
         _notify(progress_callback, "Scoring candidates...")
-        best_name, confidence = score_candidates(candidates)
+        best_name, confidence = _timed_call(stage_timings, "score_candidates_secondary", score_candidates, candidates)
     elif secondary_rois:
         _notify(progress_callback, "Skipping secondary OCR after confident title and visual tie-break match...")
     _notify(progress_callback, f"Recognition complete: {best_name or 'no match'}")
+    stage_timings["total"] = round(time.monotonic() - start_time, 4)
 
     return RecognitionResult(
         bbox=detection.bbox,
@@ -206,6 +235,7 @@ def recognize_card(
             },
             "set_symbol": set_symbol_debug,
             "art_match": art_match_debug,
+            "timings": stage_timings,
         },
     )
 
@@ -249,6 +279,27 @@ def _call_with_supported_kwargs(function, *args, **kwargs):
         if key in signature.parameters
     }
     return function(*args, **supported_kwargs)
+
+
+def _timed_call(stage_timings: dict[str, float], stage_name: str, function, *args, **kwargs):
+    started_at = time.monotonic()
+    try:
+        return function(*args, **kwargs)
+    finally:
+        _record_duration(stage_timings, stage_name, started_at)
+
+
+def _timed_call_supported_kwargs(stage_timings: dict[str, float], stage_name: str, function, *args, **kwargs):
+    started_at = time.monotonic()
+    try:
+        return _call_with_supported_kwargs(function, *args, **kwargs)
+    finally:
+        _record_duration(stage_timings, stage_name, started_at)
+
+
+def _record_duration(stage_timings: dict[str, float], stage_name: str, started_at: float) -> None:
+    elapsed = round(time.monotonic() - started_at, 4)
+    stage_timings[stage_name] = round(stage_timings.get(stage_name, 0.0) + elapsed, 4)
 
 
 def _deadline_exceeded(deadline: float | None) -> bool:

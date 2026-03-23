@@ -243,8 +243,10 @@ The script currently reports:
 - set accuracy
 - art accuracy
 - average confidence
+- average runtime in seconds
 - expected calibration error (ECE)
 - confidence-bin calibration breakdown
+- average stage timings from the recognition debug payload
 - ROI usage
 - error-class counts
 - a short list of top mismatches

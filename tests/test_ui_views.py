@@ -58,6 +58,10 @@ def test_format_recognition_summary_lists_candidates():
         active_roi="standard",
         tried_rois=["standard"],
         debug={
+            "timings": {
+                "detect_card": 0.0012,
+                "total": 0.0045,
+            },
             "ocr": {
                 "results_by_roi": {
                     "standard": {
@@ -76,6 +80,8 @@ def test_format_recognition_summary_lists_candidates():
     assert "Best set: M11" in summary
     assert "OCR by ROI:" in summary
     assert "backend=simulated_hint" in summary
+    assert "Timings (s):" in summary
+    assert "detect_card: 0.0012" in summary
     assert "Candidates:" in summary
     assert "Lightning Bolt" in summary
     assert "Tried ROIs: standard" in summary

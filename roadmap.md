@@ -875,7 +875,7 @@ Recommended early implementation order:
 - [x] Art-region fingerprint tie-breaker for same-name printings when set symbols are weak.
 - [x] Fast-path skip of secondary OCR when title plus set-symbol evidence is already confident enough.
 - [ ] Improved region cropping.
-- [ ] Lightweight per-stage timing in eval/debug output.
+- [x] Lightweight per-stage timing in eval/debug output.
 - [ ] Documented extension points for image hashing in v2.
 - [ ] Lightweight profiling and benchmark write-up for current pipeline stages.
 
@@ -890,8 +890,10 @@ Recommended early implementation order:
   art-region visual comparisons plus a fast path that skips secondary OCR when
   title and visual evidence are already strong.
 - Pathological long-running cases are now bounded by deadline-aware recognition,
-  capped visual tie-break work, and download timeouts, but the repo still needs
-  lightweight stage-level timing visibility plus benchmark notes.
+  capped visual tie-break work, and download timeouts, and the repo now exposes
+  lightweight stage-level timing visibility in both recognition debug output and
+  eval summaries. The remaining performance work is benchmark notes plus a more
+  durable benchmark harness.
 
 **Deliverables**
 
