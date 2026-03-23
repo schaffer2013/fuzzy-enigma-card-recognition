@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import fields
 import inspect
 import json
 import re
 import shutil
+import sys
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -20,6 +20,7 @@ SUPPORTED_SUFFIXES = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", 
 HASHED_NAME_SUFFIX = re.compile(r"-(?P<hash>[0-9a-f]{8})$", re.IGNORECASE)
 ProgressCallback = Callable[[str], None]
 MAX_RANDOM_TEST_MINUTES = 10.0
+DEFAULT_BENCHMARK_MODES = ("default", "lazy_basic_lands", "lazy_all_printings")
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,19 @@ class EvaluationSummaryComparison:
     stage_timing_deltas: list[MetricDelta]
 
 
+@dataclass(frozen=True)
+class BenchmarkModeResult:
+    mode_name: str
+    config_overrides: dict[str, Any]
+    summary: EvaluationSummary
+
+
+@dataclass(frozen=True)
+class BenchmarkReport:
+    fixtures_dir: str
+    mode_results: list[BenchmarkModeResult]
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Evaluate recognition accuracy on a fixture folder.")
     parser.add_argument(
@@ -122,6 +136,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--compare-to",
         default=None,
         help="Optional path to a prior JSON summary to compare against the current run.",
+    )
+    parser.add_argument(
+        "--benchmark-modes",
+        default="default",
+        help=(
+            "Comma-separated benchmark config modes to run against the same fixture set. "
+            "Use 'all' for the built-in suite."
+        ),
     )
     parser.add_argument(
         "--random-time-limit-minutes",
@@ -198,6 +220,35 @@ def evaluate_random_sample(
         _notify(progress_callback, f"Evaluated random card {card_index}: {path.name}")
 
     return _summarize_evaluations(evaluations)
+
+
+def evaluate_benchmark_modes(
+    fixtures_dir: str | Path,
+    *,
+    mode_names: list[str],
+    limit: int | None = None,
+    base_config: EngineConfig | None = None,
+) -> BenchmarkReport:
+    resolved_mode_names = resolve_benchmark_modes(mode_names)
+    config = base_config or load_engine_config()
+    mode_results: list[BenchmarkModeResult] = []
+    for mode_name in resolved_mode_names:
+        mode_config = config_for_benchmark_mode(config, mode_name)
+        mode_results.append(
+            BenchmarkModeResult(
+                mode_name=mode_name,
+                config_overrides=_benchmark_mode_overrides(mode_name),
+                summary=evaluate_fixture_set(
+                    fixtures_dir,
+                    limit=limit,
+                    config=mode_config,
+                ),
+            )
+        )
+    return BenchmarkReport(
+        fixtures_dir=str(fixtures_dir),
+        mode_results=mode_results,
+    )
 
 
 def _summarize_evaluations(evaluations: list[FixtureEvaluation]) -> EvaluationSummary:
@@ -571,9 +622,77 @@ def render_comparison(comparison: EvaluationSummaryComparison) -> str:
     return "\n".join(lines)
 
 
+def render_benchmark_report(report: BenchmarkReport) -> str:
+    lines = [
+        f"Benchmark fixtures dir: {report.fixtures_dir}",
+        f"Benchmark modes: {', '.join(mode_result.mode_name for mode_result in report.mode_results) or 'none'}",
+    ]
+    for mode_result in report.mode_results:
+        summary = mode_result.summary
+        lines.extend(
+            [
+                "",
+                f"Mode: {mode_result.mode_name}",
+                f"  Top-1 accuracy: {summary.top1_accuracy:.3f}",
+                f"  Top-5 accuracy: {summary.top5_accuracy:.3f}",
+                f"  Set accuracy: {summary.set_accuracy:.3f}",
+                f"  Art accuracy: {summary.art_accuracy:.3f}",
+                f"  Average confidence: {summary.average_confidence:.3f}",
+                f"  Average runtime (s): {summary.average_runtime_seconds:.3f}",
+                f"  Calibration error (ECE): {summary.calibration_error:.3f}",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def benchmark_report_to_json(report: BenchmarkReport) -> dict[str, Any]:
+    return {
+        "fixtures_dir": report.fixtures_dir,
+        "mode_results": [
+            {
+                "mode_name": mode_result.mode_name,
+                "config_overrides": mode_result.config_overrides,
+                "summary": summary_to_json(mode_result.summary),
+            }
+            for mode_result in report.mode_results
+        ],
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+    try:
+        benchmark_mode_names = resolve_benchmark_modes(args.benchmark_modes)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    if args.compare_to and len(benchmark_mode_names) > 1:
+        parser.error("--compare-to currently supports single-mode runs only.")
+
+    if args.random_time_limit_minutes and len(benchmark_mode_names) > 1:
+        if args.random_time_limit_minutes > MAX_RANDOM_TEST_MINUTES:
+            parser.error(
+                f"--random-time-limit-minutes may not exceed {MAX_RANDOM_TEST_MINUTES:g} minutes."
+            )
+        sample_dir = build_random_sample(
+            args.random_output_dir,
+            time_limit_seconds=args.random_time_limit_minutes * 60.0,
+            progress_callback=_print_console,
+        )
+        report = evaluate_benchmark_modes(
+            sample_dir,
+            mode_names=benchmark_mode_names,
+            limit=args.limit,
+        )
+        _print_console(render_benchmark_report(report))
+        if args.json_out:
+            output_path = Path(args.json_out)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(benchmark_report_to_json(report), indent=2, sort_keys=True), encoding="utf-8")
+            _print_console(f"\nWrote JSON summary to {output_path}")
+        return 0
+
     if args.random_time_limit_minutes:
         if args.random_time_limit_minutes > MAX_RANDOM_TEST_MINUTES:
             parser.error(
@@ -582,11 +701,24 @@ def main(argv: list[str] | None = None) -> int:
         summary = evaluate_random_sample(
             args.random_output_dir,
             time_limit_seconds=args.random_time_limit_minutes * 60.0,
-            progress_callback=print,
+            progress_callback=_print_console,
         )
+    elif len(benchmark_mode_names) > 1:
+        report = evaluate_benchmark_modes(
+            args.fixtures_dir,
+            mode_names=benchmark_mode_names,
+            limit=args.limit,
+        )
+        _print_console(render_benchmark_report(report))
+        if args.json_out:
+            output_path = Path(args.json_out)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(benchmark_report_to_json(report), indent=2, sort_keys=True), encoding="utf-8")
+            _print_console(f"\nWrote JSON summary to {output_path}")
+        return 0
     else:
         summary = evaluate_fixture_set(args.fixtures_dir, limit=args.limit)
-    print(render_summary(summary))
+    _print_console(render_summary(summary))
 
     if args.compare_to:
         baseline_summary = load_summary_json(args.compare_to)
@@ -596,14 +728,14 @@ def main(argv: list[str] | None = None) -> int:
             baseline_label=str(args.compare_to),
             current_label="current run",
         )
-        print("")
-        print(render_comparison(comparison))
+        _print_console("")
+        _print_console(render_comparison(comparison))
 
     if args.json_out:
         output_path = Path(args.json_out)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(summary_to_json(summary), indent=2, sort_keys=True), encoding="utf-8")
-        print(f"\nWrote JSON summary to {output_path}")
+        _print_console(f"\nWrote JSON summary to {output_path}")
 
     return 0
 
@@ -629,6 +761,17 @@ def _notify(callback: ProgressCallback | None, message: str) -> None:
             callback(message)
         except UnicodeEncodeError:
             callback(str(message).encode("ascii", "replace").decode("ascii"))
+
+
+def _print_console(message: str = "") -> None:
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        safe_message = str(message).encode("ascii", "replace").decode("ascii")
+        try:
+            sys.stdout.write(safe_message + "\n")
+        except UnicodeEncodeError:
+            print(safe_message.encode("ascii", "replace").decode("ascii"))
 
 
 def _call_with_supported_kwargs(function, *args, **kwargs):
@@ -693,6 +836,49 @@ def _count_by_key(values) -> dict[str, int]:
     for value in values:
         counts[value] = counts.get(value, 0) + 1
     return counts
+
+
+def resolve_benchmark_modes(mode_names: str | list[str]) -> list[str]:
+    if isinstance(mode_names, str):
+        raw_names = [part.strip() for part in mode_names.split(",") if part.strip()]
+    else:
+        raw_names = [str(part).strip() for part in mode_names if str(part).strip()]
+
+    if not raw_names:
+        raw_names = ["default"]
+
+    expanded_names: list[str] = []
+    for name in raw_names:
+        if name == "all":
+            expanded_names.extend(DEFAULT_BENCHMARK_MODES)
+        else:
+            expanded_names.append(name)
+
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for name in expanded_names:
+        if name not in DEFAULT_BENCHMARK_MODES:
+            raise ValueError(f"Unknown benchmark mode: {name}")
+        if name in seen:
+            continue
+        seen.add(name)
+        resolved.append(name)
+    return resolved
+
+
+def config_for_benchmark_mode(base_config: EngineConfig, mode_name: str) -> EngineConfig:
+    overrides = _benchmark_mode_overrides(mode_name)
+    return replace(base_config, **overrides)
+
+
+def _benchmark_mode_overrides(mode_name: str) -> dict[str, Any]:
+    if mode_name == "default":
+        return {}
+    if mode_name == "lazy_basic_lands":
+        return {"lazy_group_basic_land_printings": True}
+    if mode_name == "lazy_all_printings":
+        return {"lazy_default_printing_by_name": True}
+    raise ValueError(f"Unknown benchmark mode: {mode_name}")
 
 
 def _metric_delta(label: str, baseline: float, current: float) -> MetricDelta:

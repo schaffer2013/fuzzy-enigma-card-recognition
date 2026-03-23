@@ -241,6 +241,15 @@ python scripts\eval_fixture_set.py `
   --json-out data\sample_outputs\random-eval-summary-new.json
 ```
 
+Run the same fixture set across the built-in benchmark modes:
+
+```powershell
+python scripts\eval_fixture_set.py `
+  --fixtures-dir data\sample_outputs\random_eval_cards `
+  --benchmark-modes all `
+  --json-out data\sample_outputs\random-eval-benchmark-modes.json
+```
+
 The eval workflow reports:
 
 - top-1 and top-5 name accuracy
@@ -253,6 +262,14 @@ The eval workflow reports:
 When `--compare-to` is provided, the script also prints metric deltas,
 calibration-gap deltas, and average stage-timing deltas versus the saved
 baseline summary.
+
+When `--benchmark-modes` contains more than one mode, the script evaluates the
+same fixtures across each named config mode and reports accuracy separately for
+each one. Today the built-in mode suite is:
+
+- `default`
+- `lazy_basic_lands`
+- `lazy_all_printings`
 
 ## Repository Layout
 

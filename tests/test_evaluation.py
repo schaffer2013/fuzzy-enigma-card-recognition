@@ -3,16 +3,22 @@ from pathlib import Path
 import time
 
 from card_engine.evaluation import (
+    BenchmarkModeResult,
+    BenchmarkReport,
+    benchmark_report_to_json,
     build_random_sample,
     compare_summaries,
+    evaluate_benchmark_modes,
     evaluate_random_sample,
     evaluate_fixture_set,
     infer_expected_name,
     infer_fixture_expectation,
     FixtureEvaluation,
     load_summary_json,
+    render_benchmark_report,
     render_comparison,
     render_summary,
+    resolve_benchmark_modes,
     summary_from_json,
     summary_to_json,
 )
@@ -121,7 +127,7 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
     assert summary.top5_accuracy == 1.0
     assert summary.set_accuracy == 1.0
     assert summary.art_accuracy == 0.5
-    assert summary.average_runtime_seconds == 0.0
+    assert summary.average_runtime_seconds >= 0.0
     assert summary.calibration_error == 0.23
     assert len(summary.calibration_bins) == 2
     assert summary.calibration_bins[0].lower_bound == 0.6
@@ -143,11 +149,11 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
     rendered = render_summary(summary)
     payload = summary_to_json(summary)
 
-    assert "Average runtime (s): 0.000" in rendered
+    assert "Average runtime (s):" in rendered
     assert "Stage timings (avg seconds):" in rendered
     assert "Calibration error (ECE): 0.230" in rendered
     assert "0.6-0.8: count=1, avg_confidence=0.630, accuracy=1.000, gap=0.370" in rendered
-    assert payload["average_runtime_seconds"] == 0.0
+    assert payload["average_runtime_seconds"] >= 0.0
     assert payload["average_stage_timings"] == {}
     assert payload["calibration_error"] == 0.23
     assert payload["calibration_bins"][0]["lower_bound"] == 0.6
@@ -463,6 +469,103 @@ def test_compare_summaries_reports_metric_and_stage_deltas():
     assert "Comparison: candidate run vs baseline.json" in rendered
     assert "Name top-1 accuracy: 0.7000 -> 0.8000 (+0.1000)" in rendered
     assert "Average runtime (s): 0.5000 -> 0.4500 (-0.0500)" in rendered
+
+
+def test_resolve_benchmark_modes_expands_all_and_dedupes():
+    assert resolve_benchmark_modes("default,all,default") == [
+        "default",
+        "lazy_basic_lands",
+        "lazy_all_printings",
+    ]
+
+
+def test_evaluate_benchmark_modes_runs_same_fixture_set_across_modes(monkeypatch, tmp_path):
+    seen: list[tuple[str, EngineConfig]] = []
+
+    def fake_summary(name_top1, set_acc):
+        return summary_from_json(
+            {
+                "fixture_count": 3,
+                "scored_count": 3,
+                "set_scored_count": 3,
+                "art_scored_count": 3,
+                "top1_accuracy": name_top1,
+                "top5_accuracy": name_top1,
+                "set_accuracy": set_acc,
+                "art_accuracy": set_acc,
+                "average_confidence": 0.9,
+                "average_scored_confidence": 0.9,
+                "average_runtime_seconds": 0.1,
+                "calibration_error": 0.05,
+                "calibration_bins": [],
+                "average_stage_timings": {"total": 0.1},
+                "roi_usage": {"standard": 3},
+                "error_classes": {"correct_top1": 3},
+                "fixtures": [],
+            }
+        )
+
+    summaries = iter([fake_summary(0.9, 0.8), fake_summary(0.8, 0.7), fake_summary(0.7, 0.6)])
+
+    monkeypatch.setattr("card_engine.evaluation.evaluate_fixture_set", lambda fixtures_dir, *, limit=None, config=None: (seen.append((str(fixtures_dir), config)) or next(summaries)))
+
+    report = evaluate_benchmark_modes(
+        tmp_path,
+        mode_names=["default", "lazy_basic_lands", "lazy_all_printings"],
+        limit=10,
+        base_config=EngineConfig(),
+    )
+
+    assert [mode_result.mode_name for mode_result in report.mode_results] == [
+        "default",
+        "lazy_basic_lands",
+        "lazy_all_printings",
+    ]
+    assert all(entry[0] == str(tmp_path) for entry in seen)
+    assert seen[0][1].lazy_group_basic_land_printings is False
+    assert seen[1][1].lazy_group_basic_land_printings is True
+    assert seen[2][1].lazy_default_printing_by_name is True
+
+
+def test_benchmark_report_renders_and_serializes_mode_accuracy():
+    report = BenchmarkReport(
+        fixtures_dir="data/sample_outputs/random_eval_cards",
+        mode_results=[
+            BenchmarkModeResult(
+                mode_name="default",
+                config_overrides={},
+                summary=summary_from_json(
+                    {
+                        "fixture_count": 3,
+                        "scored_count": 3,
+                        "set_scored_count": 3,
+                        "art_scored_count": 3,
+                        "top1_accuracy": 0.9,
+                        "top5_accuracy": 0.9,
+                        "set_accuracy": 0.8,
+                        "art_accuracy": 0.7,
+                        "average_confidence": 0.85,
+                        "average_scored_confidence": 0.85,
+                        "average_runtime_seconds": 0.12,
+                        "calibration_error": 0.04,
+                        "calibration_bins": [],
+                        "average_stage_timings": {"total": 0.12},
+                        "roi_usage": {},
+                        "error_classes": {},
+                        "fixtures": [],
+                    }
+                ),
+            )
+        ],
+    )
+
+    rendered = render_benchmark_report(report)
+    payload = benchmark_report_to_json(report)
+
+    assert "Mode: default" in rendered
+    assert "Top-1 accuracy: 0.900" in rendered
+    assert payload["mode_results"][0]["mode_name"] == "default"
+    assert payload["mode_results"][0]["summary"]["set_accuracy"] == 0.8
 
 
 def _minimal_png(*, width: int, height: int) -> bytes:

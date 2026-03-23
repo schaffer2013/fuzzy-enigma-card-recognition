@@ -241,6 +241,15 @@ To compare a tuning candidate against a prior saved baseline summary:
   --json-out data\sample_outputs\eval-summary-candidate.json
 ```
 
+To benchmark the same fixture set across all built-in config modes:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\eval_fixture_set.py `
+  --fixtures-dir data\sample_outputs\random_eval_cards `
+  --benchmark-modes all `
+  --json-out data\sample_outputs\eval-benchmark-modes.json
+```
+
 The script currently reports:
 
 - fixture count
@@ -276,6 +285,10 @@ For confidence tuning, compare each bin's `avg_confidence` to its actual
 the first place to trim or rebalance scoring bonuses. When you use
 `--compare-to`, the CLI also shows whether those calibration gaps improved or
 regressed relative to the baseline run.
+
+When you use `--benchmark-modes all`, the script runs the same saved fixtures
+through each benchmark mode and reports separate accuracy lines for each mode
+instead of mixing them together.
 
 ## Recognition Flow Notes
 
