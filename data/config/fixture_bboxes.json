@@ -1,0 +1,59 @@
+{
+  "detections_by_hash": {
+    "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": {
+      "card_bbox": [
+        0,
+        0,
+        80,
+        100
+      ],
+      "card_quad": [
+        [
+          0,
+          0
+        ],
+        [
+          80,
+          0
+        ],
+        [
+          80,
+          100
+        ],
+        [
+          0,
+          100
+        ]
+      ],
+      "source_path": "C:\\Users\\Pullo\\AppData\\Local\\Temp\\pytest-of-Phil\\pytest-57\\test_recognize_card_preserves_0\\ui-fixture.png"
+    },
+    "ea107ec78016d3892c83e9a6e25f2043a5e35d9778fa4cdaf1770a9012171e94": {
+      "card_bbox": [
+        0,
+        0,
+        80,
+        100
+      ],
+      "card_quad": [
+        [
+          0,
+          0
+        ],
+        [
+          80,
+          0
+        ],
+        [
+          80,
+          100
+        ],
+        [
+          0,
+          100
+        ]
+      ],
+      "source_path": "C:\\Users\\Pullo\\AppData\\Local\\Temp\\pytest-of-Phil\\pytest-57\\test_recognize_card_uses_sidec0\\lightning-bolt.png"
+    }
+  },
+  "version": 1
+}

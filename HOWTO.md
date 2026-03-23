@@ -5,6 +5,12 @@
 The current UI is a single debug window for browsing fixture images, previewing
 the selected image, and seeing the engine's current recognition output.
 
+Each fixture sidecar now keeps a one-time `image_sha256`, and saved card bounds
+are written to `data/config/fixture_bboxes.json` keyed by that hash so shared
+defaults can live in the repo. Cached observed set-symbol and art-match
+fingerprints stay in the image sidecar and are invalidated automatically when
+the saved bbox changes.
+
 Launch it with:
 
 ```powershell

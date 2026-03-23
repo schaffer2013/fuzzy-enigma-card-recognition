@@ -9,6 +9,8 @@ from typing import Any
 import cv2
 import numpy
 
+from ..fixture_cache import ensure_image_prehash, lookup_saved_detection
+
 
 @dataclass(frozen=True)
 class LoadedImage:
@@ -18,6 +20,9 @@ class LoadedImage:
     height: int
     layout_hint: str | None = None
     ocr_text_by_roi: dict[str, Any] = field(default_factory=dict)
+    content_hash: str | None = None
+    card_bbox: tuple[int, int, int, int] | None = None
+    card_quad: tuple[tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]] | None = None
     image_array: Any | None = None
 
     @property
@@ -30,6 +35,8 @@ def load_image(path: str | Path) -> LoadedImage:
     data = image_path.read_bytes()
     image_format, width, height = _read_image_metadata(data)
     metadata = _read_sidecar_metadata(image_path)
+    content_hash = ensure_image_prehash(image_path, image_bytes=data)
+    saved_bbox, saved_quad = lookup_saved_detection(image_path, image_sha256=content_hash)
     return LoadedImage(
         path=image_path,
         image_format=image_format,
@@ -37,6 +44,9 @@ def load_image(path: str | Path) -> LoadedImage:
         height=height,
         layout_hint=_coerce_optional_string(metadata.get("layout_hint")),
         ocr_text_by_roi=_coerce_roi_mapping(metadata.get("ocr_text_by_roi")),
+        content_hash=content_hash,
+        card_bbox=saved_bbox,
+        card_quad=saved_quad,
         image_array=_decode_image_array(data),
     )
 

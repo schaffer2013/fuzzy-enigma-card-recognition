@@ -44,6 +44,7 @@ class EditableLoadedImage:
     width: int
     height: int
     layout_hint: str | None
+    content_hash: str | None
     image_array: object | None
     card_quad: Quad | None
     roi_overrides: dict[str, dict[str, tuple[float, float, float, float]]]
@@ -694,6 +695,7 @@ class CardEngineDebugUI:
             width=self.state.current_image.width,
             height=self.state.current_image.height,
             layout_hint=self.state.current_image.layout_hint,
+            content_hash=self.state.current_image.content_hash,
             image_array=self.state.current_image.image_array,
             card_quad=manual_quad,
             roi_overrides=manual_roi_overrides,

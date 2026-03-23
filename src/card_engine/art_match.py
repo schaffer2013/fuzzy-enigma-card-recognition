@@ -46,6 +46,7 @@ def rerank_candidates_by_art(
     candidates: list[Candidate],
     *,
     observed_crop: CropRegion | None,
+    observed_fingerprint: dict[str, float | str | list[float]] | None = None,
     catalog: LocalCatalogIndex | None,
     progress_callback: Callable[[str], None] | None = None,
     max_comparisons: int | None = None,
@@ -59,7 +60,7 @@ def rerank_candidates_by_art(
     if not _should_apply_art_tiebreak(candidates):
         return ArtRerankResult(candidates=candidates, debug={"used": False, "reason": "not_needed"})
 
-    observed_fingerprint = _compute_art_fingerprint(observed_crop.image_array)
+    observed_fingerprint = observed_fingerprint or _compute_art_fingerprint(observed_crop.image_array)
     if observed_fingerprint is None:
         return ArtRerankResult(candidates=candidates, debug={"used": False, "reason": "unhashable_observed"})
 
@@ -306,6 +307,10 @@ def _compute_art_fingerprint(image_array) -> dict[str, float | str | list[float]
         "hsv_histogram": [round(float(value), 6) for value in histogram.tolist()],
         "mean_bgr": [round(float(value), 2) for value in mean_bgr],
     }
+
+
+def compute_art_fingerprint(image_array) -> dict[str, float | str | list[float]] | None:
+    return _compute_art_fingerprint(image_array)
 
 
 def _preprocess_art_image(image_array) -> tuple[object, object] | None:

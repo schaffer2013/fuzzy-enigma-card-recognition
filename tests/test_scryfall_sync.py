@@ -38,6 +38,7 @@ def test_fetch_random_card_image_downloads_to_cache(tmp_path):
     assert sidecar["expected_name"] == "Black Lotus"
     assert sidecar["expected_set_code"] == "lea"
     assert sidecar["expected_collector_number"] == "233"
+    assert len(sidecar["image_sha256"]) == 64
     assert sidecar["layout_hint"] == "normal"
     assert sidecar["ocr_text_by_roi"]["standard"] == "Black Lotus"
     assert sidecar["ocr_text_by_roi"]["type_line"] == "Artifact"

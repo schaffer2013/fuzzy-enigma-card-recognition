@@ -212,6 +212,13 @@ The UI currently supports:
 - re-evaluation after manual bbox or ROI edits
 - random-card fetching for manual spot checks
 
+Fetched and loaded fixture images now keep a one-time `image_sha256` in their
+sidecar metadata. Saved card bounds are persisted by that hash in
+`data/config/fixture_bboxes.json`, so the default bbox coordinates can be
+committed into the repo. The observed set-symbol and art-match fingerprints are
+cached in the image sidecar and automatically dropped whenever the saved
+bbox/quad changes.
+
 The fuller UI walkthrough is in
 [HOWTO.md](HOWTO.md).
 

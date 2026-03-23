@@ -46,6 +46,7 @@ def rerank_candidates_by_set_symbol(
     candidates: list[Candidate],
     *,
     observed_crop: CropRegion | None,
+    observed_fingerprint: dict[str, float | str] | None = None,
     catalog: LocalCatalogIndex | None,
     progress_callback: Callable[[str], None] | None = None,
     max_comparisons: int | None = None,
@@ -59,7 +60,7 @@ def rerank_candidates_by_set_symbol(
     if not _should_apply_tiebreak(candidates):
         return SetSymbolRerankResult(candidates=candidates, debug={"used": False, "reason": "not_needed"})
 
-    observed_fingerprint = _compute_symbol_fingerprint(observed_crop.image_array)
+    observed_fingerprint = observed_fingerprint or _compute_symbol_fingerprint(observed_crop.image_array)
     if observed_fingerprint is None:
         return SetSymbolRerankResult(candidates=candidates, debug={"used": False, "reason": "unhashable_observed"})
 
@@ -244,6 +245,10 @@ def _compute_symbol_fingerprint(image_array) -> dict[str, float | str] | None:
         "binary_mask": _pack_binary_mask(binary_mask),
         "foreground_ratio": round(float(binary_mask.mean() / 255.0), 4),
     }
+
+
+def compute_symbol_fingerprint(image_array) -> dict[str, float | str] | None:
+    return _compute_symbol_fingerprint(image_array)
 
 
 def _compute_average_hash(image_array, size: int = 16) -> str | None:

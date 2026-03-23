@@ -1,9 +1,11 @@
+import json
 from pathlib import Path
 
 import numpy
 
 from card_engine.api import recognize_card
 from card_engine.catalog.local_index import CatalogRecord, LocalCatalogIndex
+from card_engine.normalize import CropRegion, NormalizationResult
 from card_engine.ocr import OCRResult
 from card_engine.ui.app import EditableLoadedImage
 
@@ -147,6 +149,7 @@ def test_recognize_card_preserves_pixels_for_ui_editable_images(monkeypatch, tmp
         width=80,
         height=100,
         layout_hint="normal",
+        content_hash="deadbeef" * 8,
         image_array=numpy.zeros((100, 80, 3), dtype=numpy.uint8),
         card_quad=None,
         roi_overrides={},
@@ -156,6 +159,120 @@ def test_recognize_card_preserves_pixels_for_ui_editable_images(monkeypatch, tmp
 
     assert seen_roi_labels == ["standard", "type_line", "lower_text"]
     assert result.debug["ocr"]["results_by_roi"]["standard"]["debug"]["backend"] == "fake"
+
+
+def test_recognize_card_reuses_cached_observed_fingerprints_from_sidecar(monkeypatch, tmp_path):
+    image_path = tmp_path / "fixture.png"
+    image_path.write_bytes(_minimal_png(width=80, height=100))
+    image_path.with_suffix(".json").write_text("{}", encoding="utf-8")
+
+    bbox_store_path = tmp_path / "fixture_bboxes.json"
+    monkeypatch.setattr("card_engine.fixture_cache.DEFAULT_FIXTURE_BBOX_STORE_PATH", bbox_store_path)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: LocalCatalogIndex.from_records([]))
+    monkeypatch.setattr(
+        "card_engine.api.normalize_card",
+        lambda image, bbox, *, quad=None, roi_groups=None: NormalizationResult(
+            normalized_image=image,
+            crops={
+                "set_symbol:primary": CropRegion(
+                    label="primary",
+                    bbox=(0, 0, 10, 10),
+                    shape=(10, 10, 3),
+                    image_array=numpy.zeros((10, 10, 3), dtype=numpy.uint8),
+                ),
+                "art_match:primary": CropRegion(
+                    label="primary",
+                    bbox=(0, 0, 20, 20),
+                    shape=(20, 20, 3),
+                    image_array=numpy.zeros((20, 20, 3), dtype=numpy.uint8),
+                ),
+            },
+            debug_outputs={},
+        ),
+    )
+    monkeypatch.setattr(
+        "card_engine.api.compute_symbol_fingerprint",
+        lambda _image_array: {"gray_dhash": "a" * 64, "edge_ahash": "b" * 64, "binary_mask": "c" * 64, "foreground_ratio": 0.4},
+    )
+    monkeypatch.setattr(
+        "card_engine.api.compute_art_fingerprint",
+        lambda _image_array: {"gray_dhash": "d" * 81, "edge_dhash": "e" * 81, "hsv_histogram": [0.1, 0.2], "mean_bgr": [1.0, 2.0, 3.0]},
+    )
+
+    first_result = recognize_card(image_path)
+    sidecar_payload = json.loads(image_path.with_suffix(".json").read_text(encoding="utf-8"))
+    cached = sidecar_payload.get("cached_observed_fingerprints", {})
+    assert cached.get("set_symbol")
+    assert cached.get("art_match")
+
+    monkeypatch.setattr(
+        "card_engine.api.compute_symbol_fingerprint",
+        lambda _image_array: (_raise_assertion("symbol fingerprint should come from cache")),
+    )
+    monkeypatch.setattr(
+        "card_engine.api.compute_art_fingerprint",
+        lambda _image_array: (_raise_assertion("art fingerprint should come from cache")),
+    )
+
+    second_result = recognize_card(image_path)
+
+    assert first_result.bbox == second_result.bbox
+
+
+def test_recognize_card_clears_cached_fingerprints_when_saved_bbox_changes(monkeypatch, tmp_path):
+    image_path = tmp_path / "fixture.png"
+    image_path.write_bytes(_minimal_png(width=80, height=100))
+    image_path.with_suffix(".json").write_text("{}", encoding="utf-8")
+
+    bbox_store_path = tmp_path / "fixture_bboxes.json"
+    monkeypatch.setattr("card_engine.fixture_cache.DEFAULT_FIXTURE_BBOX_STORE_PATH", bbox_store_path)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: LocalCatalogIndex.from_records([]))
+    monkeypatch.setattr(
+        "card_engine.api.normalize_card",
+        lambda image, bbox, *, quad=None, roi_groups=None: NormalizationResult(
+            normalized_image=image,
+            crops={
+                "set_symbol:primary": CropRegion(
+                    label="primary",
+                    bbox=(0, 0, 10, 10),
+                    shape=(10, 10, 3),
+                    image_array=numpy.zeros((10, 10, 3), dtype=numpy.uint8),
+                ),
+                "art_match:primary": CropRegion(
+                    label="primary",
+                    bbox=(0, 0, 20, 20),
+                    shape=(20, 20, 3),
+                    image_array=numpy.zeros((20, 20, 3), dtype=numpy.uint8),
+                ),
+            },
+            debug_outputs={},
+        ),
+    )
+    monkeypatch.setattr(
+        "card_engine.api.compute_symbol_fingerprint",
+        lambda _image_array: {"gray_dhash": "a" * 64, "edge_ahash": "b" * 64, "binary_mask": "c" * 64, "foreground_ratio": 0.4},
+    )
+    monkeypatch.setattr(
+        "card_engine.api.compute_art_fingerprint",
+        lambda _image_array: {"gray_dhash": "d" * 81, "edge_dhash": "e" * 81, "hsv_histogram": [0.1, 0.2], "mean_bgr": [1.0, 2.0, 3.0]},
+    )
+
+    recognize_card(image_path)
+    original_payload = json.loads(image_path.with_suffix(".json").read_text(encoding="utf-8"))
+    assert original_payload.get("cached_observed_fingerprints")
+
+    store_payload = json.loads(bbox_store_path.read_text(encoding="utf-8"))
+    record = next(iter(store_payload["detections_by_hash"].values()))
+    record["card_bbox"] = [5, 5, 70, 90]
+    record["card_quad"] = [[5, 5], [75, 5], [75, 95], [5, 95]]
+    bbox_store_path.write_text(json.dumps(store_payload, indent=2, sort_keys=True), encoding="utf-8")
+
+    reloaded_image = recognize_card(image_path)
+    updated_payload = json.loads(image_path.with_suffix(".json").read_text(encoding="utf-8"))
+
+    assert reloaded_image.debug["detection"]["method"] == "explicit_quad"
+    assert updated_payload["saved_detection"]["card_bbox"] == [5, 5, 70, 90]
+    assert updated_payload["cached_observed_fingerprints"]["signature"]["card_bbox"] == [5, 5, 70, 90]
 
 
 def test_recognize_card_uses_multi_roi_matching_for_catalog_ranking(monkeypatch):
@@ -409,3 +526,7 @@ def _minimal_png(*, width: int, height: int) -> bytes:
         + b"\x00\x00\x00\x00"
         + b"\x00\x00\x00\x00IEND\xaeB`\x82"
     )
+
+
+def _raise_assertion(message: str):
+    raise AssertionError(message)
