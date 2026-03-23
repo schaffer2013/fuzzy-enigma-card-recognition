@@ -7,6 +7,7 @@ import re
 import shutil
 import sys
 import time
+from datetime import datetime, timedelta
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Callable
@@ -26,6 +27,12 @@ HASHED_NAME_SUFFIX = re.compile(r"-(?P<hash>[0-9a-f]{8})$", re.IGNORECASE)
 ProgressCallback = Callable[[str], None]
 MAX_RANDOM_TEST_MINUTES = 10.0
 DEFAULT_BENCHMARK_MODES = ("default", "lazy_basic_lands", "lazy_all_printings")
+LONG_RUN_ETA_THRESHOLD_SECONDS = 180.0
+DEFAULT_MODE_RUNTIME_ESTIMATES = {
+    "default": 7.0,
+    "lazy_basic_lands": 6.0,
+    "lazy_all_printings": 9.5,
+}
 
 
 @dataclass(frozen=True)
@@ -720,9 +727,19 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error(
                     f"--random-time-limit-minutes may not exceed {MAX_RANDOM_TEST_MINUTES:g} minutes."
                 )
+            _announce_eta_if_long(
+                "Random sample build",
+                args.random_time_limit_minutes * 60.0,
+                progress_callback=_print_console,
+            )
             sample_dir = build_random_sample(
                 args.random_output_dir,
                 time_limit_seconds=args.random_time_limit_minutes * 60.0,
+                progress_callback=_print_console,
+            )
+            _announce_eta_if_long(
+                "Benchmark evaluation",
+                _estimate_fixture_run_seconds(sample_dir, benchmark_mode_names, limit=args.limit),
                 progress_callback=_print_console,
             )
             report = evaluate_benchmark_modes(
@@ -745,6 +762,11 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error(
                     f"--random-time-limit-minutes may not exceed {MAX_RANDOM_TEST_MINUTES:g} minutes."
                 )
+            _announce_eta_if_long(
+                "Random sample evaluation",
+                args.random_time_limit_minutes * 60.0,
+                progress_callback=_print_console,
+            )
             summary = evaluate_random_sample(
                 args.random_output_dir,
                 time_limit_seconds=args.random_time_limit_minutes * 60.0,
@@ -752,6 +774,11 @@ def main(argv: list[str] | None = None) -> int:
                 pair_store=pair_store,
             )
         elif len(benchmark_mode_names) > 1:
+            _announce_eta_if_long(
+                "Benchmark evaluation",
+                _estimate_fixture_run_seconds(args.fixtures_dir, benchmark_mode_names, limit=args.limit),
+                progress_callback=_print_console,
+            )
             report = evaluate_benchmark_modes(
                 args.fixtures_dir,
                 mode_names=benchmark_mode_names,
@@ -767,6 +794,16 @@ def main(argv: list[str] | None = None) -> int:
                 _print_console(f"\nWrote JSON summary to {output_path}")
             return 0
         else:
+            _announce_eta_if_long(
+                "Fixture evaluation",
+                _estimate_fixture_run_seconds(
+                    args.fixtures_dir,
+                    benchmark_mode_names,
+                    limit=args.limit,
+                    compare_to=args.compare_to,
+                ),
+                progress_callback=_print_console,
+            )
             summary = evaluate_fixture_set(args.fixtures_dir, limit=args.limit, pair_store=pair_store)
         _print_console(render_summary(summary))
         _print_console(f"\nTracking simulated pairs in {Path(args.pair_db)}")
@@ -836,6 +873,92 @@ def _call_with_supported_kwargs(function, *args, **kwargs):
         if key in signature.parameters
     }
     return function(*args, **supported_kwargs)
+
+
+def _announce_eta_if_long(
+    label: str,
+    estimated_seconds: float | None,
+    *,
+    progress_callback: ProgressCallback | None = None,
+    now: datetime | None = None,
+) -> None:
+    if estimated_seconds is None or estimated_seconds <= LONG_RUN_ETA_THRESHOLD_SECONDS:
+        return
+    _notify(progress_callback, _format_eta_message(label, estimated_seconds, now=now))
+
+
+def _format_eta_message(label: str, estimated_seconds: float, *, now: datetime | None = None) -> str:
+    current_time = now or datetime.now().astimezone()
+    finish_time = current_time + timedelta(seconds=estimated_seconds)
+    return (
+        f"{label} is expected to finish around "
+        f"{finish_time.strftime('%Y-%m-%d %I:%M:%S %p %Z')} "
+        f"(about {_format_duration(estimated_seconds)})."
+    )
+
+
+def _format_duration(total_seconds: float) -> str:
+    rounded_seconds = max(0, int(round(total_seconds)))
+    minutes, seconds = divmod(rounded_seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m {seconds}s"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
+def _estimate_fixture_run_seconds(
+    fixtures_dir: str | Path,
+    mode_names: list[str],
+    *,
+    limit: int | None = None,
+    compare_to: str | Path | None = None,
+) -> float | None:
+    fixture_count = len(discover_fixture_paths(fixtures_dir))
+    if limit is not None:
+        fixture_count = min(fixture_count, max(0, limit))
+    if fixture_count <= 0:
+        return None
+
+    runtime_estimates = dict(DEFAULT_MODE_RUNTIME_ESTIMATES)
+    runtime_estimates.update(_load_runtime_estimates(compare_to))
+    per_fixture_seconds = sum(runtime_estimates.get(mode_name, DEFAULT_MODE_RUNTIME_ESTIMATES["default"]) for mode_name in mode_names)
+    return fixture_count * per_fixture_seconds
+
+
+def _load_runtime_estimates(summary_path: str | Path | None) -> dict[str, float]:
+    if not summary_path:
+        return {}
+    path = Path(summary_path)
+    if not path.exists():
+        return {}
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+
+    mode_results = payload.get("mode_results")
+    if isinstance(mode_results, list):
+        estimates: dict[str, float] = {}
+        for item in mode_results:
+            if not isinstance(item, dict):
+                continue
+            mode_name = _coerce_string(item.get("mode_name"))
+            summary = item.get("summary")
+            if mode_name and isinstance(summary, dict):
+                runtime_value = summary.get("average_runtime_seconds")
+                if isinstance(runtime_value, (int, float)):
+                    estimates[mode_name] = float(runtime_value)
+        return estimates
+
+    runtime_value = payload.get("average_runtime_seconds")
+    if isinstance(runtime_value, (int, float)):
+        return {"default": float(runtime_value)}
+    return {}
 
 
 def _record_simulated_pair(

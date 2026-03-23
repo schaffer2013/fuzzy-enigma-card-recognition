@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 import json
 import sqlite3
 from pathlib import Path
@@ -22,6 +23,9 @@ from card_engine.evaluation import (
     resolve_benchmark_modes,
     summary_from_json,
     summary_to_json,
+    _announce_eta_if_long,
+    _estimate_fixture_run_seconds,
+    _format_eta_message,
 )
 from card_engine.config import EngineConfig
 from card_engine.eval_pair_store import SimulatedPairStore, build_observed_card_id
@@ -671,6 +675,59 @@ def test_build_observed_card_id_prefers_printing_and_falls_back_to_name():
         collector_number=None,
         missing_label="unrecognized",
     ) == "unrecognized"
+
+
+def test_format_eta_message_includes_finish_time_and_duration():
+    now = datetime(2026, 3, 23, 12, 0, 0, tzinfo=timezone.utc).astimezone()
+    rendered = _format_eta_message(
+        "Benchmark evaluation",
+        245.0,
+        now=now,
+    )
+
+    assert "Benchmark evaluation is expected to finish around" in rendered
+    assert (now + timedelta(seconds=245.0)).strftime("%Y-%m-%d %I:%M:%S %p %Z") in rendered
+    assert "(about 4m 5s)." in rendered
+
+
+def test_announce_eta_if_long_only_notifies_above_threshold():
+    seen: list[str] = []
+
+    _announce_eta_if_long(
+        "Fixture evaluation",
+        179.0,
+        progress_callback=seen.append,
+        now=datetime(2026, 3, 23, 12, 0, 0, tzinfo=timezone.utc).astimezone(),
+    )
+    _announce_eta_if_long(
+        "Fixture evaluation",
+        181.0,
+        progress_callback=seen.append,
+        now=datetime(2026, 3, 23, 12, 0, 0, tzinfo=timezone.utc).astimezone(),
+    )
+
+    assert len(seen) == 1
+    assert "Fixture evaluation is expected to finish around" in seen[0]
+
+
+def test_estimate_fixture_run_seconds_uses_fixture_count_and_prior_runtime_summary(tmp_path):
+    for index in range(3):
+        path = tmp_path / f"card-{index}.png"
+        path.write_bytes(_minimal_png(width=80, height=100))
+
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(
+        json.dumps({"average_runtime_seconds": 2.5}),
+        encoding="utf-8",
+    )
+
+    estimated = _estimate_fixture_run_seconds(
+        tmp_path,
+        ["default"],
+        compare_to=summary_path,
+    )
+
+    assert estimated == 7.5
 
 
 def _minimal_png(*, width: int, height: int) -> bytes:
