@@ -14,7 +14,7 @@ from ..fixture_cache import ensure_image_prehash
 SCRYFALL_BULK_DATA_URL = "https://api.scryfall.com/bulk-data/default-cards"
 USER_AGENT = "fuzzy-enigma-card-recognition/0.1.0"
 DEFAULT_RANDOM_CARD_CACHE_LIMIT = 60
-DEFAULT_RANDOM_CARD_QUERY = "lang:en"
+DEFAULT_RANDOM_CARD_QUERY = "game:paper lang:en"
 REQUEST_HEADERS = {
     "User-Agent": USER_AGENT,
     "Accept": "application/json;q=0.9,*/*;q=0.8",
@@ -189,6 +189,7 @@ def _build_fixture_sidecar(card) -> dict:
     oracle_text = _extract_card_value(card, "oracle_text", default="")
     layout = _extract_card_value(card, "layout", default="normal")
     language = _extract_card_value(card, "lang", default="")
+    games = _extract_card_value(card, "games", default=[])
     set_code = _extract_card_value(card, "set", default="")
     collector_number = _extract_card_value(card, "collector_number", default="")
     face_payload = _extract_card_value(card, "card_faces", default=[])
@@ -207,6 +208,7 @@ def _build_fixture_sidecar(card) -> dict:
     return {
         "expected_name": card_name or None,
         "expected_language": language or None,
+        "expected_games": list(games) if isinstance(games, list) else None,
         "expected_set_code": set_code or None,
         "expected_collector_number": str(collector_number) if collector_number else None,
         "layout_hint": layout,
