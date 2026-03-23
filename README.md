@@ -212,12 +212,11 @@ The UI currently supports:
 - re-evaluation after manual bbox or ROI edits
 - random-card fetching for manual spot checks
 
-Fetched and loaded fixture images now keep a one-time `image_sha256` in their
-sidecar metadata. Saved card bounds now live with each fixture image in its
-sidecar metadata, which keeps bbox coordinates local to that image and easy to
-commit for repo-tracked fixtures. The observed set-symbol and art-match
-fingerprints are cached in the same sidecar and automatically dropped whenever
-the saved bbox/quad changes.
+The hash-related ROI bounds for reference-image caching live in
+`data/config/hash_rois.json`, so they are easy to review and commit in the
+repo. Reference art and set-symbol hashes are cached only for ideal/reference
+card images, and each cache is invalidated automatically when the committed ROI
+bounds for that specific hash region change.
 
 The fuller UI walkthrough is in
 [HOWTO.md](HOWTO.md).

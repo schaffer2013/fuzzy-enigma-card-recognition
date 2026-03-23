@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+import json
+from pathlib import Path
 
 RelativeROI = tuple[float, float, float, float]
+DEFAULT_HASH_ROI_CONFIG_PATH = Path("data") / "config" / "hash_rois.json"
 
 
 @dataclass(frozen=True)
@@ -99,6 +103,61 @@ def resolved_group_rois(
 ) -> list[ROI]:
     base_rois = ROI_PRESETS.get(group_name, [])
     merged: dict[str, ROI] = {roi.label: roi for roi in base_rois}
+    for label, values in repo_roi_overrides().get(group_name, {}).items():
+        merged[label] = ROI(label, *values)
     for label, values in (overrides or {}).items():
         merged[label] = ROI(label, *values)
     return list(merged.values())
+
+
+def repo_roi_overrides() -> dict[str, dict[str, RelativeROI]]:
+    config_path = DEFAULT_HASH_ROI_CONFIG_PATH
+    try:
+        mtime_ns = config_path.stat().st_mtime_ns
+    except OSError:
+        mtime_ns = 0
+    return _repo_roi_overrides_cached(str(config_path), mtime_ns)
+
+
+@lru_cache(maxsize=8)
+def _repo_roi_overrides_cached(config_path: str, mtime_ns: int) -> dict[str, dict[str, RelativeROI]]:
+    path = Path(config_path)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+
+    loaded: dict[str, dict[str, RelativeROI]] = {}
+    for group_name, group_value in payload.items():
+        if not isinstance(group_value, dict):
+            continue
+        entries: dict[str, RelativeROI] = {}
+        for label, raw_value in group_value.items():
+            if not isinstance(raw_value, (list, tuple)) or len(raw_value) != 4:
+                continue
+            try:
+                entries[str(label)] = tuple(float(component) for component in raw_value)
+            except (TypeError, ValueError):
+                continue
+        if entries:
+            loaded[str(group_name)] = entries
+    return loaded
+
+
+def roi_group_signature(group_name: str) -> str:
+    rois = resolved_group_rois(group_name)
+    payload = [
+        {
+            "label": roi.label,
+            "x": round(roi.x, 6),
+            "y": round(roi.y, 6),
+            "w": round(roi.w, 6),
+            "h": round(roi.h, 6),
+        }
+        for roi in rois
+    ]
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))

@@ -5,10 +5,10 @@
 The current UI is a single debug window for browsing fixture images, previewing
 the selected image, and seeing the engine's current recognition output.
 
-Each fixture sidecar now keeps a one-time `image_sha256`, and any saved card
-bounds live in that same sidecar so bbox defaults stay attached to the image
-they belong to. Cached observed set-symbol and art-match fingerprints also stay
-in the sidecar and are invalidated automatically when the saved bbox changes.
+The committed hash ROI bounds now live in `data/config/hash_rois.json`. The
+reference-image caches for art and set-symbol hashing are tied to those ROI
+bounds and are automatically cleared for that specific ROI if the committed
+bounds change.
 
 Launch it with:
 

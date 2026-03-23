@@ -4,23 +4,19 @@ from typing import Any
 import inspect
 import time
 
-from .art_match import compute_art_fingerprint, rerank_candidates_by_art
+from .art_match import rerank_candidates_by_art
 from .catalog.maintenance import ensure_catalog_ready
 from .catalog.local_index import LocalCatalogIndex
 from .config import EngineConfig, load_engine_config
 from .detector import detect_card
-from .fixture_cache import (
-    load_cached_observed_fingerprints,
-    persist_cached_observed_fingerprints,
-    persist_saved_detection,
-)
+from .fixture_cache import persist_saved_detection
 from .matcher import match_candidates
 from .models import RecognitionResult
 from .normalize import normalize_card
 from .ocr import run_ocr
 from .roi import resolve_roi_groups_for_layout
 from .scorer import score_candidates
-from .set_symbol import compute_symbol_fingerprint, rerank_candidates_by_set_symbol, should_skip_secondary_ocr
+from .set_symbol import rerank_candidates_by_set_symbol, should_skip_secondary_ocr
 from .utils.image_io import load_image
 
 TITLE_FIRST_ROIS = {"standard", "split_left", "split_right", "adventure", "transform_back"}
@@ -103,19 +99,6 @@ def recognize_card(
     art_match_debug = {"used": False, "reason": "not_attempted"}
     set_symbol_crop = _first_crop_for_group(normalized.crops, "set_symbol")
     art_match_crop = _first_crop_for_group(normalized.crops, "art_match")
-    observed_fingerprints = _load_cached_observed_fingerprints(prepared_image, detection)
-    observed_symbol_fingerprint = observed_fingerprints.get("set_symbol")
-    observed_art_fingerprint = observed_fingerprints.get("art_match")
-    if observed_symbol_fingerprint is None and set_symbol_crop is not None and getattr(set_symbol_crop, "image_array", None) is not None:
-        observed_symbol_fingerprint = compute_symbol_fingerprint(set_symbol_crop.image_array)
-    if observed_art_fingerprint is None and art_match_crop is not None and getattr(art_match_crop, "image_array", None) is not None:
-        observed_art_fingerprint = compute_art_fingerprint(art_match_crop.image_array)
-    _persist_observed_fingerprints(
-        prepared_image,
-        detection,
-        set_symbol=observed_symbol_fingerprint,
-        art_match=observed_art_fingerprint,
-    )
     visual_deadline = _resolve_visual_deadline(deadline, config)
     if candidates and set_symbol_crop is not None and not _deadline_exceeded(deadline):
         _notify(progress_callback, "Comparing set symbol against top candidates...")
@@ -125,7 +108,6 @@ def recognize_card(
             rerank_candidates_by_set_symbol,
             candidates,
             observed_crop=set_symbol_crop,
-            observed_fingerprint=observed_symbol_fingerprint,
             catalog=catalog,
             progress_callback=progress_callback,
             max_comparisons=config.max_visual_tiebreak_candidates,
@@ -144,7 +126,6 @@ def recognize_card(
             rerank_candidates_by_art,
             candidates,
             observed_crop=art_match_crop,
-            observed_fingerprint=observed_art_fingerprint,
             catalog=catalog,
             progress_callback=progress_callback,
             max_comparisons=config.max_visual_tiebreak_candidates,
@@ -201,7 +182,6 @@ def recognize_card(
                 rerank_candidates_by_set_symbol,
                 candidates,
                 observed_crop=set_symbol_crop,
-                observed_fingerprint=observed_symbol_fingerprint,
                 catalog=catalog,
                 progress_callback=progress_callback,
                 max_comparisons=config.max_visual_tiebreak_candidates,
@@ -217,7 +197,6 @@ def recognize_card(
                 rerank_candidates_by_art,
                 candidates,
                 observed_crop=art_match_crop,
-                observed_fingerprint=observed_art_fingerprint,
                 catalog=catalog,
                 progress_callback=progress_callback,
                 max_comparisons=config.max_visual_tiebreak_candidates,
@@ -356,40 +335,4 @@ def _persist_saved_detection(image: Any, detection) -> None:
         image_sha256=image_hash,
         bbox=detection.bbox,
         quad=detection.quad,
-    )
-
-
-def _load_cached_observed_fingerprints(image: Any, detection) -> dict[str, dict]:
-    image_path = getattr(image, "path", None)
-    image_hash = getattr(image, "content_hash", None)
-    if image_path is None or detection.bbox is None:
-        return {}
-    return load_cached_observed_fingerprints(
-        image_path,
-        image_sha256=image_hash,
-        bbox=detection.bbox,
-        quad=detection.quad,
-    )
-
-
-def _persist_observed_fingerprints(
-    image: Any,
-    detection,
-    *,
-    set_symbol: dict[str, Any] | None = None,
-    art_match: dict[str, Any] | None = None,
-) -> None:
-    image_path = getattr(image, "path", None)
-    image_hash = getattr(image, "content_hash", None)
-    if image_path is None or detection.bbox is None:
-        return
-    if set_symbol is None and art_match is None:
-        return
-    persist_cached_observed_fingerprints(
-        image_path,
-        image_sha256=image_hash,
-        bbox=detection.bbox,
-        quad=detection.quad,
-        set_symbol=set_symbol,
-        art_match=art_match,
     )

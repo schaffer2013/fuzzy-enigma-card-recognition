@@ -15,6 +15,7 @@ import numpy
 from .catalog.local_index import CatalogRecord, LocalCatalogIndex
 from .models import Candidate
 from .normalize import CropRegion, normalize_card
+from .roi import roi_group_signature
 from .utils.geometry import quad_from_bbox
 from .catalog.scryfall_sync import REQUEST_HEADERS
 
@@ -182,14 +183,16 @@ def _load_or_compute_reference_hash(
         return None
 
     SET_SYMBOL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    _refresh_reference_cache_if_needed()
     cache_path = SET_SYMBOL_CACHE_DIR / _reference_cache_name(record)
     if cache_path.exists():
         try:
             payload = json.loads(cache_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             payload = None
-        if _is_valid_fingerprint(payload):
-            return payload
+        cached_fingerprint = _cached_fingerprint(payload)
+        if cached_fingerprint is not None:
+            return cached_fingerprint
 
     _notify(progress_callback, f"Comparing set symbol for {record.set_code} {record.collector_number or ''}...")
 
@@ -210,10 +213,7 @@ def _load_or_compute_reference_hash(
     if reference_hash is None:
         return None
 
-    cache_path.write_text(
-        json.dumps(reference_hash, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
+    cache_path.write_text(json.dumps(_cache_payload(reference_hash), indent=2, sort_keys=True), encoding="utf-8")
     return reference_hash
 
 
@@ -249,6 +249,40 @@ def _compute_symbol_fingerprint(image_array) -> dict[str, float | str] | None:
 
 def compute_symbol_fingerprint(image_array) -> dict[str, float | str] | None:
     return _compute_symbol_fingerprint(image_array)
+
+
+def _refresh_reference_cache_if_needed() -> None:
+    manifest_path = SET_SYMBOL_CACHE_DIR / "_cache_meta.json"
+    current_meta = {"roi_signature": _current_roi_signature()}
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = None
+    if payload == current_meta:
+        return
+    for cache_file in SET_SYMBOL_CACHE_DIR.glob("*.json"):
+        cache_file.unlink(missing_ok=True)
+    manifest_path.write_text(json.dumps(current_meta, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _current_roi_signature() -> str:
+    return roi_group_signature("set_symbol")
+
+
+def _cache_payload(fingerprint: dict[str, float | str]) -> dict[str, object]:
+    return {
+        "fingerprint": fingerprint,
+        "roi_signature": _current_roi_signature(),
+    }
+
+
+def _cached_fingerprint(payload: object) -> dict[str, float | str] | None:
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("roi_signature") != _current_roi_signature():
+        return None
+    fingerprint = payload.get("fingerprint")
+    return fingerprint if _is_valid_fingerprint(fingerprint) else None
 
 
 def _compute_average_hash(image_array, size: int = 16) -> str | None:

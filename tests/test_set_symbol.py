@@ -3,7 +3,7 @@ import numpy
 from card_engine.catalog.local_index import CatalogRecord, LocalCatalogIndex
 from card_engine.models import Candidate
 from card_engine.normalize import CropRegion
-from card_engine.set_symbol import rerank_candidates_by_set_symbol
+from card_engine.set_symbol import _load_or_compute_reference_hash, rerank_candidates_by_set_symbol
 
 
 def test_rerank_candidates_by_set_symbol_boosts_more_similar_candidate(monkeypatch):
@@ -143,3 +143,60 @@ def test_rerank_candidates_by_set_symbol_does_not_drop_late_near_tied_candidate(
 
     assert result.debug["used"] is True
     assert result.candidates[0].set_code == "e02"
+
+
+def test_set_symbol_reference_cache_is_cleared_when_roi_signature_changes(monkeypatch, tmp_path):
+    record = CatalogRecord(
+        name="Opt",
+        normalized_name="opt",
+        set_code="xln",
+        collector_number="65",
+        image_uri="https://img.example/opt.png",
+    )
+    calls = {"downloads": 0}
+
+    monkeypatch.setattr("card_engine.set_symbol.SET_SYMBOL_CACHE_DIR", tmp_path)
+    monkeypatch.setattr("card_engine.set_symbol._current_roi_signature", lambda: "signature-a")
+    monkeypatch.setattr(
+        "card_engine.set_symbol._download_reference_image",
+        lambda *_args, **_kwargs: type("Img", (), {"image_array": numpy.zeros((80, 60, 3), dtype=numpy.uint8), "width": 60, "height": 80})(),
+    )
+    monkeypatch.setattr(
+        "card_engine.set_symbol.normalize_card",
+        lambda image, bbox, *, quad=None, roi_groups=None: type(
+            "Norm",
+            (),
+            {
+                "crops": {
+                    "set_symbol:primary": CropRegion(
+                        label="primary",
+                        bbox=(0, 0, 10, 10),
+                        shape=(10, 10, 3),
+                        image_array=numpy.zeros((10, 10, 3), dtype=numpy.uint8),
+                    )
+                }
+            },
+        )(),
+    )
+
+    def fake_compute(_image_array):
+        calls["downloads"] += 1
+        return {
+            "gray_dhash": f"{calls['downloads']:064x}",
+            "edge_ahash": "f" * 64,
+            "binary_mask": "f" * 576,
+            "foreground_ratio": 0.5,
+        }
+
+    monkeypatch.setattr("card_engine.set_symbol._compute_symbol_fingerprint", fake_compute)
+
+    first = _load_or_compute_reference_hash(record)
+    second = _load_or_compute_reference_hash(record)
+    assert first == second
+    assert calls["downloads"] == 1
+
+    monkeypatch.setattr("card_engine.set_symbol._current_roi_signature", lambda: "signature-b")
+    third = _load_or_compute_reference_hash(record)
+
+    assert calls["downloads"] == 2
+    assert third["gray_dhash"] != first["gray_dhash"]

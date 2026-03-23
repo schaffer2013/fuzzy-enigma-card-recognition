@@ -63,67 +63,6 @@ def persist_saved_detection(
     return changed
 
 
-def load_cached_observed_fingerprints(
-    image_path: str | Path,
-    *,
-    image_sha256: str | None,
-    bbox: tuple[int, int, int, int] | None,
-    quad: tuple[tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]] | None,
-) -> dict[str, dict[str, Any]]:
-    payload = _read_sidecar_payload(Path(image_path))
-    cached = payload.get("cached_observed_fingerprints")
-    if not isinstance(cached, dict):
-        return {}
-
-    if cached.get("signature") != _fingerprint_signature(image_sha256=image_sha256, bbox=bbox, quad=quad):
-        return {}
-
-    loaded: dict[str, dict[str, Any]] = {}
-    for key in ("set_symbol", "art_match"):
-        value = cached.get(key)
-        if isinstance(value, dict):
-            loaded[key] = value
-    return loaded
-
-
-def persist_cached_observed_fingerprints(
-    image_path: str | Path,
-    *,
-    image_sha256: str | None,
-    bbox: tuple[int, int, int, int] | None,
-    quad: tuple[tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]] | None,
-    set_symbol: dict[str, Any] | None = None,
-    art_match: dict[str, Any] | None = None,
-) -> None:
-    if image_sha256 is None or bbox is None:
-        return
-
-    payload = _read_sidecar_payload(Path(image_path))
-    cached = payload.get("cached_observed_fingerprints")
-    signature = _fingerprint_signature(image_sha256=image_sha256, bbox=bbox, quad=quad)
-    if not isinstance(cached, dict) or cached.get("signature") != signature:
-        cached = {"signature": signature}
-    if set_symbol is not None:
-        cached["set_symbol"] = set_symbol
-    if art_match is not None:
-        cached["art_match"] = art_match
-    payload["cached_observed_fingerprints"] = cached
-    _write_sidecar_payload(Path(image_path), payload)
-
-
-def _fingerprint_signature(
-    *,
-    image_sha256: str | None,
-    bbox: tuple[int, int, int, int] | None,
-    quad: tuple[tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]] | None,
-) -> dict[str, Any]:
-    return {
-        "image_sha256": image_sha256,
-        "card_bbox": list(bbox) if bbox is not None else None,
-        "card_quad": [[point[0], point[1]] for point in quad] if quad is not None else None,
-    }
-
-
 def _read_sidecar_payload(image_path: Path) -> dict[str, Any]:
     sidecar_path = image_path.with_suffix(".json")
     if not sidecar_path.exists():

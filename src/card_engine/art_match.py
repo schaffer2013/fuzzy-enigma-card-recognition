@@ -16,6 +16,7 @@ from .catalog.local_index import CatalogRecord, LocalCatalogIndex
 from .catalog.scryfall_sync import REQUEST_HEADERS
 from .models import Candidate
 from .normalize import CropRegion, normalize_card
+from .roi import roi_group_signature
 from .utils.geometry import quad_from_bbox
 
 ART_MATCH_CACHE_DIR = Path("data") / "cache" / "art_match_refs"
@@ -240,14 +241,16 @@ def _load_or_compute_reference_fingerprint(
         return None
 
     ART_MATCH_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    _refresh_reference_cache_if_needed()
     cache_path = ART_MATCH_CACHE_DIR / _reference_cache_name(record)
     if cache_path.exists():
         try:
             payload = json.loads(cache_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             payload = None
-        if _is_valid_fingerprint(payload):
-            return payload
+        cached_fingerprint = _cached_fingerprint(payload)
+        if cached_fingerprint is not None:
+            return cached_fingerprint
 
     _notify(progress_callback, f"Comparing art region for {record.set_code or '?'} {record.collector_number or ''}...")
 
@@ -268,10 +271,7 @@ def _load_or_compute_reference_fingerprint(
     if reference_fingerprint is None:
         return None
 
-    cache_path.write_text(
-        json.dumps(reference_fingerprint, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
+    cache_path.write_text(json.dumps(_cache_payload(reference_fingerprint), indent=2, sort_keys=True), encoding="utf-8")
     return reference_fingerprint
 
 
@@ -311,6 +311,40 @@ def _compute_art_fingerprint(image_array) -> dict[str, float | str | list[float]
 
 def compute_art_fingerprint(image_array) -> dict[str, float | str | list[float]] | None:
     return _compute_art_fingerprint(image_array)
+
+
+def _refresh_reference_cache_if_needed() -> None:
+    manifest_path = ART_MATCH_CACHE_DIR / "_cache_meta.json"
+    current_meta = {"roi_signature": _current_roi_signature()}
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = None
+    if payload == current_meta:
+        return
+    for cache_file in ART_MATCH_CACHE_DIR.glob("*.json"):
+        cache_file.unlink(missing_ok=True)
+    manifest_path.write_text(json.dumps(current_meta, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _current_roi_signature() -> str:
+    return roi_group_signature("art_match")
+
+
+def _cache_payload(fingerprint: dict[str, float | str | list[float]]) -> dict[str, object]:
+    return {
+        "fingerprint": fingerprint,
+        "roi_signature": _current_roi_signature(),
+    }
+
+
+def _cached_fingerprint(payload: object) -> dict[str, float | str | list[float]] | None:
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("roi_signature") != _current_roi_signature():
+        return None
+    fingerprint = payload.get("fingerprint")
+    return fingerprint if _is_valid_fingerprint(fingerprint) else None
 
 
 def _preprocess_art_image(image_array) -> tuple[object, object] | None:
