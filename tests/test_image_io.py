@@ -43,23 +43,12 @@ def test_load_image_reads_sidecar_ocr_metadata(tmp_path):
 def test_load_image_reads_saved_detection_by_prehash(tmp_path, monkeypatch):
     image_path = tmp_path / "fixture.png"
     image_path.write_bytes(_minimal_png(width=63, height=88))
-    image_path.with_suffix(".json").write_text("{}", encoding="utf-8")
-
-    bbox_store_path = tmp_path / "fixture_bboxes.json"
-    monkeypatch.setattr("card_engine.fixture_cache.DEFAULT_FIXTURE_BBOX_STORE_PATH", bbox_store_path)
-
-    image = load_image(image_path)
-
-    bbox_store_path.write_text(
+    image_path.with_suffix(".json").write_text(
         json.dumps(
             {
-                "version": 1,
-                "detections_by_hash": {
-                    image.content_hash: {
-                        "card_bbox": [1, 2, 30, 40],
-                        "card_quad": [[1, 2], [31, 2], [31, 42], [1, 42]],
-                        "source_path": "fixture.png",
-                    }
+                "saved_detection": {
+                    "card_bbox": [1, 2, 30, 40],
+                    "card_quad": [[1, 2], [31, 2], [31, 42], [1, 42]],
                 },
             }
         ),

@@ -166,8 +166,6 @@ def test_recognize_card_reuses_cached_observed_fingerprints_from_sidecar(monkeyp
     image_path.write_bytes(_minimal_png(width=80, height=100))
     image_path.with_suffix(".json").write_text("{}", encoding="utf-8")
 
-    bbox_store_path = tmp_path / "fixture_bboxes.json"
-    monkeypatch.setattr("card_engine.fixture_cache.DEFAULT_FIXTURE_BBOX_STORE_PATH", bbox_store_path)
     monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: LocalCatalogIndex.from_records([]))
     monkeypatch.setattr(
         "card_engine.api.normalize_card",
@@ -224,8 +222,6 @@ def test_recognize_card_clears_cached_fingerprints_when_saved_bbox_changes(monke
     image_path.write_bytes(_minimal_png(width=80, height=100))
     image_path.with_suffix(".json").write_text("{}", encoding="utf-8")
 
-    bbox_store_path = tmp_path / "fixture_bboxes.json"
-    monkeypatch.setattr("card_engine.fixture_cache.DEFAULT_FIXTURE_BBOX_STORE_PATH", bbox_store_path)
     monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: LocalCatalogIndex.from_records([]))
     monkeypatch.setattr(
         "card_engine.api.normalize_card",
@@ -261,11 +257,11 @@ def test_recognize_card_clears_cached_fingerprints_when_saved_bbox_changes(monke
     original_payload = json.loads(image_path.with_suffix(".json").read_text(encoding="utf-8"))
     assert original_payload.get("cached_observed_fingerprints")
 
-    store_payload = json.loads(bbox_store_path.read_text(encoding="utf-8"))
-    record = next(iter(store_payload["detections_by_hash"].values()))
-    record["card_bbox"] = [5, 5, 70, 90]
-    record["card_quad"] = [[5, 5], [75, 5], [75, 95], [5, 95]]
-    bbox_store_path.write_text(json.dumps(store_payload, indent=2, sort_keys=True), encoding="utf-8")
+    original_payload["saved_detection"] = {
+        "card_bbox": [5, 5, 70, 90],
+        "card_quad": [[5, 5], [75, 5], [75, 95], [5, 95]],
+    }
+    image_path.with_suffix(".json").write_text(json.dumps(original_payload, indent=2, sort_keys=True), encoding="utf-8")
 
     reloaded_image = recognize_card(image_path)
     updated_payload = json.loads(image_path.with_suffix(".json").read_text(encoding="utf-8"))

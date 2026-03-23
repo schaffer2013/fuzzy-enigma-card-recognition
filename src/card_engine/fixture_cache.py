@@ -5,9 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-DEFAULT_FIXTURE_BBOX_STORE_PATH = Path("data") / "config" / "fixture_bboxes.json"
-_EMPTY_BBOX_STORE = {"version": 1, "detections_by_hash": {}}
-
 
 def ensure_image_prehash(
     image_path: str | Path,
@@ -33,13 +30,7 @@ def lookup_saved_detection(
 ) -> tuple[tuple[int, int, int, int] | None, tuple[tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]] | None]:
     path = Path(image_path)
     payload = _read_sidecar_payload(path)
-
-    store = _read_bbox_store(DEFAULT_FIXTURE_BBOX_STORE_PATH)
-    record = None
-    if image_sha256:
-        record = store.get("detections_by_hash", {}).get(image_sha256)
-    if not isinstance(record, dict):
-        record = payload.get("saved_detection")
+    record = payload.get("saved_detection")
     if not isinstance(record, dict):
         return None, None
 
@@ -59,25 +50,12 @@ def persist_saved_detection(
     if image_sha256 is None or bbox is None:
         return False
 
-    bbox_record = {
-        "card_bbox": list(bbox),
-        "card_quad": [[point[0], point[1]] for point in quad] if quad is not None else None,
-        "source_path": _relative_path_for_repo(path),
-    }
-    store = _read_bbox_store(DEFAULT_FIXTURE_BBOX_STORE_PATH)
-    detections_by_hash = store.setdefault("detections_by_hash", {})
-    existing_record = detections_by_hash.get(image_sha256)
-    changed = existing_record != bbox_record
-    detections_by_hash[image_sha256] = bbox_record
-    _write_bbox_store(DEFAULT_FIXTURE_BBOX_STORE_PATH, store)
-
     payload = _read_sidecar_payload(path)
     sidecar_record = {
         "card_bbox": list(bbox),
         "card_quad": [[point[0], point[1]] for point in quad] if quad is not None else None,
     }
-    if payload.get("saved_detection") != sidecar_record:
-        changed = True
+    changed = payload.get("saved_detection") != sidecar_record
     payload["saved_detection"] = sidecar_record
     if changed:
         payload.pop("cached_observed_fingerprints", None)
@@ -146,26 +124,6 @@ def _fingerprint_signature(
     }
 
 
-def _read_bbox_store(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return dict(_EMPTY_BBOX_STORE)
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return dict(_EMPTY_BBOX_STORE)
-    if not isinstance(payload, dict):
-        return dict(_EMPTY_BBOX_STORE)
-    if not isinstance(payload.get("detections_by_hash"), dict):
-        payload["detections_by_hash"] = {}
-    payload.setdefault("version", 1)
-    return payload
-
-
-def _write_bbox_store(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-
-
 def _read_sidecar_payload(image_path: Path) -> dict[str, Any]:
     sidecar_path = image_path.with_suffix(".json")
     if not sidecar_path.exists():
@@ -198,10 +156,3 @@ def _coerce_quad(value: Any) -> tuple[tuple[int, int], tuple[int, int], tuple[in
         return tuple((int(point[0]), int(point[1])) for point in value)
     except (TypeError, ValueError, IndexError):
         return None
-
-
-def _relative_path_for_repo(path: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(Path.cwd().resolve()))
-    except ValueError:
-        return str(path)
