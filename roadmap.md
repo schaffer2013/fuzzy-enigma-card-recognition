@@ -884,6 +884,10 @@ Recommended early implementation order:
 
 - Fixture evaluation is in place and now supports timed random sampling plus
   name/set/art accuracy reporting.
+- For the current Milestone 9 close-out, exact card-name accuracy on paper
+  printings is the primary success criterion; exact-printing disambiguation is
+  still useful but is treated as secondary unless it harms name-level
+  recognition quality.
 - Confidence-calibration reporting is in place, including confidence bins and
   expected calibration error (ECE), but the remaining work is to validate and
   tune confidence on larger unseen random samples.
