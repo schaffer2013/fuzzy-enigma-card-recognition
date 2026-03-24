@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from functools import lru_cache
 import inspect
 import json
 import re
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .api import recognize_card
+from .catalog.local_index import CatalogRecord, LocalCatalogIndex
 from .catalog.scryfall_sync import fetch_random_card_image
 from .config import EngineConfig, load_engine_config
 from .eval_pair_store import (
@@ -27,11 +29,18 @@ HASHED_NAME_SUFFIX = re.compile(r"-(?P<hash>[0-9a-f]{8})$", re.IGNORECASE)
 ProgressCallback = Callable[[str], None]
 MAX_RANDOM_TEST_MINUTES = 10.0
 DEFAULT_BENCHMARK_MODES = ("default", "lazy_basic_lands", "lazy_all_printings")
+DEFAULT_OPERATIONAL_MODES = ("greenfield", "reevaluation", "small_pool", "confirmation")
 LONG_RUN_ETA_THRESHOLD_SECONDS = 180.0
 DEFAULT_MODE_RUNTIME_ESTIMATES = {
     "default": 7.0,
     "lazy_basic_lands": 6.0,
     "lazy_all_printings": 9.5,
+}
+DEFAULT_OPERATIONAL_MODE_RUNTIME_ESTIMATES = {
+    "greenfield": 7.0,
+    "reevaluation": 7.0,
+    "small_pool": 4.5,
+    "confirmation": 4.5,
 }
 
 
@@ -126,6 +135,19 @@ class BenchmarkReport:
     mode_results: list[BenchmarkModeResult]
 
 
+@dataclass(frozen=True)
+class OperationalModeResult:
+    mode_name: str
+    summary: EvaluationSummary
+    implementation_note: str | None = None
+
+
+@dataclass(frozen=True)
+class OperationalModeReport:
+    fixtures_dir: str
+    mode_results: list[OperationalModeResult]
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Evaluate recognition accuracy on a fixture folder.")
     parser.add_argument(
@@ -154,6 +176,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="default",
         help=(
             "Comma-separated benchmark config modes to run against the same fixture set. "
+            "Use 'all' for the built-in suite."
+        ),
+    )
+    parser.add_argument(
+        "--operational-modes",
+        default="",
+        help=(
+            "Comma-separated operational recognition modes to run against the same fixture set. "
             "Use 'all' for the built-in suite."
         ),
     )
@@ -199,19 +229,27 @@ def evaluate_fixture_set(
     deadline: float | None = None,
     config: EngineConfig | None = None,
     pair_store: SimulatedPairStore | None = None,
+    progress_callback: ProgressCallback | None = None,
+    progress_label: str | None = None,
+    fixture_evaluator: Callable[..., FixtureEvaluation] | None = None,
 ) -> EvaluationSummary:
     fixture_paths = discover_fixture_paths(fixtures_dir)
     if limit is not None:
         fixture_paths = fixture_paths[: max(0, limit)]
 
     config = config or load_engine_config()
+    fixture_evaluator = fixture_evaluator or evaluate_fixture
     evaluations: list[FixtureEvaluation] = []
-    for path in fixture_paths:
+    total_fixtures = len(fixture_paths)
+    for index, path in enumerate(fixture_paths, start=1):
         if deadline is not None and time.monotonic() >= deadline:
             break
+        if progress_callback is not None:
+            label = progress_label or "fixtures"
+            _notify(progress_callback, f"[{label}] {index}/{total_fixtures}: {Path(path).name}")
         evaluations.append(
             _call_with_supported_kwargs(
-                evaluate_fixture,
+                fixture_evaluator,
                 path,
                 deadline=deadline,
                 config=config,
@@ -267,11 +305,13 @@ def evaluate_benchmark_modes(
     limit: int | None = None,
     base_config: EngineConfig | None = None,
     pair_store: SimulatedPairStore | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> BenchmarkReport:
     resolved_mode_names = resolve_benchmark_modes(mode_names)
     config = base_config or load_engine_config()
     mode_results: list[BenchmarkModeResult] = []
-    for mode_name in resolved_mode_names:
+    for mode_index, mode_name in enumerate(resolved_mode_names, start=1):
+        _notify(progress_callback, f"[benchmark] Mode {mode_index}/{len(resolved_mode_names)}: {mode_name}")
         mode_config = config_for_benchmark_mode(config, mode_name)
         mode_results.append(
             BenchmarkModeResult(
@@ -283,6 +323,8 @@ def evaluate_benchmark_modes(
                     limit=limit,
                     config=mode_config,
                     pair_store=pair_store,
+                    progress_callback=progress_callback,
+                    progress_label=f"{mode_name}",
                 ),
             )
         )
@@ -290,6 +332,60 @@ def evaluate_benchmark_modes(
         fixtures_dir=str(fixtures_dir),
         mode_results=mode_results,
     )
+
+
+def evaluate_operational_modes(
+    fixtures_dir: str | Path,
+    *,
+    mode_names: list[str],
+    limit: int | None = None,
+    base_config: EngineConfig | None = None,
+    pair_store: SimulatedPairStore | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> OperationalModeReport:
+    resolved_mode_names = resolve_operational_modes(mode_names)
+    config = base_config or load_engine_config()
+    mode_results: list[OperationalModeResult] = []
+    for mode_index, mode_name in enumerate(resolved_mode_names, start=1):
+        _notify(progress_callback, f"[operational] Mode {mode_index}/{len(resolved_mode_names)}: {mode_name}")
+        fixture_evaluator, implementation_note = fixture_evaluator_for_operational_mode(mode_name)
+        mode_results.append(
+            OperationalModeResult(
+                mode_name=mode_name,
+                summary=_call_with_supported_kwargs(
+                    evaluate_fixture_set,
+                    fixtures_dir,
+                    limit=limit,
+                    config=config,
+                    pair_store=pair_store,
+                    progress_callback=progress_callback,
+                    progress_label=f"{mode_name}",
+                    fixture_evaluator=fixture_evaluator,
+                ),
+                implementation_note=implementation_note,
+            )
+        )
+    return OperationalModeReport(
+        fixtures_dir=str(fixtures_dir),
+        mode_results=mode_results,
+    )
+
+
+def fixture_evaluator_for_operational_mode(
+    mode_name: str,
+) -> tuple[Callable[..., FixtureEvaluation], str | None]:
+    if mode_name == "greenfield":
+        return evaluate_fixture, None
+    if mode_name == "reevaluation":
+        return evaluate_fixture, "Uses the greenfield path until expectation-aware reranking lands."
+    if mode_name == "small_pool":
+        return evaluate_fixture_small_pool, None
+    if mode_name == "confirmation":
+        return (
+            evaluate_fixture_small_pool,
+            "Uses the small-pool path until a dedicated confirmation scorer lands.",
+        )
+    raise ValueError(f"Unknown operational mode: {mode_name}")
 
 
 def _summarize_evaluations(evaluations: list[FixtureEvaluation]) -> EvaluationSummary:
@@ -351,6 +447,54 @@ def evaluate_fixture(
     started_at = time.monotonic()
     result = _call_with_supported_kwargs(recognize_card, loaded_image, deadline=deadline, config=config)
     runtime_seconds = round(time.monotonic() - started_at, 4)
+    return _build_fixture_evaluation(
+        fixture_path=fixture_path,
+        expected=expected,
+        result=result,
+        runtime_seconds=runtime_seconds,
+        pair_store=pair_store,
+    )
+
+
+def evaluate_fixture_small_pool(
+    path: str | Path,
+    *,
+    deadline: float | None = None,
+    config: EngineConfig | None = None,
+    pair_store: SimulatedPairStore | None = None,
+) -> FixtureEvaluation:
+    fixture_path = Path(path)
+    loaded_image = load_image(fixture_path)
+    expected = infer_fixture_expectation(loaded_image)
+    config = config or load_engine_config()
+    full_catalog = _load_catalog_for_evaluation(config.catalog_path)
+    constrained_catalog = _build_small_pool_catalog(full_catalog, expected)
+    started_at = time.monotonic()
+    result = _call_with_supported_kwargs(
+        recognize_card,
+        loaded_image,
+        deadline=deadline,
+        config=config,
+        catalog=constrained_catalog,
+    )
+    runtime_seconds = round(time.monotonic() - started_at, 4)
+    return _build_fixture_evaluation(
+        fixture_path=fixture_path,
+        expected=expected,
+        result=result,
+        runtime_seconds=runtime_seconds,
+        pair_store=pair_store,
+    )
+
+
+def _build_fixture_evaluation(
+    *,
+    fixture_path: Path,
+    expected: FixtureExpectation,
+    result,
+    runtime_seconds: float,
+    pair_store: SimulatedPairStore | None,
+) -> FixtureEvaluation:
     best_candidate = result.top_k_candidates[0] if result.top_k_candidates else None
     candidate_names = [candidate.name for candidate in result.top_k_candidates]
     predicted_set_code = best_candidate.set_code if best_candidate else None
@@ -713,15 +857,48 @@ def benchmark_report_to_json(report: BenchmarkReport) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+    if args.operational_modes and args.random_time_limit_minutes:
+        parser.error("--operational-modes currently supports saved fixture folders only.")
+    try:
+        operational_mode_names = resolve_operational_modes(args.operational_modes) if args.operational_modes else []
+    except ValueError as exc:
+        parser.error(str(exc))
     try:
         benchmark_mode_names = resolve_benchmark_modes(args.benchmark_modes)
     except ValueError as exc:
         parser.error(str(exc))
 
+    if operational_mode_names and args.compare_to:
+        parser.error("--compare-to currently supports summary runs only, not operational mode suites.")
     if args.compare_to and len(benchmark_mode_names) > 1:
         parser.error("--compare-to currently supports single-mode runs only.")
 
     with SimulatedPairStore(args.pair_db) as pair_store:
+        if operational_mode_names:
+            _announce_eta_if_long(
+                "Operational mode evaluation",
+                _estimate_fixture_run_seconds_for_operational_modes(args.fixtures_dir, operational_mode_names, limit=args.limit),
+                progress_callback=_print_console,
+            )
+            report = evaluate_operational_modes(
+                args.fixtures_dir,
+                mode_names=operational_mode_names,
+                limit=args.limit,
+                pair_store=pair_store,
+                progress_callback=_print_console,
+            )
+            _print_console(render_operational_mode_report(report))
+            _print_console(f"\nTracking simulated pairs in {Path(args.pair_db)}")
+            if args.json_out:
+                output_path = Path(args.json_out)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(
+                    json.dumps(operational_mode_report_to_json(report), indent=2, sort_keys=True),
+                    encoding="utf-8",
+                )
+                _print_console(f"\nWrote JSON summary to {output_path}")
+            return 0
+
         if args.random_time_limit_minutes and len(benchmark_mode_names) > 1:
             if args.random_time_limit_minutes > MAX_RANDOM_TEST_MINUTES:
                 parser.error(
@@ -747,6 +924,7 @@ def main(argv: list[str] | None = None) -> int:
                 mode_names=benchmark_mode_names,
                 limit=args.limit,
                 pair_store=pair_store,
+                progress_callback=_print_console,
             )
             _print_console(render_benchmark_report(report))
             _print_console(f"\nTracking simulated pairs in {Path(args.pair_db)}")
@@ -784,6 +962,7 @@ def main(argv: list[str] | None = None) -> int:
                 mode_names=benchmark_mode_names,
                 limit=args.limit,
                 pair_store=pair_store,
+                progress_callback=_print_console,
             )
             _print_console(render_benchmark_report(report))
             _print_console(f"\nTracking simulated pairs in {Path(args.pair_db)}")
@@ -804,7 +983,13 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 progress_callback=_print_console,
             )
-            summary = evaluate_fixture_set(args.fixtures_dir, limit=args.limit, pair_store=pair_store)
+            summary = evaluate_fixture_set(
+                args.fixtures_dir,
+                limit=args.limit,
+                pair_store=pair_store,
+                progress_callback=_print_console,
+                progress_label="default",
+            )
         _print_console(render_summary(summary))
         _print_console(f"\nTracking simulated pairs in {Path(args.pair_db)}")
 
@@ -924,6 +1109,28 @@ def _estimate_fixture_run_seconds(
     runtime_estimates = dict(DEFAULT_MODE_RUNTIME_ESTIMATES)
     runtime_estimates.update(_load_runtime_estimates(compare_to))
     per_fixture_seconds = sum(runtime_estimates.get(mode_name, DEFAULT_MODE_RUNTIME_ESTIMATES["default"]) for mode_name in mode_names)
+    return fixture_count * per_fixture_seconds
+
+
+def _estimate_fixture_run_seconds_for_operational_modes(
+    fixtures_dir: str | Path,
+    mode_names: list[str],
+    *,
+    limit: int | None = None,
+) -> float | None:
+    fixture_count = len(discover_fixture_paths(fixtures_dir))
+    if limit is not None:
+        fixture_count = min(fixture_count, max(0, limit))
+    if fixture_count <= 0:
+        return None
+
+    per_fixture_seconds = sum(
+        DEFAULT_OPERATIONAL_MODE_RUNTIME_ESTIMATES.get(
+            mode_name,
+            DEFAULT_OPERATIONAL_MODE_RUNTIME_ESTIMATES["greenfield"],
+        )
+        for mode_name in mode_names
+    )
     return fixture_count * per_fixture_seconds
 
 
@@ -1071,6 +1278,34 @@ def resolve_benchmark_modes(mode_names: str | list[str]) -> list[str]:
     return resolved
 
 
+def resolve_operational_modes(mode_names: str | list[str]) -> list[str]:
+    if isinstance(mode_names, str):
+        raw_names = [part.strip() for part in mode_names.split(",") if part.strip()]
+    else:
+        raw_names = [str(part).strip() for part in mode_names if str(part).strip()]
+
+    if not raw_names:
+        raw_names = ["greenfield"]
+
+    expanded_names: list[str] = []
+    for name in raw_names:
+        if name == "all":
+            expanded_names.extend(DEFAULT_OPERATIONAL_MODES)
+        else:
+            expanded_names.append(name)
+
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for name in expanded_names:
+        if name not in DEFAULT_OPERATIONAL_MODES:
+            raise ValueError(f"Unknown operational mode: {name}")
+        if name in seen:
+            continue
+        seen.add(name)
+        resolved.append(name)
+    return resolved
+
+
 def config_for_benchmark_mode(base_config: EngineConfig, mode_name: str) -> EngineConfig:
     overrides = _benchmark_mode_overrides(mode_name)
     return replace(base_config, **overrides)
@@ -1084,6 +1319,45 @@ def _benchmark_mode_overrides(mode_name: str) -> dict[str, Any]:
     if mode_name == "lazy_all_printings":
         return {"lazy_default_printing_by_name": True}
     raise ValueError(f"Unknown benchmark mode: {mode_name}")
+
+
+def render_operational_mode_report(report: OperationalModeReport) -> str:
+    lines = [
+        f"Operational fixtures dir: {report.fixtures_dir}",
+        f"Operational modes: {', '.join(mode_result.mode_name for mode_result in report.mode_results) or 'none'}",
+    ]
+    for mode_result in report.mode_results:
+        summary = mode_result.summary
+        lines.extend(
+            [
+                "",
+                f"Mode: {mode_result.mode_name}",
+                f"  Top-1 accuracy: {summary.top1_accuracy:.3f}",
+                f"  Top-5 accuracy: {summary.top5_accuracy:.3f}",
+                f"  Set accuracy: {summary.set_accuracy:.3f}",
+                f"  Art accuracy: {summary.art_accuracy:.3f}",
+                f"  Average confidence: {summary.average_confidence:.3f}",
+                f"  Average runtime (s): {summary.average_runtime_seconds:.3f}",
+                f"  Calibration error (ECE): {summary.calibration_error:.3f}",
+            ]
+        )
+        if mode_result.implementation_note:
+            lines.append(f"  Note: {mode_result.implementation_note}")
+    return "\n".join(lines)
+
+
+def operational_mode_report_to_json(report: OperationalModeReport) -> dict[str, Any]:
+    return {
+        "fixtures_dir": report.fixtures_dir,
+        "mode_results": [
+            {
+                "mode_name": mode_result.mode_name,
+                "implementation_note": mode_result.implementation_note,
+                "summary": summary_to_json(mode_result.summary),
+            }
+            for mode_result in report.mode_results
+        ],
+    }
 
 
 def _metric_delta(label: str, baseline: float, current: float) -> MetricDelta:
@@ -1104,6 +1378,39 @@ def _format_delta(metric: MetricDelta) -> str:
         f"{metric.baseline:.4f} -> {metric.current:.4f} "
         f"({sign}{metric.delta:.4f})"
     )
+
+
+def _build_small_pool_catalog(
+    full_catalog: LocalCatalogIndex,
+    expected: FixtureExpectation,
+) -> LocalCatalogIndex:
+    if not expected.name:
+        return full_catalog
+    same_name_records = full_catalog.exact_lookup(expected.name)
+    if not same_name_records:
+        return full_catalog
+    return LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name=record.name,
+                normalized_name=record.normalized_name,
+                set_code=record.set_code,
+                collector_number=record.collector_number,
+                layout=record.layout,
+                type_line=record.type_line,
+                oracle_text=record.oracle_text,
+                flavor_text=record.flavor_text,
+                image_uri=record.image_uri,
+                aliases=list(record.aliases or []),
+            )
+            for record in same_name_records
+        ]
+    )
+
+
+@lru_cache(maxsize=4)
+def _load_catalog_for_evaluation(db_path: str) -> LocalCatalogIndex:
+    return LocalCatalogIndex.from_sqlite(db_path)
 
 
 def _average_stage_timings(evaluations: list[FixtureEvaluation]) -> dict[str, float]:

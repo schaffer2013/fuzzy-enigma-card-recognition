@@ -29,6 +29,7 @@ def recognize_card(
     progress_callback=None,
     deadline: float | None = None,
     config: EngineConfig | None = None,
+    catalog: LocalCatalogIndex | None = None,
 ) -> RecognitionResult:
     start_time = time.monotonic()
     stage_timings: dict[str, float] = {}
@@ -36,7 +37,10 @@ def recognize_card(
     prepared_image = _timed_call(stage_timings, "prepare_image_input", _prepare_image_input, image)
     config = config or load_engine_config()
     candidate_pool_limit = max(config.candidate_count * 4, config.candidate_count)
-    catalog = _timed_call(stage_timings, "load_catalog", _load_catalog, config.catalog_path)
+    if catalog is None:
+        catalog = _timed_call(stage_timings, "load_catalog", _load_catalog, config.catalog_path)
+    else:
+        stage_timings["load_catalog"] = 0.0
     _notify(progress_callback, "Detecting card bounds...")
     detection = _timed_call(stage_timings, "detect_card", detect_card, prepared_image)
     _persist_saved_detection(prepared_image, detection)
