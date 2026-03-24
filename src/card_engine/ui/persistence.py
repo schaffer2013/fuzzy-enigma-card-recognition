@@ -26,23 +26,24 @@ def save_ui_overrides(
     path: str | Path,
     *,
     manual_quads: dict[Path, Quad],
-    manual_roi_overrides: dict[str, dict[str, RelativeROI]],
+    manual_roi_overrides: dict[str, dict[str, RelativeROI]] | None = None,
 ) -> Path:
     override_path = Path(path)
     override_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
+    payload: dict[str, object] = {
         "manual_quads": {
             str(key): [[point[0], point[1]] for point in value]
             for key, value in manual_quads.items()
         },
-        "manual_roi_overrides": {
+    }
+    if manual_roi_overrides is not None:
+        payload["manual_roi_overrides"] = {
             group_name: {
                 label: list(roi_value)
                 for label, roi_value in group_value.items()
             }
             for group_name, group_value in manual_roi_overrides.items()
-        },
-    }
+        }
     override_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return override_path
 

@@ -5,7 +5,8 @@ class DummyImage:
     shape = (100, 80, 3)
 
 
-def test_normalize_card_returns_canonical_descriptor_and_crops():
+def test_normalize_card_returns_canonical_descriptor_and_crops(monkeypatch):
+    monkeypatch.setattr("card_engine.roi.repo_roi_overrides", lambda config_path=None: {})
     result = normalize_card(
         DummyImage(),
         (8, 12, 63, 88),
