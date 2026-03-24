@@ -112,6 +112,28 @@ result = recognize_card(frame, config=config)
 print(result.best_name, result.confidence)
 ```
 
+Mode-aware API use:
+
+```python
+from card_engine.api import recognize_card
+from card_engine.operational_modes import CandidatePool, ExpectedCard
+
+result = recognize_card(frame, mode="greenfield")
+
+expected = ExpectedCard(name="Lightning Bolt", set_code="M11", collector_number="146")
+result = recognize_card(frame, mode="reevaluation", expected_card=expected)
+
+pool = CandidatePool.from_records(catalog.exact_lookup("Island"))
+result = recognize_card(frame, mode="small_pool", candidate_pool=pool)
+```
+
+Today:
+
+- `default` and `greenfield` are explicit API modes
+- `small_pool` is a real constrained mode
+- `reevaluation` and `confirmation` are available as provisional mode-aware
+  wrappers until their dedicated reranking/scoring semantics land
+
 Thin adapter use:
 
 ```python

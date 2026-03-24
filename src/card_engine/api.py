@@ -14,6 +14,7 @@ from .matcher import match_candidates
 from .models import RecognitionResult
 from .normalize import normalize_card
 from .ocr import run_ocr
+from .operational_modes import CandidatePool, ExpectedCard, resolve_operational_mode
 from .roi import resolve_roi_groups_for_layout
 from .scorer import score_candidates
 from .set_symbol import rerank_candidates_by_set_symbol, should_skip_secondary_ocr
@@ -26,6 +27,9 @@ VISUAL_ONLY_ROIS = {"set_symbol", "art_match"}
 def recognize_card(
     image: Any,
     *,
+    mode: str | None = None,
+    candidate_pool: CandidatePool | LocalCatalogIndex | None = None,
+    expected_card: ExpectedCard | None = None,
     progress_callback=None,
     deadline: float | None = None,
     config: EngineConfig | None = None,
@@ -39,9 +43,18 @@ def recognize_card(
     config = config or load_engine_config()
     candidate_pool_limit = max(config.candidate_count * 4, config.candidate_count)
     if catalog is None:
-        catalog = _timed_call(stage_timings, "load_catalog", _load_catalog, config.catalog_path)
+        full_catalog = _timed_call(stage_timings, "load_catalog", _load_catalog, config.catalog_path)
     else:
+        full_catalog = catalog
         stage_timings["load_catalog"] = 0.0
+    resolved_mode = resolve_operational_mode(
+        full_catalog,
+        mode=mode,
+        candidate_pool=candidate_pool,
+        expected_card=expected_card,
+    )
+    catalog = resolved_mode.catalog
+    skip_secondary_ocr = skip_secondary_ocr or resolved_mode.skip_secondary_ocr
     _notify(progress_callback, "Detecting card bounds...")
     detection = _timed_call(stage_timings, "detect_card", detect_card, prepared_image)
     _persist_saved_detection(prepared_image, detection)
@@ -250,6 +263,14 @@ def recognize_card(
             },
             "set_symbol": set_symbol_debug,
             "art_match": art_match_debug,
+            "mode": {
+                "requested": resolved_mode.requested_mode,
+                "effective": resolved_mode.effective_mode,
+                "candidate_count": len(catalog.records),
+                "has_expected_card": expected_card is not None,
+                "has_candidate_pool": candidate_pool is not None,
+                "implementation_note": resolved_mode.implementation_note,
+            },
             "timings": stage_timings,
         },
     )

@@ -22,6 +22,7 @@ from .eval_pair_store import (
     SimulatedPairStore,
     build_observed_card_id,
 )
+from .operational_modes import expected_card_from_values
 from .utils.image_io import LoadedImage, load_image
 
 SUPPORTED_SUFFIXES = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
@@ -378,14 +379,14 @@ def fixture_evaluator_for_operational_mode(
     mode_name: str,
 ) -> tuple[Callable[..., FixtureEvaluation], str | None]:
     if mode_name == "greenfield":
-        return evaluate_fixture, None
+        return evaluate_fixture_greenfield, None
     if mode_name == "reevaluation":
-        return evaluate_fixture, "Uses the greenfield path until expectation-aware reranking lands."
+        return evaluate_fixture_reevaluation, "Uses the greenfield path until expectation-aware reranking lands."
     if mode_name == "small_pool":
         return evaluate_fixture_small_pool, None
     if mode_name == "confirmation":
         return (
-            evaluate_fixture_small_pool,
+            evaluate_fixture_confirmation,
             "Uses the small-pool path until a dedicated confirmation scorer lands.",
         )
     raise ValueError(f"Unknown operational mode: {mode_name}")
@@ -460,6 +461,22 @@ def evaluate_fixture(
     )
 
 
+def evaluate_fixture_greenfield(
+    path: str | Path,
+    *,
+    deadline: float | None = None,
+    config: EngineConfig | None = None,
+    pair_store: SimulatedPairStore | None = None,
+) -> FixtureEvaluation:
+    return evaluate_fixture_with_mode(
+        path,
+        mode="greenfield",
+        deadline=deadline,
+        config=config,
+        pair_store=pair_store,
+    )
+
+
 def evaluate_fixture_small_pool(
     path: str | Path,
     *,
@@ -470,17 +487,84 @@ def evaluate_fixture_small_pool(
     fixture_path = Path(path)
     loaded_image = load_image(fixture_path)
     expected = infer_fixture_expectation(loaded_image)
-    config = config or load_engine_config()
-    full_catalog = _load_catalog_for_evaluation(config.catalog_path)
-    constrained_catalog = _build_small_pool_catalog(full_catalog, expected)
     started_at = time.monotonic()
     result = _call_with_supported_kwargs(
         recognize_card,
         loaded_image,
+        mode="small_pool",
+        expected_card=expected_card_from_values(
+            name=expected.name,
+            set_code=expected.set_code,
+            collector_number=expected.collector_number,
+        ),
+        deadline=deadline,
+        config=config or load_engine_config(),
+    )
+    runtime_seconds = round(time.monotonic() - started_at, 4)
+    return _build_fixture_evaluation(
+        fixture_path=fixture_path,
+        expected=expected,
+        result=result,
+        runtime_seconds=runtime_seconds,
+        pair_store=pair_store,
+    )
+
+
+def evaluate_fixture_reevaluation(
+    path: str | Path,
+    *,
+    deadline: float | None = None,
+    config: EngineConfig | None = None,
+    pair_store: SimulatedPairStore | None = None,
+) -> FixtureEvaluation:
+    return evaluate_fixture_with_mode(
+        path,
+        mode="reevaluation",
         deadline=deadline,
         config=config,
-        catalog=constrained_catalog,
-        skip_secondary_ocr=True,
+        pair_store=pair_store,
+    )
+
+
+def evaluate_fixture_confirmation(
+    path: str | Path,
+    *,
+    deadline: float | None = None,
+    config: EngineConfig | None = None,
+    pair_store: SimulatedPairStore | None = None,
+) -> FixtureEvaluation:
+    return evaluate_fixture_with_mode(
+        path,
+        mode="confirmation",
+        deadline=deadline,
+        config=config,
+        pair_store=pair_store,
+    )
+
+
+def evaluate_fixture_with_mode(
+    path: str | Path,
+    *,
+    mode: str,
+    deadline: float | None = None,
+    config: EngineConfig | None = None,
+    pair_store: SimulatedPairStore | None = None,
+) -> FixtureEvaluation:
+    fixture_path = Path(path)
+    loaded_image = load_image(fixture_path)
+    expected = infer_fixture_expectation(loaded_image)
+    started_at = time.monotonic()
+    result = _call_with_supported_kwargs(
+        recognize_card,
+        loaded_image,
+        mode=mode,
+        expected_card=expected_card_from_values(
+            name=expected.name,
+            set_code=expected.set_code,
+            collector_number=expected.collector_number,
+        ),
+        deadline=deadline,
+        config=config or load_engine_config(),
     )
     runtime_seconds = round(time.monotonic() - started_at, 4)
     return _build_fixture_evaluation(
