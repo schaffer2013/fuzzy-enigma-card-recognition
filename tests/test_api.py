@@ -4,6 +4,7 @@ import numpy
 
 from card_engine.api import recognize_card
 from card_engine.catalog.local_index import CatalogRecord, LocalCatalogIndex
+from card_engine.models import Candidate
 from card_engine.ocr import OCRResult
 from card_engine.operational_modes import CandidatePool, ExpectedCard
 from card_engine.ui.app import EditableLoadedImage
@@ -387,7 +388,82 @@ def test_recognize_card_reevaluation_requires_expected_card(monkeypatch):
         raise AssertionError("Expected reevaluation mode to require expected_card")
 
 
-def test_recognize_card_confirmation_reports_provisional_mode_note(monkeypatch):
+def test_recognize_card_reevaluation_can_promote_close_expected_card(monkeypatch):
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        return OCRResult(
+            lines=["Opt"] if roi_label == "standard" else [],
+            confidence=0.95,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    def fake_match_candidates(*args, **kwargs):
+        return [
+            Candidate(name="Opt", score=0.91, set_code="XLN", collector_number="65", notes=["exact"]),
+            Candidate(name="Opt", score=0.87, set_code="M11", collector_number="73", notes=["exact", "set_symbol_match"]),
+        ]
+
+    def fake_set_symbol_rerank(candidates, **kwargs):
+        return type("Result", (), {"candidates": list(candidates), "debug": {"used": False}})()
+
+    def fake_art_rerank(candidates, **kwargs):
+        return type("Result", (), {"candidates": list(candidates), "debug": {"used": False}})()
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api.match_candidates", fake_match_candidates)
+    monkeypatch.setattr("card_engine.api.rerank_candidates_by_set_symbol", fake_set_symbol_rerank)
+    monkeypatch.setattr("card_engine.api.rerank_candidates_by_art", fake_art_rerank)
+
+    result = recognize_card(
+        DummyImage(),
+        mode="reevaluation",
+        expected_card=ExpectedCard(name="Opt", set_code="M11", collector_number="73"),
+    )
+
+    assert result.best_name == "Opt"
+    assert result.top_k_candidates[0].set_code == "M11"
+    assert result.debug["mode"]["requested"] == "reevaluation"
+    assert result.debug["mode"]["effective"] == "reevaluation"
+    assert result.debug["expectation"]["promoted"] is True
+    assert result.debug["expectation"]["agrees_with_expected"] is True
+
+
+def test_recognize_card_reevaluation_can_disagree_when_expected_is_weak(monkeypatch):
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        return OCRResult(
+            lines=["Opt"] if roi_label == "standard" else [],
+            confidence=0.95,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    def fake_match_candidates(*args, **kwargs):
+        return [
+            Candidate(name="Opt", score=0.93, set_code="XLN", collector_number="65", notes=["exact", "set_symbol_match"]),
+            Candidate(name="Opt", score=0.62, set_code="M11", collector_number="73", notes=["exact"]),
+        ]
+
+    def fake_set_symbol_rerank(candidates, **kwargs):
+        return type("Result", (), {"candidates": list(candidates), "debug": {"used": False}})()
+
+    def fake_art_rerank(candidates, **kwargs):
+        return type("Result", (), {"candidates": list(candidates), "debug": {"used": False}})()
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api.match_candidates", fake_match_candidates)
+    monkeypatch.setattr("card_engine.api.rerank_candidates_by_set_symbol", fake_set_symbol_rerank)
+    monkeypatch.setattr("card_engine.api.rerank_candidates_by_art", fake_art_rerank)
+
+    result = recognize_card(
+        DummyImage(),
+        mode="reevaluation",
+        expected_card=ExpectedCard(name="Opt", set_code="M11", collector_number="73"),
+    )
+
+    assert result.top_k_candidates[0].set_code == "XLN"
+    assert result.debug["expectation"]["promoted"] is False
+    assert result.debug["expectation"]["agrees_with_expected"] is False
+
+
+def test_recognize_card_confirmation_scores_expected_printing_directly(monkeypatch):
     def fake_run_ocr(image, roi_label=None, *, crop_region=None):
         return OCRResult(
             lines=["Island"] if roi_label == "standard" else [],
@@ -402,8 +478,23 @@ def test_recognize_card_confirmation_reports_provisional_mode_note(monkeypatch):
         ]
     )
 
+    def fake_match_candidates(*args, **kwargs):
+        return [
+            Candidate(name="Island", score=0.89, set_code="M21", collector_number="264", notes=["exact", "set_symbol_match"]),
+            Candidate(name="Island", score=0.85, set_code="ELD", collector_number="254", notes=["exact"]),
+        ]
+
+    def fake_set_symbol_rerank(candidates, **kwargs):
+        return type("Result", (), {"candidates": list(candidates), "debug": {"used": True}})()
+
+    def fake_art_rerank(candidates, **kwargs):
+        return type("Result", (), {"candidates": list(candidates), "debug": {"used": False}})()
+
     monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
     monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: full_catalog)
+    monkeypatch.setattr("card_engine.api.match_candidates", fake_match_candidates)
+    monkeypatch.setattr("card_engine.api.rerank_candidates_by_set_symbol", fake_set_symbol_rerank)
+    monkeypatch.setattr("card_engine.api.rerank_candidates_by_art", fake_art_rerank)
 
     result = recognize_card(
         DummyImage(),
@@ -413,8 +504,11 @@ def test_recognize_card_confirmation_reports_provisional_mode_note(monkeypatch):
 
     assert result.best_name == "Island"
     assert result.debug["mode"]["requested"] == "confirmation"
-    assert result.debug["mode"]["effective"] == "small_pool"
-    assert "dedicated confirmation scorer" in result.debug["mode"]["implementation_note"]
+    assert result.debug["mode"]["effective"] == "confirmation"
+    assert result.debug["confirmation"]["used"] is True
+    assert result.debug["confirmation"]["matches_expected"] is True
+    assert result.debug["confirmation"]["expected_rank"] == 1
+    assert result.confidence > 0.9
 
 
 def test_recognize_card_keeps_wider_candidate_pool_before_final_top_k(monkeypatch):

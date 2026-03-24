@@ -381,13 +381,13 @@ def fixture_evaluator_for_operational_mode(
     if mode_name == "greenfield":
         return evaluate_fixture_greenfield, None
     if mode_name == "reevaluation":
-        return evaluate_fixture_reevaluation, "Uses the greenfield path until expectation-aware reranking lands."
+        return evaluate_fixture_reevaluation, "Biases the expected card while still allowing disagreement recovery."
     if mode_name == "small_pool":
         return evaluate_fixture_small_pool, None
     if mode_name == "confirmation":
         return (
             evaluate_fixture_confirmation,
-            "Uses the small-pool path until a dedicated confirmation scorer lands.",
+            "Scores agreement with the expected printing and surfaces the strongest contradiction.",
         )
     raise ValueError(f"Unknown operational mode: {mode_name}")
 

@@ -44,7 +44,8 @@ Milestone 9 closeout status:
 
 - paper-name accuracy and confidence validation on larger unseen random samples
 - repo-committed ROI tuning and stage-level benchmark reporting
-- repeatable operational validation for `greenfield` and provisional `small_pool`
+- repeatable operational validation for `greenfield`, `small_pool`,
+  `reevaluation`, and `confirmation`
 
 Still ahead:
 
@@ -131,8 +132,9 @@ Today:
 
 - `default` and `greenfield` are explicit API modes
 - `small_pool` is a real constrained mode
-- `reevaluation` and `confirmation` are available as provisional mode-aware
-  wrappers until their dedicated reranking/scoring semantics land
+- `reevaluation` biases the expected card while still allowing disagreement
+  recovery
+- `confirmation` returns expected-printing confidence plus contradiction details
 
 Session/tracked-pool use:
 
@@ -150,8 +152,8 @@ session.add_expected_card(ExpectedCard(name="Island", set_code="M21", collector_
 session.clear_tracked_pool()
 ```
 
-Today the tracked pool lives in the engine/session layer. Adapter-level hooks
-for sorter workflows are the next Milestone 10 step.
+The tracked pool now lives in the engine/session layer and is exposed through
+the sorter adapter.
 
 Thin adapter use:
 
@@ -394,8 +396,7 @@ Important paths:
 
 Current limitations worth knowing before parent-project adoption:
 
-- constrained operational modes such as small-pool, re-evaluation, and
-  confirmation are planned but not finished
+- deeper refinement of mode-specific confidence semantics is still in progress
 - the adapter surface is intentionally thin and currently only returns card
   name plus confidence
 - Milestone 8 integration docs and example configuration are still being

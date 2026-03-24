@@ -87,6 +87,10 @@ Practical intent:
 - inspect that pool from the parent project
 - seed known expected cards directly when a sorter already knows a pile's scope
 - switch to `small_pool` when repeated scans are known to come from that pool
+- use `reevaluation` when you want to bias a known expected card but still let
+  the engine disagree
+- use `confirmation` when you want a confidence score that a specific expected
+  printing is correct
 
 The adapter intentionally does not expose UI-specific concepts. It is meant to
 be the sorter/workflow hook only.

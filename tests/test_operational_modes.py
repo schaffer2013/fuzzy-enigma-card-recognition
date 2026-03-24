@@ -42,7 +42,7 @@ def test_resolve_operational_mode_uses_candidate_pool_for_small_pool():
     assert resolved.catalog.records[0].name == "Forest"
 
 
-def test_resolve_operational_mode_marks_reevaluation_as_provisional():
+def test_resolve_operational_mode_configures_real_reevaluation_mode():
     catalog = LocalCatalogIndex.from_records(
         [
             CatalogRecord(name="Opt", normalized_name="", set_code="XLN", collector_number="65", layout="normal"),
@@ -56,5 +56,5 @@ def test_resolve_operational_mode_marks_reevaluation_as_provisional():
     )
 
     assert resolved.requested_mode == "reevaluation"
-    assert resolved.effective_mode == "greenfield"
-    assert "expectation-aware reranking" in resolved.implementation_note
+    assert resolved.effective_mode == "reevaluation"
+    assert "disagreement recovery" in resolved.implementation_note
