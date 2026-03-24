@@ -161,6 +161,31 @@ class LocalCatalogIndex:
         ranked.sort(key=lambda match: (-match.score, match.record.name))
         return ranked[:limit]
 
+    def find_record(
+        self,
+        *,
+        name: str,
+        set_code: str | None = None,
+        collector_number: str | None = None,
+    ) -> CatalogRecord | None:
+        normalized_name = normalize_text(name)
+        matches = self._by_normalized_name.get(normalized_name, [])
+        if not matches:
+            return None
+
+        if set_code is None and collector_number is None:
+            return matches[0] if len(matches) == 1 else None
+
+        normalized_set_code = (set_code or "").lower()
+        normalized_collector = str(collector_number).lower() if collector_number is not None else ""
+        for record in matches:
+            if set_code is not None and (record.set_code or "").lower() != normalized_set_code:
+                continue
+            if collector_number is not None and str(record.collector_number or "").lower() != normalized_collector:
+                continue
+            return record
+        return None
+
 
 def _fuzzy_score(query: str, candidate: str) -> float:
     ratio = SequenceMatcher(None, query, candidate).ratio()

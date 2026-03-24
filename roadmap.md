@@ -962,8 +962,8 @@ Recommended early implementation order:
 - [ ] Re-evaluation mode.
 - [x] Small-pool recognition mode.
 - [ ] Confirmation / expected-printing scoring mode.
-- [ ] Tracked pool abstraction and lifecycle management.
-- [ ] Clear/reset tracked-pool action.
+- [x] Tracked pool abstraction and lifecycle management.
+- [x] Clear/reset tracked-pool action.
 - [x] Shared mode-aware candidate generation interfaces.
 - [ ] Adapter and UI hooks for supplying expected cards or constrained pools.
 - [ ] Benchmarks comparing full-catalog versus constrained-pool runs.
@@ -976,6 +976,9 @@ Recommended early implementation order:
 - `default` and `greenfield` are formalized as explicit API modes.
 - `small_pool` is now a first-class constrained mode in the API rather than
   only an evaluation helper.
+- A `RecognitionSession` abstraction now owns a tracked pool with inspect,
+  add, and clear operations, so session-backed workflows no longer need to
+  manage pool state ad hoc in the caller.
 - `reevaluation` and `confirmation` are exposed as provisional wrappers so the
   API shape is in place before their dedicated semantics land.
 

@@ -134,6 +134,25 @@ Today:
 - `reevaluation` and `confirmation` are available as provisional mode-aware
   wrappers until their dedicated reranking/scoring semantics land
 
+Session/tracked-pool use:
+
+```python
+from card_engine.operational_modes import ExpectedCard
+from card_engine.session import RecognitionSession
+
+session = RecognitionSession(auto_track_results=True)
+
+result = session.recognize(frame, mode="greenfield")
+pool = session.get_tracked_pool()
+
+result = session.recognize(frame, mode="small_pool")
+session.add_expected_card(ExpectedCard(name="Island", set_code="M21", collector_number="264"))
+session.clear_tracked_pool()
+```
+
+Today the tracked pool lives in the engine/session layer. Adapter-level hooks
+for sorter workflows are the next Milestone 10 step.
+
 Thin adapter use:
 
 ```python
