@@ -359,6 +359,14 @@ The engine uses a local SQLite catalog. On demand, it can:
 Catalog maintenance lives in
 [maintenance.py](src/card_engine/catalog/maintenance.py).
 
+The offline catalog is now structured around:
+
+- `oracle_cards` for rules-level card identity keyed by `oracle_id`
+- `printed_cards` for exact printings keyed by `scryfall_id`
+
+The current recognizer still reads through a compatibility view so the storage
+layer can evolve without forcing a full matcher rewrite at the same time.
+
 Default paths:
 
 - SQLite catalog: `data/catalog/cards.sqlite3`

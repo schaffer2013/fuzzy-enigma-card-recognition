@@ -116,6 +116,15 @@ Recommended ownership split:
 
 This avoids dirty submodule state during normal operation.
 
+The local SQLite catalog is fully offline and is now moving toward a normalized
+shape with:
+
+- `oracle_cards` for Oracle-level identity and shared card properties
+- `printed_cards` for exact printings and printing-specific metadata
+
+That split is meant to make parent-side querying easier when the parent wants
+either exact printings or grouped same-card identities.
+
 ## First-Run Side Effects
 
 The first recognition call may be noticeably slower than later calls.

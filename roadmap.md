@@ -1048,6 +1048,39 @@ Recommended early implementation order:
 - At least one measured optimization pass has reduced real benchmark latency on
   representative fixtures.
 
+### Milestone 12: Offline Catalog Query Layer
+
+**Status**
+
+- [ ] Direct query helpers for `oracle_cards`.
+- [ ] Direct query helpers for `printed_cards`.
+- [ ] Parent-facing guidance on when to use `oracle_id` versus `scryfall_id`.
+- [ ] Decide which offline catalog fields should flow into parent-facing query
+  and adapter surfaces.
+- [ ] Lightweight offline inspection/query script for parent-side debugging.
+- [ ] Keep catalog/query scope focused on non-digital paper printings.
+
+**Deliverables**
+
+- Query helpers that can address Oracle-level identity and exact-printing
+  identity separately without relying only on the compatibility view.
+- A documented mapping between `oracle_cards` and `printed_cards`.
+- Parent-facing guidance for exact-printing lookups versus grouped same-card
+  queries.
+- A small offline inspection/query entry point for local debugging and parent
+  integration work.
+
+**Exit Criteria**
+
+- Parent applications can query exact printings and grouped Oracle identities
+  fully offline.
+- The normalized catalog shape is exposed intentionally rather than only as an
+  internal storage detail.
+- Parent-facing APIs and docs clearly explain which identifiers and fields are
+  stable integration points.
+- The offline query surface remains scoped to paper-relevant cards and
+  printings.
+
 ---
 
 ## Testing Strategy

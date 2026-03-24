@@ -2,6 +2,7 @@ import sqlite3
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
+import json
 
 from card_engine.utils.text_normalize import normalize_text
 
@@ -12,12 +13,19 @@ class CatalogRecord:
     normalized_name: str
     scryfall_id: str | None = None
     oracle_id: str | None = None
+    mana_cost: str | None = None
+    colors: tuple[str, ...] = ()
+    color_identity: tuple[str, ...] = ()
     set_code: str | None = None
     collector_number: str | None = None
+    rarity: str | None = None
     layout: str | None = None
     type_line: str | None = None
     oracle_text: str | None = None
     flavor_text: str | None = None
+    artist: str | None = None
+    released_at: str | None = None
+    games: tuple[str, ...] = ()
     image_uri: str | None = None
     aliases: list[str] | None = None
 
@@ -37,12 +45,19 @@ class LocalCatalogIndex:
                 normalized_name=normalize_text(record.normalized_name or record.name),
                 scryfall_id=record.scryfall_id.strip() if record.scryfall_id else None,
                 oracle_id=record.oracle_id.strip() if record.oracle_id else None,
+                mana_cost=record.mana_cost.strip() if record.mana_cost else None,
+                colors=tuple(record.colors or ()),
+                color_identity=tuple(record.color_identity or ()),
                 set_code=record.set_code,
                 collector_number=record.collector_number,
+                rarity=record.rarity.strip() if record.rarity else None,
                 layout=record.layout,
                 type_line=record.type_line.strip() if record.type_line else None,
                 oracle_text=record.oracle_text.strip() if record.oracle_text else None,
                 flavor_text=record.flavor_text.strip() if record.flavor_text else None,
+                artist=record.artist.strip() if record.artist else None,
+                released_at=record.released_at.strip() if record.released_at else None,
+                games=tuple(record.games or ()),
                 image_uri=record.image_uri.strip() if record.image_uri else None,
                 aliases=sorted({alias.strip() for alias in (record.aliases or []) if alias and alias.strip()}),
             )
@@ -74,6 +89,13 @@ class LocalCatalogIndex:
             type_line_select = "cards.type_line" if "type_line" in columns else "NULL"
             oracle_text_select = "cards.oracle_text" if "oracle_text" in columns else "NULL"
             flavor_text_select = "cards.flavor_text" if "flavor_text" in columns else "NULL"
+            mana_cost_select = "cards.mana_cost" if "mana_cost" in columns else "NULL"
+            colors_select = "cards.colors" if "colors" in columns else "'[]'"
+            color_identity_select = "cards.color_identity" if "color_identity" in columns else "'[]'"
+            rarity_select = "cards.rarity" if "rarity" in columns else "NULL"
+            artist_select = "cards.artist" if "artist" in columns else "NULL"
+            released_at_select = "cards.released_at" if "released_at" in columns else "NULL"
+            games_select = "cards.games" if "games" in columns else "'[]'"
             image_uri_select = "cards.image_uri" if "image_uri" in columns else "NULL"
             rows = conn.execute(
                 f"""
@@ -82,12 +104,19 @@ class LocalCatalogIndex:
                     cards.normalized_name,
                     cards.scryfall_id,
                     cards.oracle_id,
+                    {mana_cost_select},
+                    {colors_select},
+                    {color_identity_select},
                     cards.set_code,
                     cards.collector_number,
+                    {rarity_select},
                     cards.layout,
                     {type_line_select},
                     {oracle_text_select},
                     {flavor_text_select},
+                    {artist_select},
+                    {released_at_select},
+                    {games_select},
                     {image_uri_select},
                     GROUP_CONCAT(aliases.alias, '\u001f') AS aliases
                 FROM cards
@@ -98,12 +127,19 @@ class LocalCatalogIndex:
                     cards.normalized_name,
                     cards.scryfall_id,
                     cards.oracle_id,
+                    {mana_cost_select},
+                    {colors_select},
+                    {color_identity_select},
                     cards.set_code,
                     cards.collector_number,
+                    {rarity_select},
                     cards.layout,
                     {type_line_select},
                     {oracle_text_select},
                     {flavor_text_select},
+                    {artist_select},
+                    {released_at_select},
+                    {games_select},
                     {image_uri_select}
                 """
             ).fetchall()
@@ -115,16 +151,23 @@ class LocalCatalogIndex:
                     normalized_name=normalized_name,
                     scryfall_id=scryfall_id,
                     oracle_id=oracle_id,
+                    mana_cost=mana_cost,
+                    colors=_decode_string_list(colors),
+                    color_identity=_decode_string_list(color_identity),
                     set_code=set_code,
                     collector_number=collector_number,
+                    rarity=rarity,
                     layout=layout,
                     type_line=type_line,
                     oracle_text=oracle_text,
                     flavor_text=flavor_text,
+                    artist=artist,
+                    released_at=released_at,
+                    games=_decode_string_list(games),
                     image_uri=image_uri,
                     aliases=aliases.split("\u001f") if aliases else [],
                 )
-                for name, normalized_name, scryfall_id, oracle_id, set_code, collector_number, layout, type_line, oracle_text, flavor_text, image_uri, aliases in rows
+                for name, normalized_name, scryfall_id, oracle_id, mana_cost, colors, color_identity, set_code, collector_number, rarity, layout, type_line, oracle_text, flavor_text, artist, released_at, games, image_uri, aliases in rows
             ]
         )
 
@@ -206,3 +249,15 @@ def _fuzzy_score(query: str, candidate: str) -> float:
 
     prefix_bonus = 0.05 if candidate.startswith(query) or query.startswith(candidate) else 0.0
     return min(0.99, (ratio * 0.75) + (overlap * 0.25) + prefix_bonus)
+
+
+def _decode_string_list(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return ()
+    try:
+        payload = json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return ()
+    if not isinstance(payload, list):
+        return ()
+    return tuple(str(item).strip() for item in payload if str(item).strip())
