@@ -624,13 +624,16 @@ What is effectively done today:
 - [x] Milestone 6 is complete.
 - [ ] Milestone 7 is partially complete.
 - [ ] Milestone 8 is partially complete.
-- [ ] Milestone 9 is partially complete.
+- [x] Milestone 9 is complete.
 - [ ] Milestone 10 is not started.
 - [ ] Milestone 11 is partially complete.
 
 Recommended next step:
 
-- Continue **Milestone 9: Accuracy and Hardening** by turning the repeated expected-vs-actual benchmark mismatches into regression fixtures, tuning confidence on larger unseen samples, and improving printing-level cropping and tie-breaking before starting Milestone 10 constrained modes.
+- Start **Milestone 10: Operational Recognition Modes** by formalizing the
+  mode-aware API surface and tracked-pool semantics, while using the current
+  benchmark harness from Milestone 11 to keep constrained-mode speedups
+  measurable.
 
 ### Implementation Sequencing Adjustment
 
@@ -869,16 +872,16 @@ Recommended early implementation order:
 **Status**
 
 - [x] Fixture-based evaluation tool.
-- [ ] Confidence calibration tuning and validation on larger unseen samples.
-- [ ] Better tie-breaking from non-collector OCR regions.
+- [x] Confidence calibration tuning and validation on larger unseen samples.
+- [x] Better tie-breaking from non-collector OCR regions.
 - [x] Set-symbol ROI hash tie-breaker for near-equal top candidates.
 - [x] Art-region fingerprint tie-breaker for same-name printings when set symbols are weak.
 - [x] Fast-path skip of secondary OCR when title plus set-symbol evidence is already confident enough.
-- [ ] Fallback title OCR path for split cards and other nonstandard title placements.
-- [ ] Improved region cropping.
+- Deferred beyond Milestone 9: fallback title OCR path for split cards and other nonstandard title placements.
+- [x] Improved region cropping.
 - [x] Lightweight per-stage timing in eval/debug output.
 - [x] Documented extension points for image hashing in v2.
-- [ ] Lightweight profiling and benchmark write-up for current pipeline stages.
+- [x] Lightweight profiling and benchmark write-up for current pipeline stages.
 
 **Current Progress Notes**
 
@@ -889,21 +892,27 @@ Recommended early implementation order:
   still useful but is treated as secondary unless it harms name-level
   recognition quality.
 - Confidence-calibration reporting is in place, including confidence bins and
-  expected calibration error (ECE), but the remaining work is to validate and
-  tune confidence on larger unseen random samples.
+  expected calibration error (ECE), and the closeout validation on a fresh
+  66-card paper-English random sample held `1.000` top-1 name accuracy with
+  `0.021` ECE, which did not justify a confidence-threshold rebalance.
 - Same-name printing tie-breaking is materially improved through set-symbol and
   art-region visual comparisons plus a fast path that skips secondary OCR when
   title and visual evidence are already strong.
+- Repo-committed ROI tuning now serves as the source of truth for region
+  cropping, and that closeout pass is sufficient for Milestone 9's current
+  name-first paper-recognition goals.
 - Split cards and some nonstandard print layouts still need a dedicated
-  fallback title OCR path instead of relying only on the normal title band.
+  fallback title OCR path instead of relying only on the normal title band,
+  but that work is explicitly deferred beyond Milestone 9.
 - Pathological long-running cases are now bounded by deadline-aware recognition,
   capped visual tie-break work, and download timeouts, and the repo now exposes
   lightweight stage-level timing visibility in both recognition debug output and
   eval summaries.
 - The benchmark workflow now supports saved-summary comparisons, all-mode runs
   against the same fixture set, simulated expected-vs-actual pair tracking, and
-  ETA reporting for long runs. The remaining performance work is a concise
-  benchmark write-up plus targeted optimizations from the measured bottlenecks.
+  ETA reporting for long runs. The Milestone 9 closeout benchmark write-up now
+  captures the main bottleneck explicitly: `secondary_ocr` still dominates
+  runtime relative to detection and normalization.
 - Hash-related ROI bounds now live in a committed repo config, and
   reference-image visual caches are invalidated automatically when those
   specific ROI bounds change.
@@ -916,7 +925,6 @@ Recommended early implementation order:
 - Set-symbol ROI hash tie-breaker for near-equal top candidates.
 - Art-region fingerprint tie-breaker for same-name printings when set symbols are weak.
 - Fast-path skip of secondary OCR when title plus set-symbol evidence is already confident enough.
-- Fallback title OCR path for split cards and other nonstandard title placements.
 - Improved region cropping.
 - Lightweight per-stage timing in eval/debug output.
 - Documented extension points for image hashing in v2.
@@ -942,6 +950,8 @@ Recommended early implementation order:
 - Recognition runtime is bounded on pathological same-name pools, and those
   bounds are reflected in lightweight timing output plus benchmark notes.
 - v2 path for visual fingerprinting is defined without affecting v1 simplicity.
+- Split-card title fallback is tracked as future expansion rather than a
+  blocker for Milestone 9 closeout.
 
 ### Milestone 10: Operational Recognition Modes
 
