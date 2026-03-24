@@ -91,6 +91,25 @@ Practical intent:
 The adapter intentionally does not expose UI-specific concepts. It is meant to
 be the sorter/workflow hook only.
 
+There is also a ready-to-run example script:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\example_sorter_session.py
+```
+
+If you want to force a constrained example, seed the tracked pool first:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\example_sorter_session.py `
+  --mode small_pool `
+  --seed-expected-name Island `
+  --seed-expected-set M21 `
+  --seed-expected-collector 264
+```
+
+The script will auto-pick a sample fixture when possible, or you can pass
+`--image path\to\card.png` explicitly.
+
 ## Main Window
 
 There is one page today: the main debug window.

@@ -176,6 +176,26 @@ output = recognizer.recognize_top_card(frame, mode="small_pool")
 recognizer.clear_tracked_pool()
 ```
 
+Ready-to-run example:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\example_sorter_session.py
+```
+
+That example auto-picks a sample fixture if you do not pass `--image`, runs the
+sorter adapter in `greenfield` mode, and prints the tracked-pool state before
+and after recognition.
+
+You can also exercise constrained behavior directly:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\example_sorter_session.py `
+  --mode small_pool `
+  --seed-expected-name Island `
+  --seed-expected-set M21 `
+  --seed-expected-collector 264
+```
+
 Current adapter contract:
 
 - input: a frame-like object or image path accepted by `recognize_card(...)`
