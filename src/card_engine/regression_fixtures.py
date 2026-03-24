@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .eval_pair_store import DEFAULT_SIMULATED_PAIR_DB_PATH, build_observed_card_id
-from .evaluation import discover_fixture_paths, infer_fixture_expectation
+from .evaluation import discover_fixture_paths, infer_fixture_expectation, is_paper_expectation
 from .utils.image_io import load_image
 
 
@@ -184,6 +184,8 @@ def build_expected_fixture_index(fixtures_dir: str | Path) -> dict[str, Path]:
     index: dict[str, Path] = {}
     for path in discover_fixture_paths(fixtures_dir):
         expectation = infer_fixture_expectation(load_image(path))
+        if not is_paper_expectation(expectation):
+            continue
         expected_card_id = build_observed_card_id(
             name=expectation.name,
             set_code=expectation.set_code,

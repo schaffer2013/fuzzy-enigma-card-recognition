@@ -20,6 +20,7 @@ from card_engine.evaluation import (
     fixture_evaluator_for_operational_mode,
     infer_expected_name,
     infer_fixture_expectation,
+    is_paper_expectation,
     FixtureEvaluation,
     FixtureExpectation,
     load_summary_json,
@@ -78,6 +79,28 @@ def test_infer_fixture_expectation_reads_set_and_collector_from_sidecar(tmp_path
     assert expectation.name == "Jade Avenger"
     assert expectation.set_code == "mh2"
     assert expectation.collector_number == "167"
+
+
+def test_infer_fixture_expectation_reads_expected_games_from_sidecar(tmp_path):
+    image_path = tmp_path / "baffling-defenses-c4df2846.png"
+    image_path.write_bytes(_minimal_png(width=80, height=100))
+    image_path.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "expected_name": "Baffling Defenses",
+                "expected_set_code": "j21",
+                "expected_collector_number": "2",
+                "expected_games": ["arena"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    image = load_image(image_path)
+    expectation = infer_fixture_expectation(image)
+
+    assert expectation.games == ("arena",)
+    assert is_paper_expectation(expectation) is False
 
 
 def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp_path):
@@ -176,6 +199,70 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
     assert payload["calibration_error"] == 0.23
     assert payload["calibration_bins"][0]["lower_bound"] == 0.6
     assert payload["calibration_bins"][1]["upper_bound"] == 1.0
+
+
+def test_evaluate_fixture_set_excludes_nonpaper_fixtures_from_scored_metrics(monkeypatch, tmp_path):
+    paper_fixture = tmp_path / "opt-paper.png"
+    digital_fixture = tmp_path / "baffling-defenses-digital.png"
+    paper_fixture.write_bytes(_minimal_png(width=80, height=100))
+    digital_fixture.write_bytes(_minimal_png(width=80, height=100))
+    paper_fixture.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "expected_name": "Opt",
+                "expected_set_code": "inv",
+                "expected_collector_number": "64",
+                "expected_games": ["paper"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    digital_fixture.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "expected_name": "Baffling Defenses",
+                "expected_set_code": "j21",
+                "expected_collector_number": "2",
+                "expected_games": ["arena"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    predictions = {
+        "opt-paper.png": RecognitionResult(
+            bbox=(0, 0, 80, 100),
+            best_name="Opt",
+            confidence=0.9,
+            top_k_candidates=[Candidate(name="Opt", score=0.9, set_code="inv", collector_number="64")],
+            active_roi="standard",
+            tried_rois=["standard"],
+        ),
+        "baffling-defenses-digital.png": RecognitionResult(
+            bbox=(0, 0, 80, 100),
+            best_name="Flourishing Defenses",
+            confidence=0.5,
+            top_k_candidates=[Candidate(name="Flourishing Defenses", score=0.5, set_code="shm", collector_number="114")],
+            active_roi="standard",
+            tried_rois=["standard"],
+        ),
+    }
+
+    monkeypatch.setattr("card_engine.evaluation.recognize_card", lambda image, *, deadline=None, config=None, catalog=None, skip_secondary_ocr=False: predictions[image.path.name])
+
+    db_path = tmp_path / "pairs.sqlite3"
+    with SimulatedPairStore(db_path) as pair_store:
+        summary = evaluate_fixture_set(tmp_path, pair_store=pair_store)
+
+    assert summary.fixture_count == 2
+    assert summary.scored_count == 1
+    assert summary.set_scored_count == 1
+    assert summary.art_scored_count == 1
+    assert summary.top1_accuracy == 1.0
+    assert summary.error_classes["out_of_scope_nonpaper"] == 1
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute("SELECT expected_card_id, actual_card_id FROM simulated_card_pairs").fetchall()
+    assert rows == [("printing:inv:64", "printing:inv:64")]
 
 
 def test_build_random_sample_fetches_until_time_limit(monkeypatch, tmp_path):

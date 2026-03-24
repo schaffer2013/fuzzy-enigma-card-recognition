@@ -49,6 +49,7 @@ class FixtureExpectation:
     name: str | None
     set_code: str | None
     collector_number: str | None
+    games: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,8 @@ class FixtureEvaluation:
     error_class: str
     runtime_seconds: float = 0.0
     stage_timings: dict[str, float] = field(default_factory=dict)
+    expected_games: list[str] = field(default_factory=list)
+    expected_is_paper: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -390,12 +393,13 @@ def fixture_evaluator_for_operational_mode(
 
 def _summarize_evaluations(evaluations: list[FixtureEvaluation]) -> EvaluationSummary:
     fixture_count = len(evaluations)
-    scored = [evaluation for evaluation in evaluations if evaluation.expected_name]
-    set_scored = [evaluation for evaluation in evaluations if evaluation.expected_set_code]
+    scored = [evaluation for evaluation in evaluations if evaluation.expected_name and _is_paper_fixture(evaluation)]
+    set_scored = [evaluation for evaluation in evaluations if evaluation.expected_set_code and _is_paper_fixture(evaluation)]
     art_scored = [
         evaluation
         for evaluation in evaluations
         if evaluation.expected_set_code and evaluation.expected_collector_number
+        and _is_paper_fixture(evaluation)
     ]
     scored_count = len(scored)
     set_scored_count = len(set_scored)
@@ -516,15 +520,16 @@ def _build_fixture_evaluation(
         and predicted_set_code.lower() == expected.set_code.lower()
         and str(predicted_collector_number).lower() == str(expected.collector_number).lower()
     )
-    _record_simulated_pair(
-        pair_store,
-        expected_name=expected.name,
-        expected_set_code=expected.set_code,
-        expected_collector_number=expected.collector_number,
-        predicted_name=result.best_name,
-        predicted_set_code=predicted_set_code,
-        predicted_collector_number=predicted_collector_number,
-    )
+    if is_paper_expectation(expected):
+        _record_simulated_pair(
+            pair_store,
+            expected_name=expected.name,
+            expected_set_code=expected.set_code,
+            expected_collector_number=expected.collector_number,
+            predicted_name=result.best_name,
+            predicted_set_code=predicted_set_code,
+            predicted_collector_number=predicted_collector_number,
+        )
 
     return FixtureEvaluation(
         path=str(fixture_path),
@@ -547,6 +552,7 @@ def _build_fixture_evaluation(
             expected_name=expected.name,
             expected_set_code=expected.set_code,
             expected_collector_number=expected.collector_number,
+            expected_is_paper=is_paper_expectation(expected),
             predicted_name=result.best_name,
             predicted_set_code=predicted_set_code,
             predicted_collector_number=predicted_collector_number,
@@ -554,6 +560,8 @@ def _build_fixture_evaluation(
         ),
         runtime_seconds=stage_timings.get("total", runtime_seconds),
         stage_timings=stage_timings,
+        expected_games=list(expected.games),
+        expected_is_paper=is_paper_expectation(expected),
     )
 
 
@@ -566,6 +574,7 @@ def infer_fixture_expectation(image: LoadedImage) -> FixtureExpectation:
     expected_name = _coerce_string(payload.get("expected_name"))
     expected_set_code = _coerce_string(payload.get("expected_set_code"))
     expected_collector_number = _coerce_string(payload.get("expected_collector_number"))
+    expected_games = _coerce_string_list(payload.get("expected_games"))
 
     if expected_name is None:
         standard_text = image.ocr_text_by_roi.get("standard")
@@ -578,6 +587,7 @@ def infer_fixture_expectation(image: LoadedImage) -> FixtureExpectation:
         name=expected_name,
         set_code=expected_set_code,
         collector_number=expected_collector_number,
+        games=tuple(expected_games),
     )
 
 
@@ -663,7 +673,11 @@ def render_summary(summary: EvaluationSummary) -> str:
     else:
         lines.append("  - none")
 
-    incorrect = [fixture for fixture in summary.fixtures if not fixture.top1_hit and fixture.expected_name]
+    incorrect = [
+        fixture
+        for fixture in summary.fixtures
+        if not fixture.top1_hit and fixture.expected_name and _is_paper_fixture(fixture)
+    ]
     lines.append("")
     lines.append("Top mismatches:")
     if incorrect:
@@ -1029,6 +1043,17 @@ def _coerce_string(value: object) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
+def _coerce_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    coerced: list[str] = []
+    for item in value:
+        normalized = _coerce_string(item)
+        if normalized is not None:
+            coerced.append(normalized)
+    return coerced
+
+
 def _notify(callback: ProgressCallback | None, message: str) -> None:
     if callback is not None:
         try:
@@ -1135,6 +1160,19 @@ def _estimate_fixture_run_seconds_for_operational_modes(
     return fixture_count * per_fixture_seconds
 
 
+def is_paper_expectation(expected: FixtureExpectation) -> bool:
+    if not expected.games:
+        return True
+    normalized_games = {game.strip().casefold() for game in expected.games if game.strip()}
+    return "paper" in normalized_games
+
+
+def _is_paper_fixture(evaluation: FixtureEvaluation) -> bool:
+    if evaluation.expected_is_paper is None:
+        return True
+    return evaluation.expected_is_paper
+
+
 def _load_runtime_estimates(summary_path: str | Path | None) -> dict[str, float]:
     if not summary_path:
         return {}
@@ -1215,11 +1253,14 @@ def _classify_result(
     expected_name: str | None,
     expected_set_code: str | None,
     expected_collector_number: str | None,
+    expected_is_paper: bool = True,
     predicted_name: str | None,
     predicted_set_code: str | None,
     predicted_collector_number: str | None,
     candidate_names: list[str],
 ) -> str:
+    if not expected_is_paper:
+        return "out_of_scope_nonpaper"
     if expected_name is None:
         return "missing_expected_name"
     if predicted_name is None:
