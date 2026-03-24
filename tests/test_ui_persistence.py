@@ -27,6 +27,26 @@ def test_save_and_load_ui_overrides_round_trip(tmp_path):
     assert loaded_rois == manual_roi_overrides
 
 
+def test_save_ui_overrides_can_omit_roi_overrides(tmp_path):
+    path = tmp_path / "ui_overrides.json"
+    manual_quads = {
+        Path("fixture-a.png"): ((1, 2), (3, 4), (5, 6), (7, 8)),
+    }
+
+    save_ui_overrides(path, manual_quads=manual_quads)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    loaded_quads, loaded_rois = load_ui_overrides(path)
+
+    assert payload == {
+        "manual_quads": {
+            "fixture-a.png": [[1, 2], [3, 4], [5, 6], [7, 8]],
+        }
+    }
+    assert loaded_quads == manual_quads
+    assert loaded_rois == {}
+
+
 def test_load_ui_overrides_migrates_legacy_per_image_roi_format(tmp_path):
     path = tmp_path / "ui_overrides.json"
     path.write_text(

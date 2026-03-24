@@ -12,7 +12,7 @@ from card_engine.api import recognize_card
 from card_engine.art_match import ART_MATCH_CACHE_DIR
 from card_engine.catalog.maintenance import catalog_refresh_needed, ensure_catalog_ready
 from card_engine.catalog.scryfall_sync import fetch_random_card_image, prune_random_card_cache
-from card_engine.roi import DEFAULT_ENABLED_ROI_GROUPS, roi_group_bboxes
+from card_engine.roi import DEFAULT_ENABLED_ROI_GROUPS, repo_roi_overrides, roi_group_bboxes, save_repo_roi_overrides
 from card_engine.utils.geometry import Quad, quad_from_bbox
 from card_engine.utils.image_io import load_image
 
@@ -128,9 +128,13 @@ class CardEngineDebugUI:
         self._overrides_path = _default_overrides_path()
         self.state = UIState()
         self.state.fixture_paths = discover_fixture_paths(self.fixtures_dir)
-        manual_quads, manual_roi_overrides = load_ui_overrides(self._overrides_path)
+        manual_quads, legacy_roi_overrides = load_ui_overrides(self._overrides_path)
         self.state.manual_quads = manual_quads
-        self.state.manual_roi_overrides = manual_roi_overrides
+        repo_overrides = _merge_roi_override_maps(repo_roi_overrides(), legacy_roi_overrides)
+        if repo_overrides != repo_roi_overrides():
+            save_repo_roi_overrides(repo_overrides)
+            save_ui_overrides(self._overrides_path, manual_quads=manual_quads)
+        self.state.manual_roi_overrides = repo_roi_overrides()
         self.preview_image: tk.PhotoImage | None = None
         self.preview_transform: PreviewTransform | None = None
         self.active_drag_target: DragTarget | None = None
@@ -711,8 +715,8 @@ class CardEngineDebugUI:
         save_ui_overrides(
             self._overrides_path,
             manual_quads=self.state.manual_quads,
-            manual_roi_overrides=self.state.manual_roi_overrides,
         )
+        save_repo_roi_overrides(self.state.manual_roi_overrides)
 
     def _ensure_catalog(self) -> None:
         needs_refresh, age_days = catalog_refresh_needed(db_path=_default_catalog_path())
@@ -792,6 +796,19 @@ def _default_random_cache_dir() -> str:
 
 def _default_overrides_path() -> str:
     return str(Path("data") / "cache" / "ui_overrides.json")
+
+
+def _merge_roi_override_maps(
+    base: dict[str, dict[str, tuple[float, float, float, float]]],
+    extra: dict[str, dict[str, tuple[float, float, float, float]]],
+) -> dict[str, dict[str, tuple[float, float, float, float]]]:
+    merged = {
+        group_name: dict(group_value)
+        for group_name, group_value in base.items()
+    }
+    for group_name, group_value in extra.items():
+        merged.setdefault(group_name, {}).update(group_value)
+    return merged
 
 
 def _count_hashable_catalog_cards(catalog_path: str | Path) -> int:

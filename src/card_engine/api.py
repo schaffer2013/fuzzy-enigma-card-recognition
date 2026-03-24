@@ -29,6 +29,8 @@ def recognize_card(
     progress_callback=None,
     deadline: float | None = None,
     config: EngineConfig | None = None,
+    catalog: LocalCatalogIndex | None = None,
+    skip_secondary_ocr: bool = False,
 ) -> RecognitionResult:
     start_time = time.monotonic()
     stage_timings: dict[str, float] = {}
@@ -36,7 +38,10 @@ def recognize_card(
     prepared_image = _timed_call(stage_timings, "prepare_image_input", _prepare_image_input, image)
     config = config or load_engine_config()
     candidate_pool_limit = max(config.candidate_count * 4, config.candidate_count)
-    catalog = _timed_call(stage_timings, "load_catalog", _load_catalog, config.catalog_path)
+    if catalog is None:
+        catalog = _timed_call(stage_timings, "load_catalog", _load_catalog, config.catalog_path)
+    else:
+        stage_timings["load_catalog"] = 0.0
     _notify(progress_callback, "Detecting card bounds...")
     detection = _timed_call(stage_timings, "detect_card", detect_card, prepared_image)
     _persist_saved_detection(prepared_image, detection)
@@ -139,7 +144,12 @@ def recognize_card(
     _notify(progress_callback, "Scoring candidates...")
     best_name, confidence = _timed_call(stage_timings, "score_candidates_primary", score_candidates, candidates)
 
-    if secondary_rois and not _deadline_exceeded(deadline) and not should_skip_secondary_ocr(candidates, confidence):
+    if (
+        secondary_rois
+        and not skip_secondary_ocr
+        and not _deadline_exceeded(deadline)
+        and not should_skip_secondary_ocr(candidates, confidence)
+    ):
         for roi_group in secondary_rois:
             if _deadline_exceeded(deadline):
                 break
@@ -208,7 +218,10 @@ def recognize_card(
         _notify(progress_callback, "Scoring candidates...")
         best_name, confidence = _timed_call(stage_timings, "score_candidates_secondary", score_candidates, candidates)
     elif secondary_rois:
-        _notify(progress_callback, "Skipping secondary OCR after confident title and visual tie-break match...")
+        if skip_secondary_ocr:
+            _notify(progress_callback, "Skipping secondary OCR for constrained candidate pool...")
+        else:
+            _notify(progress_callback, "Skipping secondary OCR after confident title and visual tie-break match...")
     _notify(progress_callback, f"Recognition complete: {best_name or 'no match'}")
     stage_timings["total"] = round(time.monotonic() - start_time, 4)
 

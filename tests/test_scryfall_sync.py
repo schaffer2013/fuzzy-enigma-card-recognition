@@ -8,6 +8,8 @@ from card_engine.catalog.scryfall_sync import fetch_random_card_image, prune_ran
 class DummyRandomCard:
     name = "Black Lotus"
     id = "abc12345-0000-0000-0000-000000000000"
+    lang = "en"
+    games = ["paper"]
     set = "lea"
     collector_number = "233"
     type_line = "Artifact"
@@ -36,6 +38,8 @@ def test_fetch_random_card_image_downloads_to_cache(tmp_path):
     assert downloaded["url"].endswith(".png")
     sidecar = json.loads(output_path.with_suffix(".json").read_text(encoding="utf-8"))
     assert sidecar["expected_name"] == "Black Lotus"
+    assert sidecar["expected_language"] == "en"
+    assert sidecar["expected_games"] == ["paper"]
     assert sidecar["expected_set_code"] == "lea"
     assert sidecar["expected_collector_number"] == "233"
     assert len(sidecar["image_sha256"]) == 64
@@ -43,6 +47,23 @@ def test_fetch_random_card_image_downloads_to_cache(tmp_path):
     assert sidecar["ocr_text_by_roi"]["standard"] == "Black Lotus"
     assert sidecar["ocr_text_by_roi"]["type_line"] == "Artifact"
     assert sidecar["ocr_text_by_roi"]["lower_text"] == "Lots of mana."
+
+
+def test_fetch_random_card_image_passes_english_query_to_client_factory(tmp_path):
+    recorded: dict[str, str] = {}
+
+    def fake_client_factory(*, q):
+        recorded["q"] = q
+        return DummyRandomCard()
+
+    output_path = fetch_random_card_image(
+        tmp_path,
+        client_factory=fake_client_factory,
+        downloader=lambda image_url, output_path: output_path.write_bytes(b"png"),
+    )
+
+    assert output_path.exists()
+    assert recorded["q"] == "game:paper lang:en"
 
 
 def test_sync_bulk_data_downloads_default_cards_json(tmp_path, monkeypatch):

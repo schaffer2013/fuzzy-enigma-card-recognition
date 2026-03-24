@@ -110,13 +110,33 @@ def resolved_group_rois(
     return list(merged.values())
 
 
-def repo_roi_overrides() -> dict[str, dict[str, RelativeROI]]:
-    config_path = DEFAULT_HASH_ROI_CONFIG_PATH
+def repo_roi_overrides(config_path: str | Path = DEFAULT_HASH_ROI_CONFIG_PATH) -> dict[str, dict[str, RelativeROI]]:
+    config_path = Path(config_path)
     try:
         mtime_ns = config_path.stat().st_mtime_ns
     except OSError:
         mtime_ns = 0
     return _repo_roi_overrides_cached(str(config_path), mtime_ns)
+
+
+def save_repo_roi_overrides(
+    overrides: dict[str, dict[str, RelativeROI]],
+    config_path: str | Path = DEFAULT_HASH_ROI_CONFIG_PATH,
+) -> Path:
+    path = Path(config_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        group_name: {
+            label: [float(component) for component in values]
+            for label, values in sorted(group_value.items())
+            if _looks_like_relative_roi(values)
+        }
+        for group_name, group_value in sorted(overrides.items())
+        if isinstance(group_value, dict) and group_value
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    _repo_roi_overrides_cached.cache_clear()
+    return path
 
 
 @lru_cache(maxsize=8)
@@ -146,6 +166,10 @@ def _repo_roi_overrides_cached(config_path: str, mtime_ns: int) -> dict[str, dic
         if entries:
             loaded[str(group_name)] = entries
     return loaded
+
+
+def _looks_like_relative_roi(value: object) -> bool:
+    return isinstance(value, (list, tuple)) and len(value) == 4
 
 
 def roi_group_signature(group_name: str) -> str:

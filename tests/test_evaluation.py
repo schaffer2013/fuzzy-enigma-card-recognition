@@ -7,26 +7,39 @@ import time
 from card_engine.evaluation import (
     BenchmarkModeResult,
     BenchmarkReport,
+    OperationalModeReport,
+    OperationalModeResult,
     benchmark_report_to_json,
     build_random_sample,
     compare_summaries,
     evaluate_benchmark_modes,
+    evaluate_operational_modes,
     evaluate_random_sample,
     evaluate_fixture_set,
+    evaluate_fixture_small_pool,
+    fixture_evaluator_for_operational_mode,
     infer_expected_name,
     infer_fixture_expectation,
+    is_paper_expectation,
     FixtureEvaluation,
+    FixtureExpectation,
     load_summary_json,
+    operational_mode_report_to_json,
     render_benchmark_report,
     render_comparison,
+    render_operational_mode_report,
     render_summary,
+    resolve_operational_modes,
     resolve_benchmark_modes,
     summary_from_json,
     summary_to_json,
     _announce_eta_if_long,
+    _build_small_pool_catalog,
+    _estimate_fixture_run_seconds_for_operational_modes,
     _estimate_fixture_run_seconds,
     _format_eta_message,
 )
+from card_engine.catalog.local_index import CatalogRecord, LocalCatalogIndex
 from card_engine.config import EngineConfig
 from card_engine.eval_pair_store import SimulatedPairStore, build_observed_card_id
 from card_engine.models import Candidate, RecognitionResult
@@ -66,6 +79,28 @@ def test_infer_fixture_expectation_reads_set_and_collector_from_sidecar(tmp_path
     assert expectation.name == "Jade Avenger"
     assert expectation.set_code == "mh2"
     assert expectation.collector_number == "167"
+
+
+def test_infer_fixture_expectation_reads_expected_games_from_sidecar(tmp_path):
+    image_path = tmp_path / "baffling-defenses-c4df2846.png"
+    image_path.write_bytes(_minimal_png(width=80, height=100))
+    image_path.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "expected_name": "Baffling Defenses",
+                "expected_set_code": "j21",
+                "expected_collector_number": "2",
+                "expected_games": ["arena"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    image = load_image(image_path)
+    expectation = infer_fixture_expectation(image)
+
+    assert expectation.games == ("arena",)
+    assert is_paper_expectation(expectation) is False
 
 
 def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp_path):
@@ -164,6 +199,70 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
     assert payload["calibration_error"] == 0.23
     assert payload["calibration_bins"][0]["lower_bound"] == 0.6
     assert payload["calibration_bins"][1]["upper_bound"] == 1.0
+
+
+def test_evaluate_fixture_set_excludes_nonpaper_fixtures_from_scored_metrics(monkeypatch, tmp_path):
+    paper_fixture = tmp_path / "opt-paper.png"
+    digital_fixture = tmp_path / "baffling-defenses-digital.png"
+    paper_fixture.write_bytes(_minimal_png(width=80, height=100))
+    digital_fixture.write_bytes(_minimal_png(width=80, height=100))
+    paper_fixture.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "expected_name": "Opt",
+                "expected_set_code": "inv",
+                "expected_collector_number": "64",
+                "expected_games": ["paper"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    digital_fixture.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "expected_name": "Baffling Defenses",
+                "expected_set_code": "j21",
+                "expected_collector_number": "2",
+                "expected_games": ["arena"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    predictions = {
+        "opt-paper.png": RecognitionResult(
+            bbox=(0, 0, 80, 100),
+            best_name="Opt",
+            confidence=0.9,
+            top_k_candidates=[Candidate(name="Opt", score=0.9, set_code="inv", collector_number="64")],
+            active_roi="standard",
+            tried_rois=["standard"],
+        ),
+        "baffling-defenses-digital.png": RecognitionResult(
+            bbox=(0, 0, 80, 100),
+            best_name="Flourishing Defenses",
+            confidence=0.5,
+            top_k_candidates=[Candidate(name="Flourishing Defenses", score=0.5, set_code="shm", collector_number="114")],
+            active_roi="standard",
+            tried_rois=["standard"],
+        ),
+    }
+
+    monkeypatch.setattr("card_engine.evaluation.recognize_card", lambda image, *, deadline=None, config=None, catalog=None, skip_secondary_ocr=False: predictions[image.path.name])
+
+    db_path = tmp_path / "pairs.sqlite3"
+    with SimulatedPairStore(db_path) as pair_store:
+        summary = evaluate_fixture_set(tmp_path, pair_store=pair_store)
+
+    assert summary.fixture_count == 2
+    assert summary.scored_count == 1
+    assert summary.set_scored_count == 1
+    assert summary.art_scored_count == 1
+    assert summary.top1_accuracy == 1.0
+    assert summary.error_classes["out_of_scope_nonpaper"] == 1
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute("SELECT expected_card_id, actual_card_id FROM simulated_card_pairs").fetchall()
+    assert rows == [("printing:inv:64", "printing:inv:64")]
 
 
 def test_build_random_sample_fetches_until_time_limit(monkeypatch, tmp_path):
@@ -485,6 +584,15 @@ def test_resolve_benchmark_modes_expands_all_and_dedupes():
     ]
 
 
+def test_resolve_operational_modes_expands_all_and_dedupes():
+    assert resolve_operational_modes("greenfield,all,greenfield") == [
+        "greenfield",
+        "reevaluation",
+        "small_pool",
+        "confirmation",
+    ]
+
+
 def test_evaluate_benchmark_modes_runs_same_fixture_set_across_modes(monkeypatch, tmp_path):
     seen: list[tuple[str, EngineConfig]] = []
 
@@ -533,6 +641,52 @@ def test_evaluate_benchmark_modes_runs_same_fixture_set_across_modes(monkeypatch
     assert seen[2][1].lazy_default_printing_by_name is True
 
 
+def test_evaluate_operational_modes_uses_mode_specific_fixture_evaluators(monkeypatch, tmp_path):
+    seen_labels: list[str] = []
+
+    monkeypatch.setattr(
+        "card_engine.evaluation.evaluate_fixture_set",
+        lambda fixtures_dir, *, limit=None, config=None, pair_store=None, progress_callback=None, progress_label=None, fixture_evaluator=None: (
+            seen_labels.append(progress_label or "missing") or summary_from_json(
+                {
+                    "fixture_count": 1,
+                    "scored_count": 1,
+                    "set_scored_count": 1,
+                    "art_scored_count": 1,
+                    "top1_accuracy": 1.0,
+                    "top5_accuracy": 1.0,
+                    "set_accuracy": 1.0,
+                    "art_accuracy": 1.0,
+                    "average_confidence": 0.9,
+                    "average_scored_confidence": 0.9,
+                    "average_runtime_seconds": 0.1,
+                    "calibration_error": 0.0,
+                    "calibration_bins": [],
+                    "average_stage_timings": {"total": 0.1},
+                    "roi_usage": {},
+                    "error_classes": {"correct_top1": 1},
+                    "fixtures": [],
+                }
+            )
+        ),
+    )
+
+    report = evaluate_operational_modes(
+        tmp_path,
+        mode_names=["greenfield", "reevaluation", "small_pool", "confirmation"],
+    )
+
+    assert [mode_result.mode_name for mode_result in report.mode_results] == [
+        "greenfield",
+        "reevaluation",
+        "small_pool",
+        "confirmation",
+    ]
+    assert seen_labels == ["greenfield", "reevaluation", "small_pool", "confirmation"]
+    assert report.mode_results[1].implementation_note is not None
+    assert report.mode_results[3].implementation_note is not None
+
+
 def test_benchmark_report_renders_and_serializes_mode_accuracy():
     report = BenchmarkReport(
         fixtures_dir="data/sample_outputs/random_eval_cards",
@@ -572,6 +726,47 @@ def test_benchmark_report_renders_and_serializes_mode_accuracy():
     assert "Top-1 accuracy: 0.900" in rendered
     assert payload["mode_results"][0]["mode_name"] == "default"
     assert payload["mode_results"][0]["summary"]["set_accuracy"] == 0.8
+
+
+def test_operational_mode_report_renders_and_serializes_mode_accuracy():
+    report = OperationalModeReport(
+        fixtures_dir="data/sample_outputs/random_eval_cards",
+        mode_results=[
+            OperationalModeResult(
+                mode_name="greenfield",
+                summary=summary_from_json(
+                    {
+                        "fixture_count": 3,
+                        "scored_count": 3,
+                        "set_scored_count": 3,
+                        "art_scored_count": 3,
+                        "top1_accuracy": 0.9,
+                        "top5_accuracy": 0.9,
+                        "set_accuracy": 0.8,
+                        "art_accuracy": 0.7,
+                        "average_confidence": 0.85,
+                        "average_scored_confidence": 0.85,
+                        "average_runtime_seconds": 0.12,
+                        "calibration_error": 0.04,
+                        "calibration_bins": [],
+                        "average_stage_timings": {"total": 0.12},
+                        "roi_usage": {},
+                        "error_classes": {},
+                        "fixtures": [],
+                    }
+                ),
+                implementation_note="Uses the greenfield path until expectation-aware reranking lands.",
+            )
+        ],
+    )
+
+    rendered = render_operational_mode_report(report)
+    payload = operational_mode_report_to_json(report)
+
+    assert "Mode: greenfield" in rendered
+    assert "Note: Uses the greenfield path until expectation-aware reranking lands." in rendered
+    assert payload["mode_results"][0]["mode_name"] == "greenfield"
+    assert payload["mode_results"][0]["implementation_note"] is not None
 
 
 def test_evaluate_fixture_set_tracks_expected_vs_actual_pairs(monkeypatch, tmp_path):
@@ -656,6 +851,31 @@ def test_evaluate_benchmark_modes_passes_pair_store_through(monkeypatch, tmp_pat
     assert all(store is seen_pair_stores[0] for store in seen_pair_stores)
 
 
+def test_build_small_pool_catalog_constrains_to_expected_name_printings():
+    full_catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Island", normalized_name="island", set_code="m21", collector_number="265"),
+            CatalogRecord(name="Island", normalized_name="island", set_code="eld", collector_number="257"),
+            CatalogRecord(name="Opt", normalized_name="opt", set_code="inv", collector_number="64"),
+        ]
+    )
+
+    constrained = _build_small_pool_catalog(
+        full_catalog,
+        FixtureExpectation(
+            name="Island",
+            set_code="m21",
+            collector_number="265",
+        ),
+    )
+
+    names = {(record.name, record.set_code, record.collector_number) for record in constrained.records}
+    assert names == {
+        ("Island", "m21", "265"),
+        ("Island", "eld", "257"),
+    }
+
+
 def test_build_observed_card_id_prefers_printing_and_falls_back_to_name():
     assert build_observed_card_id(
         name="Faithless Looting",
@@ -728,6 +948,20 @@ def test_estimate_fixture_run_seconds_uses_fixture_count_and_prior_runtime_summa
     )
 
     assert estimated == 7.5
+
+
+def test_estimate_fixture_run_seconds_for_operational_modes_uses_fixture_count(tmp_path):
+    for index in range(5):
+        path = tmp_path / f"card-{index}.png"
+        path.write_bytes(_minimal_png(width=80, height=100))
+
+    estimated = _estimate_fixture_run_seconds_for_operational_modes(
+        tmp_path,
+        ["greenfield", "reevaluation", "small_pool", "confirmation"],
+        limit=3,
+    )
+
+    assert estimated == 69.0
 
 
 def _minimal_png(*, width: int, height: int) -> bytes:

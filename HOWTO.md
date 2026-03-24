@@ -37,6 +37,10 @@ For a fresh random accuracy run with a 10-minute cap, use:
   --json-out data\sample_outputs\random-eval-summary.json
 ```
 
+Random fixture downloads request `game:paper lang:en` from Scryfall by default
+so the saved sample set matches the English-only local catalog and avoids
+digital-only card variants.
+
 To override engine behavior without editing code, create `data\config\engine.json`
 or point `CARD_ENGINE_CONFIG_PATH` at a JSON file. A starter example lives at
 `data\config\engine.sample.json`.
@@ -260,6 +264,21 @@ by default so you can mine repeated expected-vs-actual printing pairs later.
 The database keeps `expected_card_id`, `actual_card_id`, and `seen_count`,
 including correct matches, and evicts the oldest unique pairs beyond 10,000.
 Use `--pair-db` to point at a different database file.
+
+To export the most repeated mismatches into a curated local regression fixture
+folder:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_regression_fixture_set.py `
+  --fixtures-dir data\sample_outputs\random_eval_cards `
+  --output-dir data\cache\regression_fixtures `
+  --max-cases 12 `
+  --min-seen-count 3
+```
+
+That command copies each matching image fixture and sidecar into the output
+folder and writes `regression_manifest.json` so you can see which expected
+printings and wrong predictions the curated set is meant to cover.
 
 The script currently reports:
 
