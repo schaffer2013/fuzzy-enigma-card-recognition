@@ -91,24 +91,23 @@ Practical intent:
 The adapter intentionally does not expose UI-specific concepts. It is meant to
 be the sorter/workflow hook only.
 
-There is also a ready-to-run example script:
+Copy-paste example:
 
-```powershell
-.\.venv\Scripts\python.exe scripts\example_sorter_session.py
+```python
+from card_engine.adapters.sortingmachine import SortingMachineRecognizer
+from card_engine.operational_modes import ExpectedCard
+
+recognizer = SortingMachineRecognizer(auto_track_results=True)
+
+output = recognizer.recognize_top_card(frame, mode="greenfield")
+entries = recognizer.get_tracked_pool_entries()
+
+recognizer.add_expected_card(
+    ExpectedCard(name="Island", set_code="M21", collector_number="264")
+)
+output = recognizer.recognize_top_card(frame, mode="small_pool")
+recognizer.clear_tracked_pool()
 ```
-
-If you want to force a constrained example, seed the tracked pool first:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\example_sorter_session.py `
-  --mode small_pool `
-  --seed-expected-name Island `
-  --seed-expected-set M21 `
-  --seed-expected-collector 264
-```
-
-The script will auto-pick a sample fixture when possible, or you can pass
-`--image path\to\card.png` explicitly.
 
 ## Main Window
 

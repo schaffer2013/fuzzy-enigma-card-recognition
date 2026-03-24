@@ -176,24 +176,23 @@ output = recognizer.recognize_top_card(frame, mode="small_pool")
 recognizer.clear_tracked_pool()
 ```
 
-Ready-to-run example:
+Inline sorter/session example:
 
-```powershell
-.\.venv\Scripts\python.exe scripts\example_sorter_session.py
-```
+```python
+from card_engine.adapters.sortingmachine import SortingMachineRecognizer
+from card_engine.operational_modes import ExpectedCard
 
-That example auto-picks a sample fixture if you do not pass `--image`, runs the
-sorter adapter in `greenfield` mode, and prints the tracked-pool state before
-and after recognition.
+recognizer = SortingMachineRecognizer(auto_track_results=True)
 
-You can also exercise constrained behavior directly:
+output = recognizer.recognize_top_card(frame, mode="greenfield")
+print(output.card_name, output.confidence)
 
-```powershell
-.\.venv\Scripts\python.exe scripts\example_sorter_session.py `
-  --mode small_pool `
-  --seed-expected-name Island `
-  --seed-expected-set M21 `
-  --seed-expected-collector 264
+recognizer.add_expected_card(
+    ExpectedCard(name="Island", set_code="M21", collector_number="264")
+)
+pool_entries = recognizer.get_tracked_pool_entries()
+output = recognizer.recognize_top_card(frame, mode="small_pool")
+recognizer.clear_tracked_pool()
 ```
 
 Current adapter contract:
