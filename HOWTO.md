@@ -320,6 +320,9 @@ When you use `--benchmark-modes all`, the script runs the same saved fixtures
 through each benchmark mode and reports separate accuracy lines for each mode
 instead of mixing them together.
 
+A concise benchmark/profile snapshot for the Milestone 9 closeout lives in
+[docs/milestone9-closeout.md](docs/milestone9-closeout.md).
+
 ## Recognition Flow Notes
 
 The current recognition flow is moving toward a Milestone 9 fast path:

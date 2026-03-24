@@ -40,14 +40,21 @@ What is usable now:
 - timed fixture and random-sample evaluation
 - desktop debug UI for manual inspection
 
-What is still being hardened:
+Milestone 9 closeout status:
 
-- confidence tuning on larger unseen random samples
-- some crop-quality and non-title tie-break improvements
+- paper-name accuracy and confidence validation on larger unseen random samples
+- repo-committed ROI tuning and stage-level benchmark reporting
+- repeatable operational validation for `greenfield` and provisional `small_pool`
+
+Still ahead:
+
+- split-card and nonstandard-title fallback OCR
 - more complete integration docs and example configuration
 - operational constrained modes for sorter workflows
 
-See [roadmap.md](roadmap.md) for the planned milestones.
+See [roadmap.md](roadmap.md) for the planned milestones and
+[docs/milestone9-closeout.md](docs/milestone9-closeout.md) for the measured
+Milestone 9 validation snapshot.
 
 ## Install
 
@@ -322,7 +329,7 @@ Current limitations worth knowing before parent-project adoption:
   name plus confidence
 - Milestone 8 integration docs and example configuration are still being
   completed
-- Milestone 9 accuracy hardening is still in progress
+- split-card/nonstandard-title fallback OCR is still future expansion
 
 If you want the shortest answer on readiness: this repo is already usable as a
 submodule for direct recognition integration, but it is still moving from
