@@ -36,6 +36,7 @@ What is usable now:
 
 - `recognize_card(...)` for direct programmatic recognition
 - `SortingMachineRecognizer` as a thin adapter for parent projects
+- optional detailed adapter results for low-confidence handling and debugging
 - automatic local catalog maintenance
 - timed fixture and random-sample evaluation
 - desktop debug UI for manual inspection
@@ -50,27 +51,42 @@ Milestone 9 closeout status:
 Still ahead:
 
 - split-card and nonstandard-title fallback OCR
-- more complete integration docs and example configuration
-- operational constrained modes for sorter workflows
+- deeper mode/output polish for parent workflows
 
 See [roadmap.md](roadmap.md) for the planned milestones and
 [docs/milestone9-closeout.md](docs/milestone9-closeout.md) for the measured
-Milestone 9 validation snapshot.
+Milestone 9 validation snapshot. For parent-repo wiring, use
+[INTEGRATION.md](INTEGRATION.md). For the desktop debug UI, use
+[HOWTO.md](HOWTO.md).
 
 ## Install
 
-Basic editable install:
+Install options:
+
+- base recognition:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -e .[dev]
+python -m pip install -e .
 ```
 
-If you want the random-card UI action or Scryfall-backed catalog helpers:
+- OCR-enabled recognition:
 
 ```powershell
-python -m pip install -e .[dev,ui]
+python -m pip install -e .[ocr]
+```
+
+- UI-enabled extras such as the random-card action:
+
+```powershell
+python -m pip install -e .[ui]
+```
+
+- local development:
+
+```powershell
+python -m pip install -e .[ocr,ui,dev]
 ```
 
 Run tests:
@@ -79,7 +95,11 @@ Run tests:
 python -m pytest
 ```
 
-## Submodule Integration
+The base package now includes the image stack used by recognition. The `ocr`
+extra adds OCR backends, and the `ui` extra adds `scrython` for the debug UI's
+random-card and Scryfall-backed helper flows.
+
+## Parent Quickstart
 
 Recommended parent-repo locations:
 
@@ -92,12 +112,53 @@ Example submodule add:
 git submodule add https://github.com/schaffer2013/fuzzy-enigma-card-recognition.git third_party/fuzzy-enigma-card-recognition
 ```
 
+Concrete parent-repo setup:
+
+```powershell
+git clone --recurse-submodules https://github.com/your-org/your-parent-app.git
+cd your-parent-app
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e .\third_party\fuzzy-enigma-card-recognition[ocr]
+```
+
+Create a parent-owned config file such as `config/card-engine/engine.json`:
+
+```json
+{
+  "catalog_path": "C:/work/your-parent-app/var/card-engine/cards.sqlite3",
+  "candidate_count": 5,
+  "lazy_group_basic_land_printings": true
+}
+```
+
+Then call the recognizer from the parent app:
+
+```python
+from pathlib import Path
+
+from card_engine.adapters.sortingmachine import SortingMachineRecognizer
+from card_engine.config import load_engine_config
+
+config = load_engine_config(
+    str(Path("C:/work/your-parent-app/config/card-engine/engine.json"))
+)
+recognizer = SortingMachineRecognizer(config=config, auto_track_results=True)
+
+result = recognizer.recognize_top_card(frame, mode="greenfield")
+print(result.card_name, result.confidence)
+```
+
 The parent project should ideally do only four things:
 
 1. install this package and its chosen extras
 2. provide image frames
 3. provide config wiring
 4. call the adapter or API
+
+For a fuller integration walkthrough, including path ownership and first-run
+catalog behavior, see [INTEGRATION.md](INTEGRATION.md).
 
 ## Parent-Facing API
 
@@ -201,8 +262,21 @@ Current adapter contract:
 
 - input: a frame-like object or image path accepted by `recognize_card(...)`
 - output: card name plus confidence
+- optional richer output with bbox, OCR, candidates, ROI info, and debug data
+  via `detailed=True`
 - tracked-pool inspection/seed/clear hooks for sorter workflows
 - optional mode-aware recognition via the same adapter instance
+
+Detailed adapter use:
+
+```python
+detailed = recognizer.recognize_top_card(frame, mode="greenfield", detailed=True)
+
+print(detailed.card_name, detailed.confidence)
+print(detailed.bbox, detailed.active_roi)
+print(detailed.top_k_candidates[:3])
+print(detailed.debug)
+```
 
 The adapter lives in [sortingmachine.py](src/card_engine/adapters/sortingmachine.py).
 
@@ -222,6 +296,16 @@ A starter config file is included at
 
 When loading from disk, unknown keys are ignored and missing keys fall back to
 the built-in defaults.
+
+Path behavior is important for parent integrations:
+
+- relative paths are resolved against the current working directory of the
+  calling process
+- they are not package-relative to this submodule
+- for embedded use, prefer absolute parent-owned paths
+
+The repo-local `data/...` defaults are mainly convenience defaults for
+standalone repo usage and the debug UI.
 
 Current `EngineConfig` fields:
 
@@ -270,6 +354,12 @@ Default paths:
 
 - SQLite catalog: `data/catalog/cards.sqlite3`
 - bulk source JSON: `data/catalog/default-cards.json`
+
+First-run note:
+
+- the first recognition call may download Scryfall bulk data
+- it may build or rebuild the local SQLite catalog
+- because of that, first use is often slower than steady-state recognition
 
 ## Debug UI
 
@@ -390,17 +480,29 @@ Important paths:
 - `src/card_engine/catalog/`: local catalog build and maintenance
 - `src/card_engine/ui/`: desktop debug UI
 - `scripts/eval_fixture_set.py`: evaluation entry point
+- `INTEGRATION.md`: parent-repo integration guide
+- `HOWTO.md`: UI/debug workflow guide
 - `roadmap.md`: implementation plan and milestone status
+
+## Data Ownership
+
+For embedded use, a clean ownership split is:
+
+- parent repo/application owns mutable runtime data such as `engine.json`,
+  SQLite catalogs, downloaded bulk JSON, pair DBs, eval outputs, and cache
+  directories
+- this submodule owns code, tests, docs, and committed defaults such as
+  `data/config/hash_rois.json`
+
+That pattern avoids routine dirty submodule state from caches or local runtime
+artifacts.
 
 ## Limitations
 
 Current limitations worth knowing before parent-project adoption:
 
 - deeper refinement of mode-specific confidence semantics is still in progress
-- the adapter surface is intentionally thin and currently only returns card
-  name plus confidence
-- Milestone 8 integration docs and example configuration are still being
-  completed
+- first-run catalog setup can make the initial recognition call slower
 - split-card/nonstandard-title fallback OCR is still future expansion
 
 If you want the shortest answer on readiness: this repo is already usable as a
