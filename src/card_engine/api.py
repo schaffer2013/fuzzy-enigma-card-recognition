@@ -14,6 +14,13 @@ from .matcher import match_candidates
 from .models import RecognitionResult
 from .normalize import normalize_card
 from .ocr import run_ocr
+from .operational_modes import (
+    CandidatePool,
+    ExpectedCard,
+    apply_expected_mode_bias,
+    resolve_operational_mode,
+    score_confirmation_against_expected,
+)
 from .roi import resolve_roi_groups_for_layout
 from .scorer import score_candidates
 from .set_symbol import rerank_candidates_by_set_symbol, should_skip_secondary_ocr
@@ -26,6 +33,9 @@ VISUAL_ONLY_ROIS = {"set_symbol", "art_match"}
 def recognize_card(
     image: Any,
     *,
+    mode: str | None = None,
+    candidate_pool: CandidatePool | LocalCatalogIndex | None = None,
+    expected_card: ExpectedCard | None = None,
     progress_callback=None,
     deadline: float | None = None,
     config: EngineConfig | None = None,
@@ -39,9 +49,18 @@ def recognize_card(
     config = config or load_engine_config()
     candidate_pool_limit = max(config.candidate_count * 4, config.candidate_count)
     if catalog is None:
-        catalog = _timed_call(stage_timings, "load_catalog", _load_catalog, config.catalog_path)
+        full_catalog = _timed_call(stage_timings, "load_catalog", _load_catalog, config.catalog_path)
     else:
+        full_catalog = catalog
         stage_timings["load_catalog"] = 0.0
+    resolved_mode = resolve_operational_mode(
+        full_catalog,
+        mode=mode,
+        candidate_pool=candidate_pool,
+        expected_card=expected_card,
+    )
+    catalog = resolved_mode.catalog
+    skip_secondary_ocr = skip_secondary_ocr or resolved_mode.skip_secondary_ocr
     _notify(progress_callback, "Detecting card bounds...")
     detection = _timed_call(stage_timings, "detect_card", detect_card, prepared_image)
     _persist_saved_detection(prepared_image, detection)
@@ -102,6 +121,8 @@ def recognize_card(
     )
     set_symbol_debug = {"used": False, "reason": "not_attempted"}
     art_match_debug = {"used": False, "reason": "not_attempted"}
+    expectation_debug = {"used": False, "reason": "not_applicable"}
+    confirmation_debug = {"used": False, "reason": "not_applicable"}
     set_symbol_crop = _first_crop_for_group(normalized.crops, "set_symbol")
     art_match_crop = _first_crop_for_group(normalized.crops, "art_match")
     visual_deadline = _resolve_visual_deadline(deadline, config)
@@ -141,8 +162,22 @@ def recognize_card(
         art_match_debug = art_match_result.debug
     elif candidates and art_match_crop is not None:
         art_match_debug = {"used": False, "reason": "deadline_exceeded"}
+    candidates, expectation_debug = apply_expected_mode_bias(
+        candidates,
+        mode=resolved_mode.requested_mode,
+        expected_card=expected_card,
+    )
     _notify(progress_callback, "Scoring candidates...")
-    best_name, confidence = _timed_call(stage_timings, "score_candidates_primary", score_candidates, candidates)
+    if resolved_mode.requested_mode == "confirmation":
+        best_name, confidence, confirmation_debug = _timed_call_supported_kwargs(
+            stage_timings,
+            "score_candidates_primary",
+            score_confirmation_against_expected,
+            candidates,
+            expected_card=expected_card,
+        )
+    else:
+        best_name, confidence = _timed_call(stage_timings, "score_candidates_primary", score_candidates, candidates)
 
     if (
         secondary_rois
@@ -215,8 +250,22 @@ def recognize_card(
             )
             candidates = art_match_result.candidates
             art_match_debug = art_match_result.debug
+        candidates, expectation_debug = apply_expected_mode_bias(
+            candidates,
+            mode=resolved_mode.requested_mode,
+            expected_card=expected_card,
+        )
         _notify(progress_callback, "Scoring candidates...")
-        best_name, confidence = _timed_call(stage_timings, "score_candidates_secondary", score_candidates, candidates)
+        if resolved_mode.requested_mode == "confirmation":
+            best_name, confidence, confirmation_debug = _timed_call_supported_kwargs(
+                stage_timings,
+                "score_candidates_secondary",
+                score_confirmation_against_expected,
+                candidates,
+                expected_card=expected_card,
+            )
+        else:
+            best_name, confidence = _timed_call(stage_timings, "score_candidates_secondary", score_candidates, candidates)
     elif secondary_rois:
         if skip_secondary_ocr:
             _notify(progress_callback, "Skipping secondary OCR for constrained candidate pool...")
@@ -250,6 +299,16 @@ def recognize_card(
             },
             "set_symbol": set_symbol_debug,
             "art_match": art_match_debug,
+            "expectation": expectation_debug,
+            "confirmation": confirmation_debug,
+            "mode": {
+                "requested": resolved_mode.requested_mode,
+                "effective": resolved_mode.effective_mode,
+                "candidate_count": len(catalog.records),
+                "has_expected_card": expected_card is not None,
+                "has_candidate_pool": candidate_pool is not None,
+                "implementation_note": resolved_mode.implementation_note,
+            },
             "timings": stage_timings,
         },
     )

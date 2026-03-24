@@ -957,17 +957,34 @@ Recommended early implementation order:
 
 **Status**
 
-- [ ] Default stateless mode formalized as the baseline API behavior.
-- [ ] Greenfield mode formalized as the baseline API behavior.
-- [ ] Re-evaluation mode.
-- [ ] Small-pool recognition mode.
-- [ ] Confirmation / expected-printing scoring mode.
-- [ ] Tracked pool abstraction and lifecycle management.
-- [ ] Clear/reset tracked-pool action.
-- [ ] Shared mode-aware candidate generation interfaces.
-- [ ] Adapter and UI hooks for supplying expected cards or constrained pools.
-- [ ] Benchmarks comparing full-catalog versus constrained-pool runs.
-- [ ] Tests covering mode-specific confidence semantics.
+- [x] Default stateless mode formalized as the baseline API behavior.
+- [x] Greenfield mode formalized as the baseline API behavior.
+- [x] Re-evaluation mode.
+- [x] Small-pool recognition mode.
+- [x] Confirmation / expected-printing scoring mode.
+- [x] Tracked pool abstraction and lifecycle management.
+- [x] Clear/reset tracked-pool action.
+- [x] Shared mode-aware candidate generation interfaces.
+- [x] Adapter hooks for supplying expected cards or constrained pools.
+- [x] Benchmarks comparing full-catalog versus constrained-pool runs.
+- [x] Tests covering mode-specific confidence semantics.
+
+**Current Progress Notes**
+
+- `recognize_card(...)` now accepts an explicit `mode`, plus `candidate_pool`
+  and `expected_card` inputs for mode-aware routing.
+- `default` and `greenfield` are formalized as explicit API modes.
+- `small_pool` is now a first-class constrained mode in the API rather than
+  only an evaluation helper.
+- A `RecognitionSession` abstraction now owns a tracked pool with inspect,
+  add, and clear operations, so session-backed workflows no longer need to
+  manage pool state ad hoc in the caller.
+- `reevaluation` now biases the expected card while still allowing
+  disagreement recovery when the observed evidence is materially stronger.
+- `confirmation` now reports expected-printing confidence directly and surfaces
+  the strongest contradicting candidate in debug output.
+- The sorter adapter now exposes tracked-pool/session hooks without requiring
+  any UI-specific integration.
 
 **Deliverables**
 

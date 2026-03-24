@@ -1,3 +1,10 @@
+"""Runtime configuration for the card engine.
+
+Relative paths in this module are resolved against the calling process's
+current working directory, not the package directory. For embedded parent
+applications, prefer explicit absolute paths.
+"""
+
 import json
 import os
 from dataclasses import dataclass, field, fields
@@ -10,6 +17,13 @@ DEFAULT_ENGINE_CONFIG_PATH = Path("data") / "config" / "engine.json"
 
 @dataclass
 class EngineConfig:
+    """Engine settings used by recognition and catalog maintenance.
+
+    Path fields remain working-directory relative by default so standalone repo
+    usage stays simple. Parent applications embedding this package should
+    usually pass absolute paths instead.
+    """
+
     catalog_path: str = "data/catalog/cards.sqlite3"
     debug_enabled: bool = False
     candidate_count: int = 5

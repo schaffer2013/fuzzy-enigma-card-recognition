@@ -755,7 +755,7 @@ def test_operational_mode_report_renders_and_serializes_mode_accuracy():
                         "fixtures": [],
                     }
                 ),
-                implementation_note="Uses the greenfield path until expectation-aware reranking lands.",
+                implementation_note="Biases the expected card while still allowing disagreement recovery.",
             )
         ],
     )
@@ -764,7 +764,7 @@ def test_operational_mode_report_renders_and_serializes_mode_accuracy():
     payload = operational_mode_report_to_json(report)
 
     assert "Mode: greenfield" in rendered
-    assert "Note: Uses the greenfield path until expectation-aware reranking lands." in rendered
+    assert "Note: Biases the expected card while still allowing disagreement recovery." in rendered
     assert payload["mode_results"][0]["mode_name"] == "greenfield"
     assert payload["mode_results"][0]["implementation_note"] is not None
 

@@ -5,6 +5,10 @@
 The current UI is a single debug window for browsing fixture images, previewing
 the selected image, and seeing the engine's current recognition output.
 
+This file is intentionally UI-focused. If you are embedding the recognizer into
+another repository, use [INTEGRATION.md](INTEGRATION.md) for adapter wiring,
+config ownership, parent-owned data directories, and first-run catalog notes.
+
 The committed hash ROI bounds now live in `data/config/hash_rois.json`. The
 reference-image caches for art and set-symbol hashing are tied to those ROI
 bounds and are automatically cleared for that specific ROI if the committed
@@ -20,6 +24,12 @@ If you want the random-card button to work, install the UI extra first:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e .[ui]
+```
+
+For full local development with OCR backends and tests:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e .[ocr,ui,dev]
 ```
 
 For fixture-level accuracy checks outside the UI, run:
@@ -45,6 +55,10 @@ To override engine behavior without editing code, create `data\config\engine.jso
 or point `CARD_ENGINE_CONFIG_PATH` at a JSON file. A starter example lives at
 `data\config\engine.sample.json`.
 
+Relative paths in config remain working-directory relative. For embedded parent
+apps, prefer absolute parent-owned paths instead of relying on the repo-local
+`data\...` defaults.
+
 Useful lazy optimization toggles include:
 
 - `lazy_group_basic_land_printings`: collapse same-name basic lands to one
@@ -57,6 +71,17 @@ Useful lazy optimization toggles include:
   card has spent this much time in those steps
 - `reference_download_timeout_seconds`: cap per-reference download waits during
   visual comparisons
+
+## Integration Note
+
+The sorter-facing adapter and tracked-session workflow live outside the UI.
+Use [INTEGRATION.md](INTEGRATION.md) for:
+
+- `SortingMachineRecognizer` examples
+- `detailed=True` adapter output
+- tracked-pool/session usage
+- parent-owned config and data-directory recommendations
+- first-run catalog side effects
 
 ## Main Window
 
