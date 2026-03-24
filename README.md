@@ -158,19 +158,30 @@ Thin adapter use:
 ```python
 from card_engine.adapters.sortingmachine import SortingMachineRecognizer
 from card_engine.config import EngineConfig
+from card_engine.operational_modes import ExpectedCard
 
 recognizer = SortingMachineRecognizer(
-    config=EngineConfig(candidate_count=5)
+    config=EngineConfig(candidate_count=5),
+    auto_track_results=True,
 )
 output = recognizer.recognize_top_card(frame)
 
 print(output.card_name, output.confidence)
+
+recognizer.add_expected_card(
+    ExpectedCard(name="Island", set_code="M21", collector_number="264")
+)
+pool_entries = recognizer.get_tracked_pool_entries()
+output = recognizer.recognize_top_card(frame, mode="small_pool")
+recognizer.clear_tracked_pool()
 ```
 
 Current adapter contract:
 
 - input: a frame-like object or image path accepted by `recognize_card(...)`
 - output: card name plus confidence
+- tracked-pool inspection/seed/clear hooks for sorter workflows
+- optional mode-aware recognition via the same adapter instance
 
 The adapter lives in [sortingmachine.py](src/card_engine/adapters/sortingmachine.py).
 

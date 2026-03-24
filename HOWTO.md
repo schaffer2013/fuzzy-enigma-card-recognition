@@ -58,6 +58,39 @@ Useful lazy optimization toggles include:
 - `reference_download_timeout_seconds`: cap per-reference download waits during
   visual comparisons
 
+## Sorter Adapter
+
+The sorter-facing adapter now has an optional tracked-pool/session hook through
+`SortingMachineRecognizer`.
+
+Basic use:
+
+```python
+from card_engine.adapters.sortingmachine import SortingMachineRecognizer
+from card_engine.operational_modes import ExpectedCard
+
+recognizer = SortingMachineRecognizer(auto_track_results=True)
+
+output = recognizer.recognize_top_card(frame)
+entries = recognizer.get_tracked_pool_entries()
+
+recognizer.add_expected_card(
+    ExpectedCard(name="Island", set_code="M21", collector_number="264")
+)
+output = recognizer.recognize_top_card(frame, mode="small_pool")
+recognizer.clear_tracked_pool()
+```
+
+Practical intent:
+
+- use default or `greenfield` scans to build up a tracked working pool
+- inspect that pool from the parent project
+- seed known expected cards directly when a sorter already knows a pile's scope
+- switch to `small_pool` when repeated scans are known to come from that pool
+
+The adapter intentionally does not expose UI-specific concepts. It is meant to
+be the sorter/workflow hook only.
+
 ## Main Window
 
 There is one page today: the main debug window.
