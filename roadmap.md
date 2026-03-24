@@ -625,15 +625,14 @@ What is effectively done today:
 - [ ] Milestone 7 is partially complete.
 - [ ] Milestone 8 is partially complete.
 - [x] Milestone 9 is complete.
-- [ ] Milestone 10 is not started.
+- [x] Milestone 10 is complete.
 - [ ] Milestone 11 is partially complete.
 
 Recommended next step:
 
-- Start **Milestone 10: Operational Recognition Modes** by formalizing the
-  mode-aware API surface and tracked-pool semantics, while using the current
-  benchmark harness from Milestone 11 to keep constrained-mode speedups
-  measurable.
+- Continue **Milestone 11: Pipeline Benchmarking and Performance Engineering**
+  by optimizing the measured OCR bottlenecks, starting with `secondary_ocr` in
+  open-ended modes and `title_ocr` in constrained modes.
 
 ### Implementation Sequencing Adjustment
 
@@ -1017,11 +1016,11 @@ Recommended early implementation order:
 - [x] Persistent benchmark harness beyond ad hoc eval/debug timing.
 - [x] Benchmark harness for repeated runs against representative fixture sets.
 - [x] Version-to-version benchmark reporting for pipeline changes.
-- [ ] Baseline latency and throughput targets for common workflows.
-- [ ] Hotspot analysis for OCR, visual tie-breaks, catalog lookup, and image preprocessing.
+- [x] Baseline latency and throughput targets for common workflows.
+- [x] Hotspot analysis for OCR, visual tie-breaks, catalog lookup, and image preprocessing.
 - [ ] Investigation of multithreading opportunities.
 - [ ] Investigation of GPU-accelerated paths where available.
-- [ ] Optimization backlog prioritized by measured impact.
+- [x] Optimization backlog prioritized by measured impact.
 
 **Deliverables**
 
@@ -1047,6 +1046,24 @@ Recommended early implementation order:
   results.
 - At least one measured optimization pass has reduced real benchmark latency on
   representative fixtures.
+
+**Current Progress Notes**
+
+- A mode-aware operational baseline now exists in
+  `docs/milestone11-baseline.md` and
+  `data/sample_outputs/m11-operational-baseline.json`.
+- On the current 66-card paper-English fixture set:
+  - `greenfield` baseline averages `3.824s`
+  - `reevaluation` baseline averages `3.382s`
+  - `small_pool` averages `1.181s`
+  - `confirmation` averages `1.216s`
+- The dominant open-ended bottleneck is still `secondary_ocr`.
+- The dominant constrained-mode bottleneck is `title_ocr`.
+- Visual tie-break stages are already cheap relative to OCR and should not be
+  the first optimization target.
+- The first measured optimization pass reduced average runtime on the same
+  fixture set to `2.678s` for `greenfield` and `2.423s` for `reevaluation`
+  without changing top-1 accuracy.
 
 ### Milestone 12: Offline Catalog Query Layer
 

@@ -323,6 +323,33 @@ def test_recognize_card_can_force_skip_secondary_ocr(monkeypatch):
     assert result.debug["mode"]["effective"] == "default"
 
 
+def test_recognize_card_skips_secondary_ocr_for_unique_exact_primary_match(monkeypatch):
+    seen_roi_labels: list[str] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_roi_labels.append(roi_label)
+        return OCRResult(
+            lines=["Cromat"] if roi_label == "standard" else ["Legendary Creature - Illusion"],
+            confidence=0.95,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Cromat", normalized_name="", set_code="APC", collector_number="94", layout="normal"),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+
+    result = recognize_card(DummyImage())
+
+    assert seen_roi_labels == ["standard"]
+    assert result.best_name == "Cromat"
+    assert result.top_k_candidates[0].set_code == "APC"
+
+
 def test_recognize_card_supports_explicit_greenfield_mode(monkeypatch):
     def fake_run_ocr(image, roi_label=None, *, crop_region=None):
         return OCRResult(

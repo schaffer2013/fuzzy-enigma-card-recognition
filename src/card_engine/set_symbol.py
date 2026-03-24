@@ -23,6 +23,8 @@ SET_SYMBOL_CACHE_DIR = Path("data") / "cache" / "set_symbol_refs"
 SET_SYMBOL_MATCH_THRESHOLD = 0.84
 SET_SYMBOL_CONFIDENCE_THRESHOLD = 0.92
 SET_SYMBOL_SCORE_WINDOW = 0.12
+PRIMARY_EXACT_SKIP_CONFIDENCE_THRESHOLD = 0.9
+PRIMARY_EXACT_MARGIN_SKIP_THRESHOLD = 0.16
 
 
 @dataclass(frozen=True)
@@ -128,10 +130,30 @@ def should_skip_secondary_ocr(candidates: list[Candidate], confidence: float) ->
     if not candidates:
         return False
     best = candidates[0]
+    notes = set(best.notes or [])
+    if (
+        len(candidates) == 1
+        and "exact" in notes
+        and "noisy_title_ocr" not in notes
+        and confidence >= PRIMARY_EXACT_SKIP_CONFIDENCE_THRESHOLD
+    ):
+        return True
+
+    runner_up = candidates[1] if len(candidates) > 1 else None
+    if (
+        runner_up is not None
+        and best.name != runner_up.name
+        and "exact" in notes
+        and "noisy_title_ocr" not in notes
+        and (best.score - runner_up.score) >= PRIMARY_EXACT_MARGIN_SKIP_THRESHOLD
+        and confidence >= PRIMARY_EXACT_SKIP_CONFIDENCE_THRESHOLD
+    ):
+        return True
+
     return (
         confidence >= SET_SYMBOL_CONFIDENCE_THRESHOLD
-        and bool(best.notes)
-        and ("set_symbol_match" in best.notes or "art_match" in best.notes)
+        and bool(notes)
+        and ("set_symbol_match" in notes or "art_match" in notes)
     )
 
 

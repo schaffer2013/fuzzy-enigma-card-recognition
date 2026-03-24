@@ -3,7 +3,7 @@ import numpy
 from card_engine.catalog.local_index import CatalogRecord, LocalCatalogIndex
 from card_engine.models import Candidate
 from card_engine.normalize import CropRegion
-from card_engine.set_symbol import _load_or_compute_reference_hash, rerank_candidates_by_set_symbol
+from card_engine.set_symbol import _load_or_compute_reference_hash, rerank_candidates_by_set_symbol, should_skip_secondary_ocr
 
 
 def test_rerank_candidates_by_set_symbol_boosts_more_similar_candidate(monkeypatch):
@@ -200,3 +200,30 @@ def test_set_symbol_reference_cache_is_cleared_when_roi_signature_changes(monkey
 
     assert calls["downloads"] == 2
     assert third["gray_dhash"] != first["gray_dhash"]
+
+
+def test_should_skip_secondary_ocr_for_unique_exact_candidate():
+    assert should_skip_secondary_ocr(
+        [Candidate(name="Cromat", score=0.96, set_code="apc", collector_number="94", notes=["exact"])],
+        confidence=0.95,
+    ) is True
+
+
+def test_should_skip_secondary_ocr_for_decisive_exact_nonprinting_gap():
+    assert should_skip_secondary_ocr(
+        [
+            Candidate(name="Counterspell", score=0.95, set_code="7ed", collector_number="67", notes=["exact"]),
+            Candidate(name="Cancel", score=0.72, set_code="m10", collector_number="44", notes=["fuzzy"]),
+        ],
+        confidence=0.93,
+    ) is True
+
+
+def test_should_not_skip_secondary_ocr_for_same_name_printing_tie_without_visual_match():
+    assert should_skip_secondary_ocr(
+        [
+            Candidate(name="Terminate", score=0.91, set_code="arb", collector_number="46", notes=["exact"]),
+            Candidate(name="Terminate", score=0.9, set_code="c20", collector_number="153", notes=["exact"]),
+        ],
+        confidence=0.94,
+    ) is False
