@@ -30,6 +30,7 @@ def recognize_card(
     deadline: float | None = None,
     config: EngineConfig | None = None,
     catalog: LocalCatalogIndex | None = None,
+    skip_secondary_ocr: bool = False,
 ) -> RecognitionResult:
     start_time = time.monotonic()
     stage_timings: dict[str, float] = {}
@@ -143,7 +144,12 @@ def recognize_card(
     _notify(progress_callback, "Scoring candidates...")
     best_name, confidence = _timed_call(stage_timings, "score_candidates_primary", score_candidates, candidates)
 
-    if secondary_rois and not _deadline_exceeded(deadline) and not should_skip_secondary_ocr(candidates, confidence):
+    if (
+        secondary_rois
+        and not skip_secondary_ocr
+        and not _deadline_exceeded(deadline)
+        and not should_skip_secondary_ocr(candidates, confidence)
+    ):
         for roi_group in secondary_rois:
             if _deadline_exceeded(deadline):
                 break
@@ -212,7 +218,10 @@ def recognize_card(
         _notify(progress_callback, "Scoring candidates...")
         best_name, confidence = _timed_call(stage_timings, "score_candidates_secondary", score_candidates, candidates)
     elif secondary_rois:
-        _notify(progress_callback, "Skipping secondary OCR after confident title and visual tie-break match...")
+        if skip_secondary_ocr:
+            _notify(progress_callback, "Skipping secondary OCR for constrained candidate pool...")
+        else:
+            _notify(progress_callback, "Skipping secondary OCR after confident title and visual tie-break match...")
     _notify(progress_callback, f"Recognition complete: {best_name or 'no match'}")
     stage_timings["total"] = round(time.monotonic() - start_time, 4)
 

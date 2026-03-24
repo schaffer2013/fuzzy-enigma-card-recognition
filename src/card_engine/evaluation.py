@@ -476,6 +476,7 @@ def evaluate_fixture_small_pool(
         deadline=deadline,
         config=config,
         catalog=constrained_catalog,
+        skip_secondary_ocr=True,
     )
     runtime_seconds = round(time.monotonic() - started_at, 4)
     return _build_fixture_evaluation(
