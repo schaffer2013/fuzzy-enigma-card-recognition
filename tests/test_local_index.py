@@ -61,6 +61,8 @@ def test_from_sqlite_loads_catalog_rows(tmp_path):
 
     matches = index.exact_lookup("Opt")
     assert [record.name for record in matches] == ["Opt"]
+    assert matches[0].scryfall_id == "opt-1"
+    assert matches[0].oracle_id == "oracle-opt"
     assert matches[0].collector_number == "65"
     assert matches[0].type_line == "Instant"
     assert matches[0].oracle_text == "Scry 1. Draw a card."

@@ -11,7 +11,15 @@ class DummyImage:
 def test_session_tracks_greenfield_results_when_enabled(monkeypatch):
     catalog = LocalCatalogIndex.from_records(
         [
-            CatalogRecord(name="Opt", normalized_name="", set_code="XLN", collector_number="65", layout="normal"),
+            CatalogRecord(
+                name="Opt",
+                normalized_name="",
+                scryfall_id="opt-1",
+                oracle_id="oracle-opt",
+                set_code="XLN",
+                collector_number="65",
+                layout="normal",
+            ),
         ]
     )
 
@@ -21,7 +29,14 @@ def test_session_tracks_greenfield_results_when_enabled(monkeypatch):
             best_name="Opt",
             confidence=0.96,
             top_k_candidates=[
-                Candidate(name="Opt", score=0.94, set_code="XLN", collector_number="65"),
+                Candidate(
+                    name="Opt",
+                    score=0.94,
+                    scryfall_id="opt-1",
+                    oracle_id="oracle-opt",
+                    set_code="XLN",
+                    collector_number="65",
+                ),
             ],
         )
 
@@ -33,6 +48,8 @@ def test_session_tracks_greenfield_results_when_enabled(monkeypatch):
     entries = session.get_tracked_pool_entries()
     assert len(entries) == 1
     assert entries[0].name == "Opt"
+    assert entries[0].scryfall_id == "opt-1"
+    assert entries[0].oracle_id == "oracle-opt"
     assert entries[0].set_code == "XLN"
 
 

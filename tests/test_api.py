@@ -176,7 +176,15 @@ def test_recognize_card_uses_multi_roi_matching_for_catalog_ranking(monkeypatch)
 
     catalog = LocalCatalogIndex.from_records(
         [
-            CatalogRecord(name="Opt", normalized_name="", set_code="XLN", type_line="Instant", layout="normal"),
+            CatalogRecord(
+                name="Opt",
+                normalized_name="",
+                scryfall_id="opt-1",
+                oracle_id="oracle-opt",
+                set_code="XLN",
+                type_line="Instant",
+                layout="normal",
+            ),
             CatalogRecord(name="Opt", normalized_name="", set_code="ALT", type_line="Sorcery", layout="normal"),
         ]
     )
@@ -187,6 +195,8 @@ def test_recognize_card_uses_multi_roi_matching_for_catalog_ranking(monkeypatch)
     result = recognize_card(DummyImage())
 
     assert result.best_name == "Opt"
+    assert result.top_k_candidates[0].scryfall_id == "opt-1"
+    assert result.top_k_candidates[0].oracle_id == "oracle-opt"
     assert result.top_k_candidates[0].set_code == "XLN"
     assert "type_line_match" in (result.top_k_candidates[0].notes or [])
     assert 0.0 <= result.confidence <= 1.0

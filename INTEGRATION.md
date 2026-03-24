@@ -64,10 +64,16 @@ If you want richer parent-side handling for low-confidence scans:
 ```python
 detailed = recognizer.recognize_top_card(frame, mode="greenfield", detailed=True)
 print(detailed.card_name, detailed.confidence)
+print(detailed.scryfall_id, detailed.oracle_id)
 print(detailed.bbox, detailed.active_roi)
 print(detailed.top_k_candidates[:3])
 print(detailed.debug)
 ```
+
+Identifier guidance:
+
+- use `scryfall_id` when the parent needs exact-printing identity
+- use `oracle_id` when the parent wants to group same-card printings
 
 ## Path Ownership
 
@@ -128,8 +134,9 @@ catalog before the first live recognition request.
 `SortingMachineRecognizer` stays backward-compatible by default:
 
 - `recognize_top_card(...)` returns `card_name` plus `confidence`
-- pass `detailed=True` to also receive bbox, OCR lines, candidates, ROI info,
-  debug payload, and the underlying raw recognition result
+- pass `detailed=True` to also receive `scryfall_id`, `oracle_id`, bbox, OCR
+  lines, candidates, ROI info, debug payload, and the underlying raw
+  recognition result
 
 Tracked-pool/session hooks are also available:
 
@@ -143,6 +150,14 @@ output = recognizer.recognize_top_card(frame, mode="small_pool")
 pool_entries = recognizer.get_tracked_pool_entries()
 recognizer.clear_tracked_pool()
 ```
+
+Each tracked-pool entry now includes:
+
+- `name`
+- `scryfall_id`
+- `oracle_id`
+- `set_code`
+- `collector_number`
 
 Use these modes as a starting point:
 

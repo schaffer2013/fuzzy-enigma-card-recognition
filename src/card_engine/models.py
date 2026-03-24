@@ -6,6 +6,8 @@ from typing import Any
 class Candidate:
     name: str
     score: float
+    scryfall_id: str | None = None
+    oracle_id: str | None = None
     set_code: str | None = None
     collector_number: str | None = None
     notes: list[str] | None = None

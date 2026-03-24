@@ -104,6 +104,8 @@ def test_adapter_can_return_detailed_output(monkeypatch):
                     Candidate(
                         name="Opt",
                         score=0.9,
+                        scryfall_id="opt-1",
+                        oracle_id="oracle-opt",
                         set_code="XLN",
                         collector_number="65",
                         notes=["title_match"],
@@ -121,10 +123,14 @@ def test_adapter_can_return_detailed_output(monkeypatch):
 
     assert output.card_name == "Opt"
     assert output.confidence == 0.9
+    assert output.scryfall_id == "opt-1"
+    assert output.oracle_id == "oracle-opt"
     assert output.bbox == (1, 2, 3, 4)
     assert output.ocr_lines == ["Opt"]
     assert output.active_roi == "standard"
     assert output.tried_rois == ["standard", "split_left"]
     assert output.top_k_candidates[0].name == "Opt"
+    assert output.top_k_candidates[0].scryfall_id == "opt-1"
+    assert output.top_k_candidates[0].oracle_id == "oracle-opt"
     assert output.debug["mode"]["effective"] == "greenfield"
     assert output.raw_result.best_name == "Opt"

@@ -10,6 +10,8 @@ from card_engine.utils.text_normalize import normalize_text
 class CatalogRecord:
     name: str
     normalized_name: str
+    scryfall_id: str | None = None
+    oracle_id: str | None = None
     set_code: str | None = None
     collector_number: str | None = None
     layout: str | None = None
@@ -33,6 +35,8 @@ class LocalCatalogIndex:
             CatalogRecord(
                 name=record.name,
                 normalized_name=normalize_text(record.normalized_name or record.name),
+                scryfall_id=record.scryfall_id.strip() if record.scryfall_id else None,
+                oracle_id=record.oracle_id.strip() if record.oracle_id else None,
                 set_code=record.set_code,
                 collector_number=record.collector_number,
                 layout=record.layout,
@@ -76,6 +80,8 @@ class LocalCatalogIndex:
                 SELECT
                     cards.name,
                     cards.normalized_name,
+                    cards.scryfall_id,
+                    cards.oracle_id,
                     cards.set_code,
                     cards.collector_number,
                     cards.layout,
@@ -90,6 +96,8 @@ class LocalCatalogIndex:
                     cards.id,
                     cards.name,
                     cards.normalized_name,
+                    cards.scryfall_id,
+                    cards.oracle_id,
                     cards.set_code,
                     cards.collector_number,
                     cards.layout,
@@ -105,6 +113,8 @@ class LocalCatalogIndex:
                 CatalogRecord(
                     name=name,
                     normalized_name=normalized_name,
+                    scryfall_id=scryfall_id,
+                    oracle_id=oracle_id,
                     set_code=set_code,
                     collector_number=collector_number,
                     layout=layout,
@@ -114,7 +124,7 @@ class LocalCatalogIndex:
                     image_uri=image_uri,
                     aliases=aliases.split("\u001f") if aliases else [],
                 )
-                for name, normalized_name, set_code, collector_number, layout, type_line, oracle_text, flavor_text, image_uri, aliases in rows
+                for name, normalized_name, scryfall_id, oracle_id, set_code, collector_number, layout, type_line, oracle_text, flavor_text, image_uri, aliases in rows
             ]
         )
 

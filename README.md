@@ -262,8 +262,8 @@ Current adapter contract:
 
 - input: a frame-like object or image path accepted by `recognize_card(...)`
 - output: card name plus confidence
-- optional richer output with bbox, OCR, candidates, ROI info, and debug data
-  via `detailed=True`
+- optional richer output with `scryfall_id`, `oracle_id`, bbox, OCR,
+  candidates, ROI info, and debug data via `detailed=True`
 - tracked-pool inspection/seed/clear hooks for sorter workflows
 - optional mode-aware recognition via the same adapter instance
 
@@ -273,10 +273,19 @@ Detailed adapter use:
 detailed = recognizer.recognize_top_card(frame, mode="greenfield", detailed=True)
 
 print(detailed.card_name, detailed.confidence)
+print(detailed.scryfall_id, detailed.oracle_id)
 print(detailed.bbox, detailed.active_roi)
 print(detailed.top_k_candidates[:3])
 print(detailed.debug)
 ```
+
+When the parent can consume both Scryfall identifiers:
+
+- use `scryfall_id` for exact printing identity
+- use `oracle_id` for grouping same-card printings across sets
+
+Tracked-pool entries now also preserve those identifiers, so parent-side pool
+inspection can work with exact-printing IDs or Oracle-group IDs directly.
 
 The adapter lives in [sortingmachine.py](src/card_engine/adapters/sortingmachine.py).
 

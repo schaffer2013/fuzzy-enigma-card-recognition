@@ -123,6 +123,8 @@ def _candidate_from_catalog_match(
     return Candidate(
         name=match.record.name,
         score=max(0.0, min(1.0, round(score, 4))),
+        scryfall_id=match.record.scryfall_id,
+        oracle_id=match.record.oracle_id,
         set_code=match.record.set_code,
         collector_number=match.record.collector_number,
         notes=notes,

@@ -80,6 +80,7 @@ Use [INTEGRATION.md](INTEGRATION.md) for:
 - `SortingMachineRecognizer` examples
 - `detailed=True` adapter output
 - tracked-pool/session usage
+- `scryfall_id` / `oracle_id` adapter and pool identifiers
 - parent-owned config and data-directory recommendations
 - first-run catalog side effects
 

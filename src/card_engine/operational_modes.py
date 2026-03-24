@@ -155,6 +155,8 @@ def _resolve_constrained_catalog(
             CatalogRecord(
                 name=record.name,
                 normalized_name=record.normalized_name,
+                scryfall_id=record.scryfall_id,
+                oracle_id=record.oracle_id,
                 set_code=record.set_code,
                 collector_number=record.collector_number,
                 layout=record.layout,
@@ -326,6 +328,8 @@ def _with_candidate_score(candidate: Candidate, score: float, note: str) -> Cand
     return Candidate(
         name=candidate.name,
         score=score,
+        scryfall_id=candidate.scryfall_id,
+        oracle_id=candidate.oracle_id,
         set_code=candidate.set_code,
         collector_number=candidate.collector_number,
         notes=notes,
@@ -337,6 +341,8 @@ def _candidate_payload(candidate: Candidate | None) -> dict | None:
         return None
     return {
         "name": candidate.name,
+        "scryfall_id": candidate.scryfall_id,
+        "oracle_id": candidate.oracle_id,
         "set_code": candidate.set_code,
         "collector_number": candidate.collector_number,
         "score": candidate.score,

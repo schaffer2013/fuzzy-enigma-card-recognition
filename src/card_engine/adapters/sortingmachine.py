@@ -15,6 +15,8 @@ class SortingMachineOutput:
 
 @dataclass
 class SortingMachineDetailedOutput(SortingMachineOutput):
+    scryfall_id: str | None
+    oracle_id: str | None
     bbox: tuple[int, int, int, int] | None
     ocr_lines: list[str]
     top_k_candidates: list[Candidate]
@@ -51,9 +53,12 @@ class SortingMachineRecognizer:
         )
         if not detailed:
             return SortingMachineOutput(card_name=result.best_name, confidence=result.confidence)
+        best_candidate = result.top_k_candidates[0] if result.top_k_candidates else None
         return SortingMachineDetailedOutput(
             card_name=result.best_name,
             confidence=result.confidence,
+            scryfall_id=best_candidate.scryfall_id if best_candidate else None,
+            oracle_id=best_candidate.oracle_id if best_candidate else None,
             bbox=result.bbox,
             ocr_lines=list(result.ocr_lines),
             top_k_candidates=list(result.top_k_candidates),

@@ -16,6 +16,8 @@ DEFAULT_TRACK_CONFIDENCE_THRESHOLD = 0.85
 @dataclass(frozen=True)
 class TrackedPoolEntry:
     name: str
+    scryfall_id: str | None
+    oracle_id: str | None
     set_code: str | None
     collector_number: str | None
 
@@ -42,6 +44,8 @@ class TrackedPool:
         return [
             TrackedPoolEntry(
                 name=record.name,
+                scryfall_id=record.scryfall_id,
+                oracle_id=record.oracle_id,
                 set_code=record.set_code,
                 collector_number=record.collector_number,
             )
