@@ -313,6 +313,13 @@ def compute_art_fingerprint(image_array) -> dict[str, float | str | list[float]]
     return _compute_art_fingerprint(image_array)
 
 
+def art_fingerprint_similarity(
+    observed_fingerprint: dict[str, float | str | list[float]],
+    reference_fingerprint: dict[str, float | str | list[float]],
+) -> float:
+    return _fingerprint_similarity(observed_fingerprint, reference_fingerprint)
+
+
 def _refresh_reference_cache_if_needed() -> None:
     manifest_path = ART_MATCH_CACHE_DIR / "_cache_meta.json"
     current_meta = {"roi_signature": _current_roi_signature()}

@@ -13,6 +13,16 @@ class Candidate:
     notes: list[str] | None = None
 
 
+@dataclass(frozen=True)
+class VisualPoolCandidate:
+    name: str
+    scryfall_id: str | None = None
+    oracle_id: str | None = None
+    set_code: str | None = None
+    collector_number: str | None = None
+    observed_art_fingerprint: dict[str, Any] = field(default_factory=dict)
+
+
 @dataclass
 class RecognitionResult:
     bbox: tuple[int, int, int, int] | None

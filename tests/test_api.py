@@ -4,7 +4,7 @@ import numpy
 
 from card_engine.api import recognize_card
 from card_engine.catalog.local_index import CatalogRecord, LocalCatalogIndex
-from card_engine.models import Candidate
+from card_engine.models import Candidate, VisualPoolCandidate
 from card_engine.ocr import OCRResult
 from card_engine.operational_modes import CandidatePool, ExpectedCard
 from card_engine.ui.app import EditableLoadedImage
@@ -373,6 +373,74 @@ def test_recognize_card_supports_explicit_greenfield_mode(monkeypatch):
     assert result.debug["mode"]["requested"] == "greenfield"
     assert result.debug["mode"]["effective"] == "greenfield"
     assert result.debug["mode"]["candidate_count"] == 1
+
+
+def test_recognize_card_can_short_circuit_small_pool_via_visual_pool(monkeypatch):
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Island", normalized_name="", set_code="M21", collector_number="264", layout="normal"),
+            CatalogRecord(name="Forest", normalized_name="", set_code="M21", collector_number="274", layout="normal"),
+        ]
+    )
+
+    detection = type("Detection", (), {"bbox": (0, 0, 80, 100), "quad": None, "debug": {"method": "fake"}})()
+    art_crop = type(
+        "Crop",
+        (),
+        {
+            "label": "art_box",
+            "bbox": (0, 0, 40, 40),
+            "shape": (40, 40, 3),
+            "image_array": numpy.zeros((40, 40, 3), dtype=numpy.uint8),
+        },
+    )()
+    normalized = type(
+        "Normalized",
+        (),
+        {
+            "normalized_image": DummyImage(),
+            "crops": {"art_match:art_box": art_crop},
+            "debug_outputs": {"roi_groups": {"art_match": [("art_box", (0, 0, 40, 40))]}},
+        },
+    )()
+
+    monkeypatch.setattr("card_engine.api.detect_card", lambda image: detection)
+    monkeypatch.setattr("card_engine.api.normalize_card", lambda *args, **kwargs: normalized)
+    monkeypatch.setattr(
+        "card_engine.api.compute_art_fingerprint",
+        lambda *_args, **_kwargs: {"gray_dhash": "a" * 64, "edge_dhash": "b" * 64, "mean_bgr": [1.0, 2.0, 3.0]},
+    )
+    monkeypatch.setattr(
+        "card_engine.api.art_fingerprint_similarity",
+        lambda observed, reference: 0.98 if reference.get("token") == "island" else 0.72,
+    )
+    monkeypatch.setattr("card_engine.api.run_ocr", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("OCR should not run")))
+
+    result = recognize_card(
+        DummyImage(),
+        mode="small_pool",
+        candidate_pool=CandidatePool.from_records(catalog.records),
+        visual_pool_candidates=[
+            VisualPoolCandidate(
+                name="Island",
+                set_code="M21",
+                collector_number="264",
+                observed_art_fingerprint={"token": "island"},
+            ),
+            VisualPoolCandidate(
+                name="Forest",
+                set_code="M21",
+                collector_number="274",
+                observed_art_fingerprint={"token": "forest"},
+            ),
+        ],
+        catalog=catalog,
+    )
+
+    assert result.best_name == "Island"
+    assert result.active_roi == "art_match"
+    assert result.debug["small_pool_visual"]["used"] is True
+    assert result.top_k_candidates[0].name == "Island"
 
 
 def test_recognize_card_small_pool_uses_candidate_pool_and_skips_secondary_ocr(monkeypatch):
