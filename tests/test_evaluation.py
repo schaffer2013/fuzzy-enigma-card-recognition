@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 import time
 
+from card_engine.art_prehash import ArtPrehashResult
 from card_engine.evaluation import (
     BenchmarkModeResult,
     BenchmarkReport,
@@ -34,6 +35,7 @@ from card_engine.evaluation import (
     summary_from_json,
     summary_to_json,
     _announce_eta_if_long,
+    _build_benchmark_prehash_plan,
     _build_small_pool_catalog,
     _estimate_fixture_run_seconds_for_operational_modes,
     _estimate_fixture_run_seconds,
@@ -591,6 +593,165 @@ def test_resolve_operational_modes_expands_all_and_dedupes():
         "small_pool",
         "confirmation",
     ]
+
+
+def test_build_benchmark_prehash_plan_includes_same_oracle_printings(monkeypatch, tmp_path):
+    fixture_path = tmp_path / "opt-deadbeef.png"
+    fixture_path.write_bytes(_minimal_png(width=80, height=100))
+    fixture_path.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "expected_name": "Opt",
+                "expected_set_code": "xln",
+                "expected_collector_number": "65",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Opt",
+                normalized_name="opt",
+                scryfall_id="opt-xln-65",
+                oracle_id="oracle-opt",
+                set_code="xln",
+                collector_number="65",
+                image_uri="https://img.example/opt-xln.png",
+                games=("paper",),
+            ),
+            CatalogRecord(
+                name="Opt",
+                normalized_name="opt",
+                scryfall_id="opt-inv-64",
+                oracle_id="oracle-opt",
+                set_code="inv",
+                collector_number="64",
+                image_uri="https://img.example/opt-inv.png",
+                games=("paper",),
+            ),
+            CatalogRecord(
+                name="Shock",
+                normalized_name="shock",
+                scryfall_id="shock-m19-156",
+                oracle_id="oracle-shock",
+                set_code="m19",
+                collector_number="156",
+                image_uri="https://img.example/shock.png",
+                games=("paper",),
+            ),
+        ]
+    )
+    monkeypatch.setattr("card_engine.evaluation._load_catalog_for_evaluation", lambda db_path: catalog)
+
+    plan = _build_benchmark_prehash_plan(tmp_path, config=EngineConfig(catalog_path="ignored.sqlite3"))
+
+    assert plan.fixture_count == 1
+    assert plan.resolved_fixture_count == 1
+    assert plan.oracle_group_count == 1
+    assert sorted((record.name, record.set_code, record.collector_number) for record in plan.records) == [
+        ("Opt", "inv", "64"),
+        ("Opt", "xln", "65"),
+    ]
+
+
+def test_evaluate_operational_modes_prehashes_fixture_pool_and_same_oracle_records(monkeypatch, tmp_path):
+    fixture_path = tmp_path / "opt-deadbeef.png"
+    fixture_path.write_bytes(_minimal_png(width=80, height=100))
+    fixture_path.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "expected_name": "Opt",
+                "expected_set_code": "xln",
+                "expected_collector_number": "65",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Opt",
+                normalized_name="opt",
+                scryfall_id="opt-xln-65",
+                oracle_id="oracle-opt",
+                set_code="xln",
+                collector_number="65",
+                image_uri="https://img.example/opt-xln.png",
+                games=("paper",),
+            ),
+            CatalogRecord(
+                name="Opt",
+                normalized_name="opt",
+                scryfall_id="opt-inv-64",
+                oracle_id="oracle-opt",
+                set_code="inv",
+                collector_number="64",
+                image_uri="https://img.example/opt-inv.png",
+                games=("paper",),
+            ),
+            CatalogRecord(
+                name="Shock",
+                normalized_name="shock",
+                scryfall_id="shock-m19-156",
+                oracle_id="oracle-shock",
+                set_code="m19",
+                collector_number="156",
+                image_uri="https://img.example/shock.png",
+                games=("paper",),
+            ),
+        ]
+    )
+    monkeypatch.setattr("card_engine.evaluation._load_catalog_for_evaluation", lambda db_path: catalog)
+
+    seen_records: list[list[tuple[str, str | None, str | None]]] = []
+
+    def fake_prehash(records, **kwargs):
+        seen_records.append([(record.name, record.set_code, record.collector_number) for record in records])
+        return ArtPrehashResult(
+            total_eligible=len(records),
+            already_hashed=0,
+            attempted=0,
+            newly_hashed=0,
+            failures=[],
+            elapsed_seconds=0.0,
+        )
+
+    monkeypatch.setattr("card_engine.evaluation.prehash_missing_art_records", fake_prehash)
+    monkeypatch.setattr(
+        "card_engine.evaluation.evaluate_fixture_set",
+        lambda fixtures_dir, *, limit=None, config=None, pair_store=None, progress_callback=None, progress_label=None, fixture_evaluator=None: summary_from_json(
+            {
+                "fixture_count": 1,
+                "scored_count": 1,
+                "set_scored_count": 1,
+                "art_scored_count": 1,
+                "top1_accuracy": 1.0,
+                "top5_accuracy": 1.0,
+                "set_accuracy": 1.0,
+                "art_accuracy": 1.0,
+                "average_confidence": 0.9,
+                "average_scored_confidence": 0.9,
+                "average_runtime_seconds": 0.1,
+                "calibration_error": 0.0,
+                "calibration_bins": [],
+                "average_stage_timings": {"total": 0.1},
+                "roi_usage": {},
+                "error_classes": {"correct_top1": 1},
+                "fixtures": [],
+            }
+        ),
+    )
+
+    evaluate_operational_modes(
+        tmp_path,
+        mode_names=["greenfield", "small_pool"],
+        base_config=EngineConfig(catalog_path="ignored.sqlite3"),
+    )
+
+    assert seen_records == [[("Opt", "xln", "65"), ("Opt", "inv", "64")]]
 
 
 def test_evaluate_benchmark_modes_runs_same_fixture_set_across_modes(monkeypatch, tmp_path):

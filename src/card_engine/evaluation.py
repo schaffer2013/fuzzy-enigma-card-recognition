@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .api import recognize_card
+from .art_prehash import eligible_art_records, prehash_missing_art_records
 from .catalog.local_index import CatalogRecord, LocalCatalogIndex
 from .catalog.scryfall_sync import fetch_random_card_image
 from .config import EngineConfig, load_engine_config
@@ -152,6 +153,14 @@ class OperationalModeReport:
     mode_results: list[OperationalModeResult]
 
 
+@dataclass(frozen=True)
+class BenchmarkPrehashPlan:
+    fixture_count: int
+    resolved_fixture_count: int
+    oracle_group_count: int
+    records: list[CatalogRecord]
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Evaluate recognition accuracy on a fixture folder.")
     parser.add_argument(
@@ -226,6 +235,13 @@ def discover_fixture_paths(fixtures_dir: str | Path) -> list[Path]:
     )
 
 
+def _limited_fixture_paths(fixtures_dir: str | Path, limit: int | None = None) -> list[Path]:
+    fixture_paths = discover_fixture_paths(fixtures_dir)
+    if limit is not None:
+        fixture_paths = fixture_paths[: max(0, limit)]
+    return fixture_paths
+
+
 def evaluate_fixture_set(
     fixtures_dir: str | Path,
     *,
@@ -237,9 +253,7 @@ def evaluate_fixture_set(
     progress_label: str | None = None,
     fixture_evaluator: Callable[..., FixtureEvaluation] | None = None,
 ) -> EvaluationSummary:
-    fixture_paths = discover_fixture_paths(fixtures_dir)
-    if limit is not None:
-        fixture_paths = fixture_paths[: max(0, limit)]
+    fixture_paths = _limited_fixture_paths(fixtures_dir, limit)
 
     config = config or load_engine_config()
     fixture_evaluator = fixture_evaluator or evaluate_fixture
@@ -313,6 +327,12 @@ def evaluate_benchmark_modes(
 ) -> BenchmarkReport:
     resolved_mode_names = resolve_benchmark_modes(mode_names)
     config = base_config or load_engine_config()
+    _prehash_benchmark_art_pool(
+        fixtures_dir,
+        limit=limit,
+        config=config,
+        progress_callback=progress_callback,
+    )
     mode_results: list[BenchmarkModeResult] = []
     for mode_index, mode_name in enumerate(resolved_mode_names, start=1):
         _notify(progress_callback, f"[benchmark] Mode {mode_index}/{len(resolved_mode_names)}: {mode_name}")
@@ -349,6 +369,12 @@ def evaluate_operational_modes(
 ) -> OperationalModeReport:
     resolved_mode_names = resolve_operational_modes(mode_names)
     config = base_config or load_engine_config()
+    _prehash_benchmark_art_pool(
+        fixtures_dir,
+        limit=limit,
+        config=config,
+        progress_callback=progress_callback,
+    )
     mode_results: list[OperationalModeResult] = []
     for mode_index, mode_name in enumerate(resolved_mode_names, start=1):
         _notify(progress_callback, f"[operational] Mode {mode_index}/{len(resolved_mode_names)}: {mode_name}")
@@ -673,6 +699,110 @@ def infer_fixture_expectation(image: LoadedImage) -> FixtureExpectation:
         collector_number=expected_collector_number,
         games=tuple(expected_games),
     )
+
+
+def _build_benchmark_prehash_plan(
+    fixtures_dir: str | Path,
+    *,
+    limit: int | None = None,
+    config: EngineConfig | None = None,
+) -> BenchmarkPrehashPlan:
+    fixture_paths = _limited_fixture_paths(fixtures_dir, limit)
+    if not fixture_paths:
+        return BenchmarkPrehashPlan(0, 0, 0, [])
+
+    catalog = _load_catalog_for_evaluation((config or load_engine_config()).catalog_path)
+    oracle_records: dict[str, list[CatalogRecord]] = {}
+    for record in catalog.records:
+        if record.oracle_id:
+            oracle_records.setdefault(record.oracle_id, []).append(record)
+
+    selected_by_key: dict[tuple[str | None, str | None, str | None], CatalogRecord] = {}
+    resolved_fixture_count = 0
+    oracle_group_ids: set[str] = set()
+
+    for fixture_path in fixture_paths:
+        expected = infer_fixture_expectation(load_image(fixture_path))
+        if not expected.name:
+            continue
+        record = catalog.find_record(
+            name=expected.name,
+            set_code=expected.set_code,
+            collector_number=expected.collector_number,
+        )
+        if record is None:
+            continue
+        resolved_fixture_count += 1
+        _add_prehash_record(selected_by_key, record)
+        if record.oracle_id:
+            oracle_group_ids.add(record.oracle_id)
+            for sibling in oracle_records.get(record.oracle_id, []):
+                _add_prehash_record(selected_by_key, sibling)
+
+    return BenchmarkPrehashPlan(
+        fixture_count=len(fixture_paths),
+        resolved_fixture_count=resolved_fixture_count,
+        oracle_group_count=len(oracle_group_ids),
+        records=eligible_art_records(list(selected_by_key.values())),
+    )
+
+
+def _add_prehash_record(
+    selected_by_key: dict[tuple[str | None, str | None, str | None], CatalogRecord],
+    record: CatalogRecord,
+) -> None:
+    key = (
+        record.scryfall_id,
+        (record.set_code or "").lower() or None,
+        str(record.collector_number or "").lower() or None,
+    )
+    selected_by_key.setdefault(key, record)
+
+
+def _prehash_benchmark_art_pool(
+    fixtures_dir: str | Path,
+    *,
+    limit: int | None = None,
+    config: EngineConfig | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> None:
+    plan = _build_benchmark_prehash_plan(fixtures_dir, limit=limit, config=config)
+    if not plan.records:
+        _notify(progress_callback, "[prehash] No eligible art refs found for this benchmark pool.")
+        return
+
+    _notify(
+        progress_callback,
+        (
+            f"[prehash] Warming art refs for {len(plan.records)} printings from "
+            f"{plan.resolved_fixture_count}/{plan.fixture_count} fixtures "
+            f"across {plan.oracle_group_count} oracle groups."
+        ),
+    )
+    result = prehash_missing_art_records(
+        plan.records,
+        progress_callback=(
+            None
+            if progress_callback is None
+            else lambda progress: _notify(progress_callback, f"[prehash] {progress.message}")
+        ),
+    )
+    if result.cancelled:
+        _notify(
+            progress_callback,
+            (
+                f"[prehash] Cancelled after hashing {result.newly_hashed} new refs "
+                f"with {len(result.failures)} failures."
+            ),
+        )
+    else:
+        _notify(
+            progress_callback,
+            (
+                f"[prehash] Ready: {result.newly_hashed} new refs, "
+                f"{result.already_hashed} already cached, {len(result.failures)} failures."
+            ),
+        )
 
 
 def build_random_sample(
