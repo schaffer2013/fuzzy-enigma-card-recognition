@@ -11,14 +11,14 @@ def test_roi_ordering_respects_cycle_then_remainder():
 def test_resolve_roi_groups_for_split_layout_includes_split_panels():
     groups = resolve_roi_groups_for_layout("split")
 
-    assert groups == ["standard", "art_match", "type_line", "set_symbol", "lower_text", "split_left", "split_right"]
+    assert groups == ["planar_title", "standard", "art_match", "type_line", "set_symbol", "lower_text"]
 
 
 def test_roi_group_bboxes_projects_relative_rois_inside_card_bbox(monkeypatch):
     monkeypatch.setattr("card_engine.roi.repo_roi_overrides", lambda config_path=None: {})
     entries = roi_group_bboxes((10, 20, 100, 200), "split_left")
 
-    assert entries == [("left_panel_title", (15, 36, 40, 24))]
+    assert entries == [("left_panel_title", (13, 138, 12, 80))]
 
 
 def test_roi_group_bboxes_supports_type_line_group(monkeypatch):

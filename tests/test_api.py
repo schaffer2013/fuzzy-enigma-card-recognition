@@ -39,14 +39,28 @@ def test_recognize_card_exposes_normalization_debug_for_quad_inputs():
 class SplitLayoutImage:
     shape = (120, 90, 3)
     layout_hint = "split"
+    image_array = numpy.zeros((120, 90, 3), dtype=numpy.uint8)
 
 
 def test_recognize_card_reports_layout_specific_tried_rois():
     result = recognize_card(SplitLayoutImage())
 
-    assert result.active_roi == "standard"
-    assert result.tried_rois == ["standard", "art_match", "type_line", "set_symbol", "lower_text", "split_left", "split_right"]
-    assert "split_left" in result.debug["normalization"]["roi_groups"]
+    assert result.active_roi == "planar_title"
+    assert result.tried_rois == ["planar_title", "standard", "art_match", "type_line", "set_symbol", "lower_text"]
+    assert "planar_title" in result.debug["normalization"]["roi_groups"]
+
+
+class PlanarLayoutImage:
+    shape = (1490, 1040, 3)
+    layout_hint = "planar"
+    image_array = numpy.zeros((1490, 1040, 3), dtype=numpy.uint8)
+
+
+def test_recognize_card_reports_planar_title_roi_first():
+    result = recognize_card(PlanarLayoutImage())
+
+    assert result.tried_rois[0] == "planar_title"
+    assert "planar_title" in result.debug["normalization"]["roi_groups"]
 
 
 def test_recognize_card_accepts_image_path(tmp_path):
@@ -116,9 +130,9 @@ class SplitOCRImage:
 def test_recognize_card_supports_alternate_roi_ocr_passes():
     result = recognize_card(SplitOCRImage())
 
-    assert result.active_roi == "standard"
+    assert result.active_roi == "planar_title"
     assert result.ocr_lines == []
-    assert result.debug["ocr"]["results_by_roi"]["split_right"]["lines"] == []
+    assert result.debug["ocr"]["results_by_roi"]["planar_title"]["lines"] == []
 
 
 def test_recognize_card_preserves_pixels_for_ui_editable_images(monkeypatch, tmp_path):
@@ -159,6 +173,89 @@ def test_recognize_card_preserves_pixels_for_ui_editable_images(monkeypatch, tmp
 
     assert seen_roi_labels == ["standard", "type_line", "lower_text"]
     assert result.debug["ocr"]["results_by_roi"]["standard"]["debug"]["backend"] == "fake"
+
+
+def test_recognize_card_uses_rotated_planar_title_fallback(monkeypatch):
+    seen_shapes: list[tuple[int, int, int] | None] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_shapes.append(getattr(crop_region, "shape", None))
+        if roi_label == "planar_title" and crop_region is not None and crop_region.shape[1] > crop_region.shape[0]:
+            return OCRResult(
+                lines=["Sokenzan"],
+                confidence=0.92,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+            )
+        return OCRResult(
+            lines=[],
+            confidence=0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Sokenzan",
+                normalized_name="sokenzan",
+                set_code="OPCA",
+                collector_number="72",
+                layout="planar",
+            ),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+
+    result = recognize_card(PlanarLayoutImage())
+
+    assert result.best_name == "Sokenzan"
+    assert result.active_roi == "planar_title"
+    assert result.debug["ocr"]["rotation_degrees"] in (90, 270)
+    assert result.debug["ocr"]["results_by_roi"]["planar_title"]["debug"]["rotation_attempts"]
+    assert any(shape is not None and shape[1] > shape[0] for shape in seen_shapes)
+
+
+def test_recognize_card_uses_planar_title_for_split_layout(monkeypatch):
+    seen_shapes: list[tuple[int, int, int] | None] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_shapes.append(getattr(crop_region, "shape", None))
+        if roi_label == "planar_title" and crop_region is not None and crop_region.shape[1] > crop_region.shape[0]:
+            return OCRResult(
+                lines=["Boom"],
+                confidence=0.91,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+            )
+        return OCRResult(
+            lines=[],
+            confidence=0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Boom // Bust",
+                normalized_name="boom bust",
+                set_code="TSR",
+                collector_number="156",
+                layout="split",
+                aliases=["Boom"],
+            ),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+
+    result = recognize_card(SplitLayoutImage())
+
+    assert result.best_name == "Boom // Bust"
+    assert result.active_roi == "planar_title"
+    assert result.debug["ocr"]["rotation_degrees"] in (90, 270)
+    assert result.debug["ocr"]["results_by_roi"]["planar_title"]["debug"]["rotation_attempts"]
+    assert any(shape is not None and shape[1] > shape[0] for shape in seen_shapes)
 
 
 def test_recognize_card_uses_multi_roi_matching_for_catalog_ranking(monkeypatch):

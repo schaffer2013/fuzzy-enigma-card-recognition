@@ -132,7 +132,7 @@ def _candidate_from_catalog_match(
 
 
 def _select_title_query(ocr_lines: list[str], results_by_roi: dict[str, dict] | None) -> str:
-    title_like_rois = ("standard", "split_left", "split_right", "adventure", "transform_back")
+    title_like_rois = ("planar_title", "standard", "split_left", "split_right", "adventure", "transform_back")
 
     for roi_name in title_like_rois:
         roi_lines = _roi_lines(results_by_roi, roi_name)

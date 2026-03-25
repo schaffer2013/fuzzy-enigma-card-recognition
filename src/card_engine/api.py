@@ -16,7 +16,7 @@ from .detector import detect_card
 from .fixture_cache import persist_saved_detection
 from .matcher import match_candidates
 from .models import Candidate, RecognitionResult, VisualPoolCandidate
-from .normalize import normalize_card
+from .normalize import CropRegion, normalize_card
 from .ocr import run_ocr
 from .operational_modes import (
     CandidatePool,
@@ -30,8 +30,11 @@ from .scorer import score_candidates
 from .set_symbol import rerank_candidates_by_set_symbol, should_skip_secondary_ocr
 from .utils.image_io import load_image
 
-TITLE_FIRST_ROIS = {"standard", "split_left", "split_right", "adventure", "transform_back"}
+TITLE_FIRST_ROIS = {"planar_title", "standard", "adventure", "transform_back"}
 VISUAL_ONLY_ROIS = {"set_symbol", "art_match"}
+ROTATED_TITLE_ROIS = {
+    "planar_title": (90, 270, 0),
+}
 
 
 def recognize_card(
@@ -156,9 +159,9 @@ def recognize_card(
     for roi_group in title_rois:
         _notify(progress_callback, f"Running OCR for ROI: {roi_group}...")
         ocr_start = time.monotonic()
-        result = run_ocr(
+        result = _run_ocr_for_roi_group(
             normalized.normalized_image,
-            roi_label=roi_group,
+            roi_group=roi_group,
             crop_region=_first_crop_for_group(normalized.crops, roi_group),
         )
         _record_duration(stage_timings, "title_ocr", ocr_start)
@@ -250,9 +253,9 @@ def recognize_card(
                 break
             _notify(progress_callback, f"Running OCR for ROI: {roi_group}...")
             ocr_start = time.monotonic()
-            result = run_ocr(
+            result = _run_ocr_for_roi_group(
                 normalized.normalized_image,
-                roi_label=roi_group,
+                roi_group=roi_group,
                 crop_region=_first_crop_for_group(normalized.crops, roi_group),
             )
             _record_duration(stage_timings, "secondary_ocr", ocr_start)
@@ -387,6 +390,60 @@ def _first_crop_for_group(crops: dict[str, Any], group_name: str):
         if crop_name.partition(":")[0] == group_name:
             return crop_region
     return None
+
+
+def _run_ocr_for_roi_group(image: Any, *, roi_group: str, crop_region: CropRegion | None):
+    rotations = ROTATED_TITLE_ROIS.get(roi_group, (0,))
+    best_result = None
+    attempts: list[dict[str, Any]] = []
+    for rotation_degrees in rotations:
+        active_crop = _rotated_crop_region(crop_region, rotation_degrees)
+        result = run_ocr(
+            image,
+            roi_label=roi_group,
+            crop_region=active_crop,
+        )
+        result.debug["rotation_degrees"] = rotation_degrees
+        attempts.append(
+            {
+                "rotation_degrees": rotation_degrees,
+                "line_count": len(result.lines),
+                "confidence": result.confidence,
+                "outcome": result.debug.get("outcome"),
+            }
+        )
+        if best_result is None or _ocr_result_sort_key(result) > _ocr_result_sort_key(best_result):
+            best_result = result
+    if best_result is None:
+        return run_ocr(image, roi_label=roi_group, crop_region=crop_region)
+    best_result.debug["rotation_attempts"] = attempts
+    return best_result
+
+
+def _rotated_crop_region(crop_region: CropRegion | None, rotation_degrees: int) -> CropRegion | None:
+    if crop_region is None or rotation_degrees == 0:
+        return crop_region
+    image_array = getattr(crop_region, "image_array", None)
+    if image_array is None:
+        return crop_region
+    if rotation_degrees == 90:
+        rotated = image_array.transpose(1, 0, 2)[::-1, :, :]
+    elif rotation_degrees == 270:
+        rotated = image_array.transpose(1, 0, 2)[:, ::-1, :]
+    elif rotation_degrees == 180:
+        rotated = image_array[::-1, ::-1, :]
+    else:
+        return crop_region
+    return CropRegion(
+        label=crop_region.label,
+        bbox=crop_region.bbox,
+        shape=getattr(rotated, "shape", crop_region.shape),
+        image_array=rotated,
+    )
+
+
+def _ocr_result_sort_key(result) -> tuple[int, float, int]:
+    return (len(result.lines), result.confidence, sum(len(line) for line in result.lines))
 
 
 @lru_cache(maxsize=4)
