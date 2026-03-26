@@ -171,6 +171,10 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
     assert summary.set_accuracy == 1.0
     assert summary.art_accuracy == 0.5
     assert summary.average_runtime_seconds >= 0.0
+    assert summary.median_runtime_seconds >= 0.0
+    assert summary.runtime_stddev_seconds >= 0.0
+    assert summary.runtime_p95_seconds >= 0.0
+    assert summary.max_runtime_seconds >= 0.0
     assert summary.calibration_error == 0.23
     assert len(summary.calibration_bins) == 2
     assert summary.calibration_bins[0].lower_bound == 0.6
@@ -193,10 +197,18 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
     payload = summary_to_json(summary)
 
     assert "Average runtime (s):" in rendered
+    assert "Median runtime (s):" in rendered
+    assert "Runtime stddev (s):" in rendered
+    assert "Runtime p95 (s):" in rendered
+    assert "Max runtime (s):" in rendered
     assert "Stage timings (avg seconds):" in rendered
     assert "Calibration error (ECE): 0.230" in rendered
     assert "0.6-0.8: count=1, avg_confidence=0.630, accuracy=1.000, gap=0.370" in rendered
     assert payload["average_runtime_seconds"] >= 0.0
+    assert payload["median_runtime_seconds"] >= 0.0
+    assert payload["runtime_stddev_seconds"] >= 0.0
+    assert payload["runtime_p95_seconds"] >= 0.0
+    assert payload["max_runtime_seconds"] >= 0.0
     assert payload["average_stage_timings"] == {}
     assert payload["calibration_error"] == 0.23
     assert payload["calibration_bins"][0]["lower_bound"] == 0.6
@@ -442,6 +454,10 @@ def test_summary_json_round_trip_preserves_comparison_fields():
             "average_confidence": 0.7,
             "average_scored_confidence": 0.7,
             "average_runtime_seconds": 0.1234,
+            "median_runtime_seconds": 0.12,
+            "runtime_stddev_seconds": 0.02,
+            "runtime_p95_seconds": 0.15,
+            "max_runtime_seconds": 0.17,
             "calibration_error": 0.11,
             "calibration_bins": [
                 {
@@ -463,6 +479,10 @@ def test_summary_json_round_trip_preserves_comparison_fields():
     payload = summary_to_json(summary)
 
     assert payload["average_runtime_seconds"] == 0.1234
+    assert payload["median_runtime_seconds"] == 0.12
+    assert payload["runtime_stddev_seconds"] == 0.02
+    assert payload["runtime_p95_seconds"] == 0.15
+    assert payload["max_runtime_seconds"] == 0.17
     assert payload["average_stage_timings"]["title_ocr"] == 0.01
     assert payload["calibration_bins"][0]["calibration_gap"] == 0.2
 
@@ -483,6 +503,10 @@ def test_load_summary_json_reads_saved_eval_summary(tmp_path):
                 "average_confidence": 0.9,
                 "average_scored_confidence": 0.9,
                 "average_runtime_seconds": 0.05,
+                "median_runtime_seconds": 0.05,
+                "runtime_stddev_seconds": 0.0,
+                "runtime_p95_seconds": 0.05,
+                "max_runtime_seconds": 0.05,
                 "calibration_error": 0.02,
                 "calibration_bins": [],
                 "average_stage_timings": {"total": 0.05},
@@ -498,6 +522,8 @@ def test_load_summary_json_reads_saved_eval_summary(tmp_path):
 
     assert summary.fixture_count == 1
     assert summary.average_runtime_seconds == 0.05
+    assert summary.median_runtime_seconds == 0.05
+    assert summary.runtime_p95_seconds == 0.05
     assert summary.average_stage_timings["total"] == 0.05
 
 
@@ -515,6 +541,10 @@ def test_compare_summaries_reports_metric_and_stage_deltas():
             "average_confidence": 0.8,
             "average_scored_confidence": 0.8,
             "average_runtime_seconds": 0.5,
+            "median_runtime_seconds": 0.45,
+            "runtime_stddev_seconds": 0.12,
+            "runtime_p95_seconds": 0.8,
+            "max_runtime_seconds": 1.1,
             "calibration_error": 0.12,
             "calibration_bins": [
                 {
@@ -545,6 +575,10 @@ def test_compare_summaries_reports_metric_and_stage_deltas():
             "average_confidence": 0.78,
             "average_scored_confidence": 0.78,
             "average_runtime_seconds": 0.45,
+            "median_runtime_seconds": 0.4,
+            "runtime_stddev_seconds": 0.08,
+            "runtime_p95_seconds": 0.7,
+            "max_runtime_seconds": 0.95,
             "calibration_error": 0.08,
             "calibration_bins": [
                 {
@@ -570,12 +604,21 @@ def test_compare_summaries_reports_metric_and_stage_deltas():
     assert comparison.metric_deltas[0].delta == 0.1
     assert comparison.metric_deltas[5].label == "Average runtime (s)"
     assert comparison.metric_deltas[5].delta == -0.05
+    assert comparison.metric_deltas[6].label == "Median runtime (s)"
+    assert comparison.metric_deltas[6].delta == -0.05
+    assert comparison.metric_deltas[7].label == "Runtime stddev (s)"
+    assert comparison.metric_deltas[7].delta == -0.04
+    assert comparison.metric_deltas[8].label == "Runtime p95 (s)"
+    assert comparison.metric_deltas[8].delta == -0.1
+    assert comparison.metric_deltas[9].label == "Max runtime (s)"
+    assert comparison.metric_deltas[9].delta == -0.15
     assert comparison.calibration_gap_deltas[0].label == "0.8-1.0"
     assert comparison.calibration_gap_deltas[0].delta == -0.12
     assert comparison.stage_timing_deltas[0].label == "title_ocr"
     assert "Comparison: candidate run vs baseline.json" in rendered
     assert "Name top-1 accuracy: 0.7000 -> 0.8000 (+0.1000)" in rendered
     assert "Average runtime (s): 0.5000 -> 0.4500 (-0.0500)" in rendered
+    assert "Runtime p95 (s): 0.8000 -> 0.7000 (-0.1000)" in rendered
 
 
 def test_resolve_benchmark_modes_expands_all_and_dedupes():
@@ -868,6 +911,10 @@ def test_benchmark_report_renders_and_serializes_mode_accuracy():
                         "average_confidence": 0.85,
                         "average_scored_confidence": 0.85,
                         "average_runtime_seconds": 0.12,
+                        "median_runtime_seconds": 0.11,
+                        "runtime_stddev_seconds": 0.02,
+                        "runtime_p95_seconds": 0.16,
+                        "max_runtime_seconds": 0.19,
                         "calibration_error": 0.04,
                         "calibration_bins": [],
                         "average_stage_timings": {"total": 0.12},
@@ -885,8 +932,10 @@ def test_benchmark_report_renders_and_serializes_mode_accuracy():
 
     assert "Mode: default" in rendered
     assert "Top-1 accuracy: 0.900" in rendered
+    assert "Runtime p95 (s): 0.160" in rendered
     assert payload["mode_results"][0]["mode_name"] == "default"
     assert payload["mode_results"][0]["summary"]["set_accuracy"] == 0.8
+    assert payload["mode_results"][0]["summary"]["runtime_stddev_seconds"] == 0.02
 
 
 def test_operational_mode_report_renders_and_serializes_mode_accuracy():
@@ -908,6 +957,10 @@ def test_operational_mode_report_renders_and_serializes_mode_accuracy():
                         "average_confidence": 0.85,
                         "average_scored_confidence": 0.85,
                         "average_runtime_seconds": 0.12,
+                        "median_runtime_seconds": 0.11,
+                        "runtime_stddev_seconds": 0.01,
+                        "runtime_p95_seconds": 0.14,
+                        "max_runtime_seconds": 0.16,
                         "calibration_error": 0.04,
                         "calibration_bins": [],
                         "average_stage_timings": {"total": 0.12},
@@ -926,8 +979,10 @@ def test_operational_mode_report_renders_and_serializes_mode_accuracy():
 
     assert "Mode: greenfield" in rendered
     assert "Note: Biases the expected card while still allowing disagreement recovery." in rendered
+    assert "Runtime stddev (s): 0.010" in rendered
     assert payload["mode_results"][0]["mode_name"] == "greenfield"
     assert payload["mode_results"][0]["implementation_note"] is not None
+    assert payload["mode_results"][0]["summary"]["max_runtime_seconds"] == 0.16
 
 
 def test_evaluate_fixture_set_tracks_expected_vs_actual_pairs(monkeypatch, tmp_path):
