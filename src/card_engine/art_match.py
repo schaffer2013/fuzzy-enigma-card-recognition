@@ -236,6 +236,7 @@ def _load_or_compute_reference_fingerprint(
     *,
     progress_callback: Callable[[str], None] | None = None,
     download_timeout_seconds: float = 10.0,
+    should_stop: Callable[[], bool] | None = None,
 ) -> dict[str, float | str | list[float]] | None:
     if not record.image_uri:
         return None
@@ -254,7 +255,14 @@ def _load_or_compute_reference_fingerprint(
 
     _notify(progress_callback, f"Comparing art region for {record.set_code or '?'} {record.collector_number or ''}...")
 
-    image = _download_reference_image(record.image_uri, download_timeout_seconds=download_timeout_seconds)
+    if should_stop is not None and should_stop():
+        return None
+
+    image = _download_reference_image(
+        record.image_uri,
+        download_timeout_seconds=download_timeout_seconds,
+        should_stop=should_stop,
+    )
     if image is None:
         return None
     normalized = normalize_card(
@@ -275,14 +283,27 @@ def _load_or_compute_reference_fingerprint(
     return reference_fingerprint
 
 
-def _download_reference_image(image_uri: str, *, download_timeout_seconds: float = 10.0) -> _ReferenceImage | None:
+def _download_reference_image(
+    image_uri: str,
+    *,
+    download_timeout_seconds: float = 10.0,
+    should_stop: Callable[[], bool] | None = None,
+) -> _ReferenceImage | None:
     request = Request(image_uri, headers=REQUEST_HEADERS)
     try:
         with urlopen(request, timeout=download_timeout_seconds) as response:
-            payload = response.read()
+            chunks: list[bytes] = []
+            while True:
+                if should_stop is not None and should_stop():
+                    return None
+                chunk = response.read(64 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
     except Exception:
         return None
 
+    payload = b"".join(chunks)
     buffer = numpy.frombuffer(payload, dtype=numpy.uint8)
     decoded = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
     if decoded is None:

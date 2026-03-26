@@ -1098,6 +1098,38 @@ Recommended early implementation order:
 - The offline query surface remains scoped to paper-relevant cards and
   printings.
 
+### Milestone 13: UI / Engine Package Decoupling
+
+**Status**
+
+- [ ] Separate engine-facing and UI-facing dependency groups cleanly.
+- [ ] Ensure parent repos can install and test engine-only code without UI
+  dependencies.
+- [ ] Move UI-only test coverage behind a UI-specific test target.
+- [ ] Keep adapter and integration examples free of UI imports.
+- [ ] Make package/module boundaries explicit in docs and CI.
+
+**Deliverables**
+
+- A packaging boundary where the recognition engine, adapter, catalog, and
+  benchmark workflows can be installed without pulling in UI code.
+- UI-specific entry points, dependencies, and tests that are optional for
+  parent repos embedding this project as a submodule.
+- A documented test matrix that distinguishes engine-only validation from
+  UI/debug validation.
+- CI or local test commands that let parent repos avoid irrelevant UI test
+  runs.
+
+**Exit Criteria**
+
+- Parent repos can depend on the engine package without importing or testing
+  the debug UI layer.
+- Engine-only test runs do not require UI libraries or UI fixtures.
+- The UI remains available for local debugging, but it is clearly optional and
+  isolated from the integration surface.
+- README/integration docs explain the package split and the intended install
+  paths for submodule consumers.
+
 ---
 
 ## Testing Strategy

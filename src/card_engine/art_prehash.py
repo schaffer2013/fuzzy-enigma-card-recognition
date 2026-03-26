@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
+from datetime import datetime
+import inspect
 from pathlib import Path
 import json
 import os
@@ -31,6 +33,7 @@ class ArtPrehashProgress:
     current_label: str
     elapsed_seconds: float
     eta_seconds: float
+    eta_timestamp: float | None = None
 
     @property
     def cards_per_second(self) -> float:
@@ -40,11 +43,18 @@ class ArtPrehashProgress:
 
     @property
     def message(self) -> str:
+        eta_display = self.eta_datetime_display
         return (
             f"[{self.completed}/{self.total}] {self.successes} hashed, {self.failures} failed | "
             f"current: {self.current_label} | elapsed: {self.elapsed_seconds:.1f}s | "
-            f"rate: {self.cards_per_second:.2f} cards/s | eta: {self.eta_seconds:.1f}s"
+            f"rate: {self.cards_per_second:.2f} cards/s | eta: {eta_display}"
         )
+
+    @property
+    def eta_datetime_display(self) -> str:
+        if self.eta_timestamp is None:
+            return "unknown"
+        return datetime.fromtimestamp(self.eta_timestamp).strftime("%Y-%m-%d %H:%M:%S")
 
 
 @dataclass(frozen=True)
@@ -133,10 +143,10 @@ def prehash_missing_art_records(
     worker_count = max(1, max_workers)
 
     def do_prehash(record: CatalogRecord) -> tuple[str, bool]:
-        fingerprint = _load_or_compute_reference_fingerprint(
-            record,
-            download_timeout_seconds=download_timeout_seconds,
-        )
+        kwargs = {"download_timeout_seconds": download_timeout_seconds}
+        if should_stop is not None and _supports_keyword_argument(_load_or_compute_reference_fingerprint, "should_stop"):
+            kwargs["should_stop"] = should_stop
+        fingerprint = _load_or_compute_reference_fingerprint(record, **kwargs)
         return record_label(record), fingerprint is not None
 
     pending_records = iter(missing)
@@ -183,6 +193,7 @@ def prehash_missing_art_records(
                             current_label=label,
                             elapsed_seconds=elapsed,
                             eta_seconds=eta_seconds,
+                            eta_timestamp=(time.time() + eta_seconds),
                         )
                     )
 
@@ -229,3 +240,14 @@ def _record_secondary_sort_key(record: CatalogRecord) -> tuple[str, str, str]:
         (record.set_code or "").lower(),
         str(record.collector_number or "").lower(),
     )
+
+
+def _supports_keyword_argument(func, keyword: str) -> bool:
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return False
+    for parameter in signature.parameters.values():
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+    return keyword in signature.parameters

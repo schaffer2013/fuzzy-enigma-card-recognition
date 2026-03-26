@@ -227,3 +227,47 @@ def test_should_not_skip_secondary_ocr_for_same_name_printing_tie_without_visual
         ],
         confidence=0.94,
     ) is False
+
+
+def test_should_skip_secondary_ocr_for_supported_single_fuzzy_candidate():
+    assert should_skip_secondary_ocr(
+        [
+            Candidate(
+                name="Rushing-Tide Zubera",
+                score=0.8323,
+                set_code="sok",
+                collector_number="52",
+                notes=["fuzzy", "type_line_match", "layout_match", "noisy_title_ocr"],
+            )
+        ],
+        confidence=0.9623,
+    ) is True
+
+
+def test_should_skip_secondary_ocr_when_name_is_settled_despite_printing_variants():
+    assert should_skip_secondary_ocr(
+        [
+            Candidate(
+                name="Serendib Sorcerer",
+                score=0.8561,
+                set_code="plc",
+                collector_number="61",
+                notes=["fuzzy", "type_line_match", "lower_text_match", "layout_match", "noisy_title_ocr", "set_symbol_match"],
+            ),
+            Candidate(
+                name="Serendib Sorcerer",
+                score=0.856,
+                set_code="plst",
+                collector_number="PLC-61",
+                notes=["fuzzy", "type_line_match", "lower_text_match", "layout_match", "noisy_title_ocr", "set_symbol_weak"],
+            ),
+            Candidate(
+                name="Apprentice Sorcerer",
+                score=0.5325,
+                set_code="p02",
+                collector_number="32",
+                notes=["fuzzy", "type_line_match", "layout_match", "noisy_title_ocr"],
+            ),
+        ],
+        confidence=0.9,
+    ) is True
