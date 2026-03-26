@@ -420,6 +420,127 @@ def test_recognize_card_can_force_skip_secondary_ocr(monkeypatch):
     assert result.debug["mode"]["effective"] == "default"
 
 
+def test_recognize_card_reuses_primary_candidate_records_for_secondary_matching(monkeypatch):
+    seen_candidate_record_counts: list[int | None] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        lines_by_roi = {
+            "standard": ["Rushing Tide Zubera"],
+            "type_line": ["Creature - Zubera Spirit"],
+            "lower_text": ["When Rushing-Tide Zubera dies, draw a card."],
+        }
+        return OCRResult(
+            lines=lines_by_roi.get(roi_label, []),
+            confidence=0.8,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    def fake_match_candidates(
+        ocr_lines,
+        limit=5,
+        catalog=None,
+        *,
+        results_by_roi=None,
+        layout_hint=None,
+        config=None,
+        candidate_records=None,
+    ):
+        seen_candidate_record_counts.append(None if candidate_records is None else len(candidate_records))
+        return [
+            Candidate(name="Rushing-Tide Zubera", score=0.72, set_code="CHK", collector_number="95", notes=["fuzzy"]),
+            Candidate(name="Dripping-Tongue Zubera", score=0.68, set_code="CHK", collector_number="59", notes=["fuzzy"]),
+        ]
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Rushing-Tide Zubera", normalized_name="", set_code="CHK", collector_number="95", layout="normal"),
+            CatalogRecord(name="Dripping-Tongue Zubera", normalized_name="", set_code="CHK", collector_number="59", layout="normal"),
+            CatalogRecord(name="Lightning Bolt", normalized_name="", set_code="M11", collector_number="146", layout="normal"),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr("card_engine.api.match_candidates", fake_match_candidates)
+    monkeypatch.setattr("card_engine.api.should_skip_secondary_ocr", lambda candidates, confidence: False)
+    monkeypatch.setattr(
+        "card_engine.api.rerank_candidates_by_set_symbol",
+        lambda candidates, **kwargs: type("Result", (), {"candidates": candidates, "debug": {"used": False}})(),
+    )
+    monkeypatch.setattr(
+        "card_engine.api.rerank_candidates_by_art",
+        lambda candidates, **kwargs: type("Result", (), {"candidates": candidates, "debug": {"used": False}})(),
+    )
+
+    recognize_card(DummyImage())
+
+    assert seen_candidate_record_counts == [None, 2, 2]
+
+
+def test_recognize_card_can_stop_secondary_ocr_after_first_support_roi(monkeypatch):
+    seen_roi_labels: list[str] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_roi_labels.append(roi_label)
+        lines_by_roi = {
+            "standard": ["Rushing Tide Zubera"],
+            "type_line": ["Creature - Zubera Spirit"],
+            "lower_text": ["When Rushing-Tide Zubera dies, draw a card."],
+        }
+        return OCRResult(
+            lines=lines_by_roi.get(roi_label, []),
+            confidence=0.8,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    call_index = {"value": 0}
+
+    def fake_match_candidates(
+        ocr_lines,
+        limit=5,
+        catalog=None,
+        *,
+        results_by_roi=None,
+        layout_hint=None,
+        config=None,
+        candidate_records=None,
+    ):
+        call_index["value"] += 1
+        if call_index["value"] == 1:
+            return [
+                Candidate(name="Rushing-Tide Zubera", score=0.71, set_code="CHK", collector_number="95", notes=["fuzzy"]),
+                Candidate(name="Dripping-Tongue Zubera", score=0.69, set_code="CHK", collector_number="59", notes=["fuzzy"]),
+            ]
+        return [
+            Candidate(name="Rushing-Tide Zubera", score=0.92, set_code="CHK", collector_number="95", notes=["exact", "type_line_match"]),
+            Candidate(name="Dripping-Tongue Zubera", score=0.62, set_code="CHK", collector_number="59", notes=["fuzzy"]),
+        ]
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Rushing-Tide Zubera", normalized_name="", set_code="CHK", collector_number="95", layout="normal"),
+            CatalogRecord(name="Dripping-Tongue Zubera", normalized_name="", set_code="CHK", collector_number="59", layout="normal"),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr("card_engine.api.match_candidates", fake_match_candidates)
+    monkeypatch.setattr(
+        "card_engine.api.rerank_candidates_by_set_symbol",
+        lambda candidates, **kwargs: type("Result", (), {"candidates": candidates, "debug": {"used": False}})(),
+    )
+    monkeypatch.setattr(
+        "card_engine.api.rerank_candidates_by_art",
+        lambda candidates, **kwargs: type("Result", (), {"candidates": candidates, "debug": {"used": False}})(),
+    )
+
+    result = recognize_card(DummyImage())
+
+    assert seen_roi_labels == ["standard", "type_line"]
+    assert result.best_name == "Rushing-Tide Zubera"
+
+
 def test_recognize_card_skips_secondary_ocr_for_unique_exact_primary_match(monkeypatch):
     seen_roi_labels: list[str] = []
 

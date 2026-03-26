@@ -10,7 +10,7 @@ from .art_match import (
     rerank_candidates_by_art,
 )
 from .catalog.maintenance import ensure_catalog_ready
-from .catalog.local_index import LocalCatalogIndex
+from .catalog.local_index import CatalogRecord, LocalCatalogIndex
 from .config import EngineConfig, load_engine_config
 from .detector import detect_card
 from .fixture_cache import persist_saved_detection
@@ -248,6 +248,7 @@ def recognize_card(
         and not _deadline_exceeded(deadline)
         and not should_skip_secondary_ocr(candidates, confidence)
     ):
+        secondary_candidates = candidates
         for roi_group in secondary_rois:
             if _deadline_exceeded(deadline):
                 break
@@ -265,70 +266,80 @@ def recognize_card(
                 "confidence": result.confidence,
                 "debug": result.debug,
             }
-        active_roi = next((roi for roi in tried_rois if results_by_roi.get(roi, {}).get("lines")), active_roi)
-        ocr = (
-            OCR_like(results_by_roi[active_roi])
-            if active_roi and active_roi in results_by_roi
-            else ocr
-        )
-        _notify(progress_callback, "Re-ranking with secondary OCR signals...")
-        candidates = _timed_call(
-            stage_timings,
-            "match_candidates_secondary",
-            match_candidates,
-            title_match_lines,
-            limit=candidate_pool_limit,
-            catalog=catalog,
-            results_by_roi=results_by_roi,
-            layout_hint=layout_hint,
-            config=config,
-        )
-        if set_symbol_crop is not None and not _deadline_exceeded(deadline):
-            set_symbol_result = _timed_call_supported_kwargs(
-                stage_timings,
-                "set_symbol_compare",
-                rerank_candidates_by_set_symbol,
-                candidates,
-                observed_crop=set_symbol_crop,
-                catalog=catalog,
-                progress_callback=progress_callback,
-                max_comparisons=config.max_visual_tiebreak_candidates,
-                deadline=visual_deadline,
-                download_timeout_seconds=config.reference_download_timeout_seconds,
+            active_roi = next((roi for roi in tried_rois if results_by_roi.get(roi, {}).get("lines")), active_roi)
+            ocr = (
+                OCR_like(results_by_roi[active_roi])
+                if active_roi and active_roi in results_by_roi
+                else ocr
             )
-            candidates = set_symbol_result.candidates
-            set_symbol_debug = set_symbol_result.debug
-        if art_match_crop is not None and not _deadline_exceeded(deadline):
-            art_match_result = _timed_call_supported_kwargs(
+            _notify(progress_callback, "Re-ranking with secondary OCR signals...")
+            secondary_catalog_records = _catalog_records_for_candidates(catalog, secondary_candidates)
+            secondary_candidates = _timed_call(
                 stage_timings,
-                "art_match_compare",
-                rerank_candidates_by_art,
-                candidates,
-                observed_crop=art_match_crop,
+                "match_candidates_secondary",
+                match_candidates,
+                title_match_lines,
+                limit=candidate_pool_limit,
                 catalog=catalog,
-                progress_callback=progress_callback,
-                max_comparisons=config.max_visual_tiebreak_candidates,
-                deadline=visual_deadline,
-                download_timeout_seconds=config.reference_download_timeout_seconds,
+                results_by_roi=results_by_roi,
+                layout_hint=layout_hint,
+                config=config,
+                candidate_records=secondary_catalog_records or None,
             )
-            candidates = art_match_result.candidates
-            art_match_debug = art_match_result.debug
-        candidates, expectation_debug = apply_expected_mode_bias(
-            candidates,
-            mode=resolved_mode.requested_mode,
-            expected_card=expected_card,
-        )
-        _notify(progress_callback, "Scoring candidates...")
-        if resolved_mode.requested_mode == "confirmation":
-            best_name, confidence, confirmation_debug = _timed_call_supported_kwargs(
-                stage_timings,
-                "score_candidates_secondary",
-                score_confirmation_against_expected,
-                candidates,
+            if set_symbol_crop is not None and not _deadline_exceeded(deadline):
+                set_symbol_result = _timed_call_supported_kwargs(
+                    stage_timings,
+                    "set_symbol_compare",
+                    rerank_candidates_by_set_symbol,
+                    secondary_candidates,
+                    observed_crop=set_symbol_crop,
+                    catalog=catalog,
+                    progress_callback=progress_callback,
+                    max_comparisons=config.max_visual_tiebreak_candidates,
+                    deadline=visual_deadline,
+                    download_timeout_seconds=config.reference_download_timeout_seconds,
+                )
+                secondary_candidates = set_symbol_result.candidates
+                set_symbol_debug = set_symbol_result.debug
+            if art_match_crop is not None and not _deadline_exceeded(deadline):
+                art_match_result = _timed_call_supported_kwargs(
+                    stage_timings,
+                    "art_match_compare",
+                    rerank_candidates_by_art,
+                    secondary_candidates,
+                    observed_crop=art_match_crop,
+                    catalog=catalog,
+                    progress_callback=progress_callback,
+                    max_comparisons=config.max_visual_tiebreak_candidates,
+                    deadline=visual_deadline,
+                    download_timeout_seconds=config.reference_download_timeout_seconds,
+                )
+                secondary_candidates = art_match_result.candidates
+                art_match_debug = art_match_result.debug
+            secondary_candidates, expectation_debug = apply_expected_mode_bias(
+                secondary_candidates,
+                mode=resolved_mode.requested_mode,
                 expected_card=expected_card,
             )
-        else:
-            best_name, confidence = _timed_call(stage_timings, "score_candidates_secondary", score_candidates, candidates)
+            _notify(progress_callback, "Scoring candidates...")
+            if resolved_mode.requested_mode == "confirmation":
+                best_name, confidence, confirmation_debug = _timed_call_supported_kwargs(
+                    stage_timings,
+                    "score_candidates_secondary",
+                    score_confirmation_against_expected,
+                    secondary_candidates,
+                    expected_card=expected_card,
+                )
+            else:
+                best_name, confidence = _timed_call(
+                    stage_timings,
+                    "score_candidates_secondary",
+                    score_candidates,
+                    secondary_candidates,
+                )
+            candidates = secondary_candidates
+            if should_skip_secondary_ocr(candidates, confidence):
+                break
     elif secondary_rois:
         if skip_secondary_ocr:
             _notify(progress_callback, "Skipping secondary OCR for constrained candidate pool...")
@@ -383,6 +394,28 @@ def _prepare_image_input(image: Any) -> Any:
         return load_image(image)
 
     return image
+
+
+def _catalog_records_for_candidates(
+    catalog: LocalCatalogIndex,
+    candidates: list[Candidate],
+) -> list[CatalogRecord]:
+    records: list[CatalogRecord] = []
+    seen: set[tuple[str, str | None, str | None]] = set()
+    for candidate in candidates:
+        record = catalog.find_record(
+            name=candidate.name,
+            set_code=candidate.set_code,
+            collector_number=candidate.collector_number,
+        )
+        if record is None:
+            continue
+        key = (record.name, record.set_code, record.collector_number)
+        if key in seen:
+            continue
+        seen.add(key)
+        records.append(record)
+    return records
 
 
 def _first_crop_for_group(crops: dict[str, Any], group_name: str):

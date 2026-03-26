@@ -180,6 +180,32 @@ def test_matcher_can_collapse_all_printings_to_default_when_enabled():
     assert candidates[0].name == "Opt"
 
 
+def test_matcher_can_rerank_within_existing_candidate_records_only():
+    targeted_records = [
+        CatalogRecord(name="Rushing-Tide Zubera", normalized_name="", set_code="CHK", type_line="Creature - Zubera Spirit"),
+        CatalogRecord(name="Dripping-Tongue Zubera", normalized_name="", set_code="CHK", type_line="Creature - Zubera Spirit"),
+    ]
+    full_catalog = LocalCatalogIndex.from_records(
+        targeted_records
+        + [
+            CatalogRecord(name="Lightning Bolt", normalized_name="", set_code="M11", type_line="Instant"),
+            CatalogRecord(name="Counterspell", normalized_name="", set_code="2XM", type_line="Instant"),
+        ]
+    )
+
+    candidates = match_candidates(
+        ["Rushing Tide Zubera"],
+        catalog=full_catalog,
+        candidate_records=targeted_records,
+        results_by_roi={
+            "standard": {"lines": ["Rushing Tide Zubera"]},
+            "type_line": {"lines": ["Creature - Zubera Spirit"]},
+        },
+    )
+
+    assert [candidate.name for candidate in candidates] == ["Rushing-Tide Zubera"]
+
+
 def test_matcher_falls_back_when_catalog_missing():
     candidates = match_candidates(["Lightning", "Bolt"])
 
