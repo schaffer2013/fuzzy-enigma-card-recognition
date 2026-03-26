@@ -191,3 +191,110 @@ Interpretation:
   rail for continuing OCR-policy optimization.
 - Constrained-mode runtime did not move meaningfully, which reinforces the
   current hypothesis that `title_ocr` is the next constrained-mode target.
+
+## Tail-Latency Follow-up
+
+The next performance pass focused on runtime spread rather than averages alone.
+That matters because the real deployment target is a Raspberry Pi 5 in a
+pile-sorting workflow, where occasional multi-second stalls are worse than a
+slightly higher steady baseline.
+
+On the current 20-card benchmark slice, variance-aware reporting showed:
+
+- `greenfield`: average `4.715s`, median `1.992s`, p95 `13.971s`, max `21.437s`
+- `reevaluation`: average `3.170s`, median `1.351s`, p95 `10.794s`, max `11.625s`
+- `small_pool`: average `1.343s`, median `1.297s`, p95 `1.496s`, max `1.719s`
+- `confirmation`: average `1.345s`, median `1.343s`, p95 `1.503s`, max `1.562s`
+
+Interpretation:
+
+- `small_pool` and `confirmation` are already predictable enough for repeated
+  constrained scans.
+- The open-ended modes are not broadly slow; they are mostly suffering from a
+  small number of pathological outliers.
+- The bad tail is driven by OCR ambiguity and the fallback path, not by visual
+  tie-break work.
+
+## Tail-Tuning Pass
+
+The current tail-tuning pass did two things:
+
+- secondary matching now reranks within the already plausible candidate set
+  instead of rescanning the whole catalog
+- secondary OCR can stop after the first useful supporting ROI instead of
+  always consuming every secondary region
+
+Current 20-card validation after that pass:
+
+- `greenfield`: average `4.279s`, median `2.852s`, p95 `13.462s`, max `13.625s`
+- `reevaluation`: average `2.863s`, median `1.516s`, p95 `8.151s`, max `8.359s`
+- `small_pool`: average `1.492s`, median `1.469s`, p95 `1.978s`, max `2.156s`
+- `confirmation`: average `1.536s`, median `1.523s`, p95 `1.751s`, max `1.766s`
+
+Interpretation:
+
+- The open-ended modes improved where it matters most for a Pi deployment:
+  worst-case latency.
+- `greenfield` max runtime dropped from `21.437s` to `13.625s`.
+- `reevaluation` max runtime dropped from `11.625s` to `8.359s`.
+- Constrained modes regressed slightly, but they remain in a much healthier
+  latency band than the open-ended modes.
+
+This is a trade that still makes sense for the current deployment target,
+because the most disruptive user-facing behavior on Pi is the open-ended stall,
+not a few extra tenths of a second in already constrained flows.
+
+## Raspberry Pi 5 Conclusions
+
+Milestone 11 should be interpreted through the expected Raspberry Pi 5 target,
+not through desktop-only assumptions.
+
+### Multithreading
+
+Conclusion: useful for background and batch work, but not yet the main live
+recognition strategy.
+
+- Background jobs like art prehashing benefit from concurrency.
+- The parent app can still get throughput by handling independent work at a
+  higher level.
+- For single-card live recognition, the dominant costs are still OCR policy and
+  fallback behavior rather than a lack of thread-level parallelism around cheap
+  stages.
+- On Pi 5, extra live-stage concurrency risks more contention and worse tail
+  latency before it helps.
+
+Decision:
+
+- keep multithreading for background maintenance and batch workflows
+- do not make live per-card recognition depend on internal multithreaded stage
+  fan-out yet
+
+### GPU Acceleration
+
+Conclusion: not the right next investment for Pi 5.
+
+- The current OCR stack is RapidOCR ONNXRuntime plus PaddleOCR fallback.
+- The measured bottleneck is still OCR decision policy and OCR runtime, not
+  image preprocessing.
+- The Pi 5 does not offer a simple, low-maintenance GPU path here that looks
+  more attractive than continued CPU-side OCR and fallback tuning.
+
+Decision:
+
+- treat GPU acceleration as future research, not a Milestone 11 requirement
+- keep prioritizing CPU-friendly OCR policy, ROI analysis, and optional custom
+  OCR training investigation first
+
+## Practical Milestone 11 Closeout
+
+At this point Milestone 11 has done what it needed to do:
+
+- it established repeatable measurement
+- it identified the real hotspots
+- it produced at least one measured optimization pass
+- it added variance-aware reporting so outliers are visible
+- it closed the multithreading and GPU questions with deployment-aware
+  conclusions for Raspberry Pi 5
+
+The remaining performance work from here should be treated as continued
+optimization, not as blocked Milestone 11 scaffolding.

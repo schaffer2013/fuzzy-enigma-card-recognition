@@ -1018,8 +1018,8 @@ Recommended early implementation order:
 - [x] Version-to-version benchmark reporting for pipeline changes.
 - [x] Baseline latency and throughput targets for common workflows.
 - [x] Hotspot analysis for OCR, visual tie-breaks, catalog lookup, and image preprocessing.
-- [ ] Investigation of multithreading opportunities.
-- [ ] Investigation of GPU-accelerated paths where available.
+- [x] Investigation of multithreading opportunities.
+- [x] Investigation of GPU-accelerated paths where available.
 - [x] Optimization backlog prioritized by measured impact.
 
 **Deliverables**
@@ -1064,6 +1064,23 @@ Recommended early implementation order:
 - The first measured optimization pass reduced average runtime on the same
   fixture set to `2.678s` for `greenfield` and `2.423s` for `reevaluation`
   without changing top-1 accuracy.
+- Variance-aware reporting is now part of the benchmark workflow, so the repo
+  tracks median, p95, max, and runtime standard deviation in addition to the
+  mean.
+- On the current 20-card operational benchmark, `small_pool` and
+  `confirmation` are already in a tight latency band, while `greenfield` and
+  `reevaluation` are mainly hurt by tail-latency outliers rather than broad
+  baseline slowness.
+- The current tail-tuning pass reduced open-ended worst-case latency
+  materially on that benchmark slice by restricting secondary reranking to the
+  already plausible candidate set and allowing secondary OCR to stop after the
+  first useful support ROI.
+- For the expected Raspberry Pi 5 deployment target, multithreading is worth
+  keeping for background/batch work such as prehashing, but it is not yet the
+  right default for live single-card recognition.
+- GPU acceleration remains a future research path rather than a Milestone 11
+  requirement, because the current Pi-oriented bottleneck is OCR policy and
+  fallback behavior, not an obviously GPU-shaped preprocessing stage.
 
 ### Milestone 12: Offline Catalog Query Layer
 
@@ -1076,6 +1093,9 @@ Recommended early implementation order:
   and adapter surfaces.
 - [ ] Lightweight offline inspection/query script for parent-side debugging.
 - [ ] Keep catalog/query scope focused on non-digital paper printings.
+- [ ] Investigate a custom OCR path by fine-tuning PaddleOCR on Magic-specific
+  title crops, with optional ONNX/RapidOCR deployment if the training results
+  justify the added maintenance.
 
 **Deliverables**
 
@@ -1086,6 +1106,8 @@ Recommended early implementation order:
   queries.
 - A small offline inspection/query entry point for local debugging and parent
   integration work.
+- A decision memo on whether a custom-trained OCR recognizer is worth
+  maintaining relative to ROI tuning and fallback-policy improvements.
 
 **Exit Criteria**
 
@@ -1097,6 +1119,9 @@ Recommended early implementation order:
   stable integration points.
 - The offline query surface remains scoped to paper-relevant cards and
   printings.
+- The roadmap explicitly captures whether custom OCR training remains a future
+  investment path or should be deferred in favor of cheaper OCR/ROI
+  heuristics.
 
 ### Milestone 13: UI / Engine Package Decoupling
 
@@ -1221,3 +1246,6 @@ These can remain unresolved initially, but should be tracked:
 - Which non-collector OCR regions are most reliable for tie-breaking?
 - Should type-line OCR be part of MVP or immediately after MVP?
 - How should layout classification interact with ROI cycling?
+- Would a Magic-specific PaddleOCR fine-tune materially outperform ROI tuning
+  and fallback-policy work enough to justify dataset curation, training, and
+  long-term model maintenance?
