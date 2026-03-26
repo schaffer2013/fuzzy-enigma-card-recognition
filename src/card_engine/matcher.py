@@ -39,6 +39,7 @@ def match_candidates(
     results_by_roi: dict[str, dict] | None = None,
     layout_hint: str | None = None,
     config: EngineConfig | None = None,
+    candidate_records: list | None = None,
 ) -> list[Candidate]:
     config = config or EngineConfig()
     title_query = _select_title_query(ocr_lines, results_by_roi)
@@ -49,10 +50,17 @@ def match_candidates(
     lower_text_query = _select_lower_text_query(results_by_roi)
 
     if catalog is not None:
-        matches = catalog.search_name(title_query, limit=max(limit * 3, limit))
+        search_limit = max(limit * 3, limit)
+        matches = (
+            _search_records_by_name(candidate_records, title_query, limit=search_limit)
+            if candidate_records is not None
+            else catalog.search_name(title_query, limit=search_limit)
+        )
         if matches:
             matches, collapsed_for_lazy_optimization = _apply_lazy_printing_optimizations(matches, config)
             if collapsed_for_lazy_optimization:
+                expanded_for_printing_tiebreak = False
+            elif candidate_records is not None:
                 expanded_for_printing_tiebreak = False
             else:
                 matches, expanded_for_printing_tiebreak = _expand_matches_for_printing_tiebreak(matches, catalog)
@@ -132,7 +140,7 @@ def _candidate_from_catalog_match(
 
 
 def _select_title_query(ocr_lines: list[str], results_by_roi: dict[str, dict] | None) -> str:
-    title_like_rois = ("standard", "split_left", "split_right", "adventure", "transform_back")
+    title_like_rois = ("planar_title", "standard", "split_left", "split_right", "adventure", "transform_back")
 
     for roi_name in title_like_rois:
         roi_lines = _roi_lines(results_by_roi, roi_name)
@@ -268,6 +276,50 @@ def _expand_matches_for_printing_tiebreak(
         )
         seen.add(key)
     return expanded, len(expanded) > len(matches)
+
+
+def _search_records_by_name(
+    records: list,
+    query: str,
+    *,
+    limit: int,
+) -> list[CatalogMatch]:
+    normalized_query = normalize_text(query)
+    if not normalized_query:
+        return []
+
+    exact_matches: list[CatalogMatch] = []
+    fuzzy_matches: list[CatalogMatch] = []
+    for record in records:
+        candidates = [normalize_text(record.name)]
+        candidates.extend(normalize_text(alias) for alias in (record.aliases or []))
+        usable_candidates = [candidate for candidate in candidates if candidate]
+        if not usable_candidates:
+            continue
+        if normalized_query in usable_candidates:
+            exact_matches.append(CatalogMatch(record=record, score=1.0, match_type="exact"))
+            continue
+        score = max(_search_fuzzy_score(normalized_query, candidate) for candidate in usable_candidates)
+        if score < 0.55:
+            continue
+        fuzzy_matches.append(CatalogMatch(record=record, score=score, match_type="fuzzy"))
+
+    if exact_matches:
+        exact_matches.sort(key=lambda match: match.record.name)
+        return exact_matches
+    fuzzy_matches.sort(key=lambda match: (-match.score, match.record.name))
+    return fuzzy_matches[:limit]
+
+
+def _search_fuzzy_score(query: str, candidate: str) -> float:
+    ratio = SequenceMatcher(None, query, candidate).ratio()
+
+    query_tokens = set(query.split())
+    candidate_tokens = set(candidate.split())
+    overlap = len(query_tokens & candidate_tokens) / len(query_tokens) if query_tokens else 0.0
+
+    prefix_bonus = 0.05 if candidate.startswith(query) or query.startswith(candidate) else 0.0
+    return min(0.99, (ratio * 0.75) + (overlap * 0.25) + prefix_bonus)
 
 
 def _apply_lazy_printing_optimizations(

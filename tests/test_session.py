@@ -51,6 +51,7 @@ def test_session_tracks_greenfield_results_when_enabled(monkeypatch):
     assert entries[0].scryfall_id == "opt-1"
     assert entries[0].oracle_id == "oracle-opt"
     assert entries[0].set_code == "XLN"
+    assert entries[0].has_observed_art_fingerprint is False
 
 
 def test_session_small_pool_uses_tracked_pool_by_default(monkeypatch):
@@ -83,6 +84,83 @@ def test_session_small_pool_uses_tracked_pool_by_default(monkeypatch):
     session.recognize(DummyImage(), mode="small_pool")
 
     assert seen_candidate_count == 1
+
+
+def test_session_small_pool_can_pass_visual_pool_candidates(monkeypatch):
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Island", normalized_name="", set_code="M21", collector_number="264", layout="normal"),
+        ]
+    )
+    seen_visual_pool_count = 0
+
+    def fake_recognize_card(image, **kwargs):
+        nonlocal seen_visual_pool_count
+        seen_visual_pool_count = len(kwargs.get("visual_pool_candidates") or [])
+        return RecognitionResult(
+            bbox=(0, 0, 80, 100),
+            best_name="Island",
+            confidence=0.93,
+            top_k_candidates=[
+                Candidate(name="Island", score=0.9, set_code="M21", collector_number="264"),
+            ],
+        )
+
+    monkeypatch.setattr("card_engine.session.recognize_card", fake_recognize_card)
+
+    session = RecognitionSession(catalog=catalog)
+    session._tracked_pool.add_record(
+        catalog.records[0],
+        observed_art_fingerprint={"gray_dhash": "a" * 10},
+    )
+
+    session.recognize(DummyImage(), mode="small_pool", prefer_visual_small_pool=True)
+
+    assert seen_visual_pool_count == 1
+
+
+def test_session_tracks_observed_art_fingerprint_from_greenfield_result(monkeypatch):
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Opt",
+                normalized_name="",
+                scryfall_id="opt-1",
+                oracle_id="oracle-opt",
+                set_code="XLN",
+                collector_number="65",
+                layout="normal",
+            ),
+        ]
+    )
+
+    def fake_recognize_card(image, **kwargs):
+        return RecognitionResult(
+            bbox=(0, 0, 80, 100),
+            best_name="Opt",
+            confidence=0.96,
+            top_k_candidates=[
+                Candidate(
+                    name="Opt",
+                    score=0.94,
+                    scryfall_id="opt-1",
+                    oracle_id="oracle-opt",
+                    set_code="XLN",
+                    collector_number="65",
+                    notes=["exact", "art_match"],
+                ),
+            ],
+            debug={"art_match": {"observed_fingerprint": {"gray_dhash": "abc"}}},
+        )
+
+    monkeypatch.setattr("card_engine.session.recognize_card", fake_recognize_card)
+
+    session = RecognitionSession(catalog=catalog, auto_track_results=True)
+    session.recognize(DummyImage(), mode="greenfield")
+
+    entries = session.get_tracked_pool_entries()
+    assert len(entries) == 1
+    assert entries[0].has_observed_art_fingerprint is True
 
 
 def test_session_clear_tracked_pool_resets_entries():

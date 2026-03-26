@@ -4,7 +4,7 @@ import numpy
 
 from card_engine.api import recognize_card
 from card_engine.catalog.local_index import CatalogRecord, LocalCatalogIndex
-from card_engine.models import Candidate
+from card_engine.models import Candidate, VisualPoolCandidate
 from card_engine.ocr import OCRResult
 from card_engine.operational_modes import CandidatePool, ExpectedCard
 from card_engine.ui.app import EditableLoadedImage
@@ -39,14 +39,28 @@ def test_recognize_card_exposes_normalization_debug_for_quad_inputs():
 class SplitLayoutImage:
     shape = (120, 90, 3)
     layout_hint = "split"
+    image_array = numpy.zeros((120, 90, 3), dtype=numpy.uint8)
 
 
 def test_recognize_card_reports_layout_specific_tried_rois():
     result = recognize_card(SplitLayoutImage())
 
-    assert result.active_roi == "standard"
-    assert result.tried_rois == ["standard", "art_match", "type_line", "set_symbol", "lower_text", "split_left", "split_right"]
-    assert "split_left" in result.debug["normalization"]["roi_groups"]
+    assert result.active_roi == "planar_title"
+    assert result.tried_rois == ["planar_title", "standard", "art_match", "type_line", "set_symbol", "lower_text"]
+    assert "planar_title" in result.debug["normalization"]["roi_groups"]
+
+
+class PlanarLayoutImage:
+    shape = (1490, 1040, 3)
+    layout_hint = "planar"
+    image_array = numpy.zeros((1490, 1040, 3), dtype=numpy.uint8)
+
+
+def test_recognize_card_reports_planar_title_roi_first():
+    result = recognize_card(PlanarLayoutImage())
+
+    assert result.tried_rois[0] == "planar_title"
+    assert "planar_title" in result.debug["normalization"]["roi_groups"]
 
 
 def test_recognize_card_accepts_image_path(tmp_path):
@@ -116,9 +130,9 @@ class SplitOCRImage:
 def test_recognize_card_supports_alternate_roi_ocr_passes():
     result = recognize_card(SplitOCRImage())
 
-    assert result.active_roi == "standard"
+    assert result.active_roi == "planar_title"
     assert result.ocr_lines == []
-    assert result.debug["ocr"]["results_by_roi"]["split_right"]["lines"] == []
+    assert result.debug["ocr"]["results_by_roi"]["planar_title"]["lines"] == []
 
 
 def test_recognize_card_preserves_pixels_for_ui_editable_images(monkeypatch, tmp_path):
@@ -159,6 +173,89 @@ def test_recognize_card_preserves_pixels_for_ui_editable_images(monkeypatch, tmp
 
     assert seen_roi_labels == ["standard", "type_line", "lower_text"]
     assert result.debug["ocr"]["results_by_roi"]["standard"]["debug"]["backend"] == "fake"
+
+
+def test_recognize_card_uses_rotated_planar_title_fallback(monkeypatch):
+    seen_shapes: list[tuple[int, int, int] | None] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_shapes.append(getattr(crop_region, "shape", None))
+        if roi_label == "planar_title" and crop_region is not None and crop_region.shape[1] > crop_region.shape[0]:
+            return OCRResult(
+                lines=["Sokenzan"],
+                confidence=0.92,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+            )
+        return OCRResult(
+            lines=[],
+            confidence=0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Sokenzan",
+                normalized_name="sokenzan",
+                set_code="OPCA",
+                collector_number="72",
+                layout="planar",
+            ),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+
+    result = recognize_card(PlanarLayoutImage())
+
+    assert result.best_name == "Sokenzan"
+    assert result.active_roi == "planar_title"
+    assert result.debug["ocr"]["rotation_degrees"] in (90, 270)
+    assert result.debug["ocr"]["results_by_roi"]["planar_title"]["debug"]["rotation_attempts"]
+    assert any(shape is not None and shape[1] > shape[0] for shape in seen_shapes)
+
+
+def test_recognize_card_uses_planar_title_for_split_layout(monkeypatch):
+    seen_shapes: list[tuple[int, int, int] | None] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_shapes.append(getattr(crop_region, "shape", None))
+        if roi_label == "planar_title" and crop_region is not None and crop_region.shape[1] > crop_region.shape[0]:
+            return OCRResult(
+                lines=["Boom"],
+                confidence=0.91,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+            )
+        return OCRResult(
+            lines=[],
+            confidence=0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Boom // Bust",
+                normalized_name="boom bust",
+                set_code="TSR",
+                collector_number="156",
+                layout="split",
+                aliases=["Boom"],
+            ),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+
+    result = recognize_card(SplitLayoutImage())
+
+    assert result.best_name == "Boom // Bust"
+    assert result.active_roi == "planar_title"
+    assert result.debug["ocr"]["rotation_degrees"] in (90, 270)
+    assert result.debug["ocr"]["results_by_roi"]["planar_title"]["debug"]["rotation_attempts"]
+    assert any(shape is not None and shape[1] > shape[0] for shape in seen_shapes)
 
 
 def test_recognize_card_uses_multi_roi_matching_for_catalog_ranking(monkeypatch):
@@ -323,6 +420,154 @@ def test_recognize_card_can_force_skip_secondary_ocr(monkeypatch):
     assert result.debug["mode"]["effective"] == "default"
 
 
+def test_recognize_card_reuses_primary_candidate_records_for_secondary_matching(monkeypatch):
+    seen_candidate_record_counts: list[int | None] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        lines_by_roi = {
+            "standard": ["Rushing Tide Zubera"],
+            "type_line": ["Creature - Zubera Spirit"],
+            "lower_text": ["When Rushing-Tide Zubera dies, draw a card."],
+        }
+        return OCRResult(
+            lines=lines_by_roi.get(roi_label, []),
+            confidence=0.8,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    def fake_match_candidates(
+        ocr_lines,
+        limit=5,
+        catalog=None,
+        *,
+        results_by_roi=None,
+        layout_hint=None,
+        config=None,
+        candidate_records=None,
+    ):
+        seen_candidate_record_counts.append(None if candidate_records is None else len(candidate_records))
+        return [
+            Candidate(name="Rushing-Tide Zubera", score=0.72, set_code="CHK", collector_number="95", notes=["fuzzy"]),
+            Candidate(name="Dripping-Tongue Zubera", score=0.68, set_code="CHK", collector_number="59", notes=["fuzzy"]),
+        ]
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Rushing-Tide Zubera", normalized_name="", set_code="CHK", collector_number="95", layout="normal"),
+            CatalogRecord(name="Dripping-Tongue Zubera", normalized_name="", set_code="CHK", collector_number="59", layout="normal"),
+            CatalogRecord(name="Lightning Bolt", normalized_name="", set_code="M11", collector_number="146", layout="normal"),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr("card_engine.api.match_candidates", fake_match_candidates)
+    monkeypatch.setattr("card_engine.api.should_skip_secondary_ocr", lambda candidates, confidence: False)
+    monkeypatch.setattr(
+        "card_engine.api.rerank_candidates_by_set_symbol",
+        lambda candidates, **kwargs: type("Result", (), {"candidates": candidates, "debug": {"used": False}})(),
+    )
+    monkeypatch.setattr(
+        "card_engine.api.rerank_candidates_by_art",
+        lambda candidates, **kwargs: type("Result", (), {"candidates": candidates, "debug": {"used": False}})(),
+    )
+
+    recognize_card(DummyImage())
+
+    assert seen_candidate_record_counts == [None, 2, 2]
+
+
+def test_recognize_card_can_stop_secondary_ocr_after_first_support_roi(monkeypatch):
+    seen_roi_labels: list[str] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_roi_labels.append(roi_label)
+        lines_by_roi = {
+            "standard": ["Rushing Tide Zubera"],
+            "type_line": ["Creature - Zubera Spirit"],
+            "lower_text": ["When Rushing-Tide Zubera dies, draw a card."],
+        }
+        return OCRResult(
+            lines=lines_by_roi.get(roi_label, []),
+            confidence=0.8,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    call_index = {"value": 0}
+
+    def fake_match_candidates(
+        ocr_lines,
+        limit=5,
+        catalog=None,
+        *,
+        results_by_roi=None,
+        layout_hint=None,
+        config=None,
+        candidate_records=None,
+    ):
+        call_index["value"] += 1
+        if call_index["value"] == 1:
+            return [
+                Candidate(name="Rushing-Tide Zubera", score=0.71, set_code="CHK", collector_number="95", notes=["fuzzy"]),
+                Candidate(name="Dripping-Tongue Zubera", score=0.69, set_code="CHK", collector_number="59", notes=["fuzzy"]),
+            ]
+        return [
+            Candidate(name="Rushing-Tide Zubera", score=0.92, set_code="CHK", collector_number="95", notes=["exact", "type_line_match"]),
+            Candidate(name="Dripping-Tongue Zubera", score=0.62, set_code="CHK", collector_number="59", notes=["fuzzy"]),
+        ]
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Rushing-Tide Zubera", normalized_name="", set_code="CHK", collector_number="95", layout="normal"),
+            CatalogRecord(name="Dripping-Tongue Zubera", normalized_name="", set_code="CHK", collector_number="59", layout="normal"),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr("card_engine.api.match_candidates", fake_match_candidates)
+    monkeypatch.setattr(
+        "card_engine.api.rerank_candidates_by_set_symbol",
+        lambda candidates, **kwargs: type("Result", (), {"candidates": candidates, "debug": {"used": False}})(),
+    )
+    monkeypatch.setattr(
+        "card_engine.api.rerank_candidates_by_art",
+        lambda candidates, **kwargs: type("Result", (), {"candidates": candidates, "debug": {"used": False}})(),
+    )
+
+    result = recognize_card(DummyImage())
+
+    assert seen_roi_labels == ["standard", "type_line"]
+    assert result.best_name == "Rushing-Tide Zubera"
+
+
+def test_recognize_card_skips_secondary_ocr_for_unique_exact_primary_match(monkeypatch):
+    seen_roi_labels: list[str] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_roi_labels.append(roi_label)
+        return OCRResult(
+            lines=["Cromat"] if roi_label == "standard" else ["Legendary Creature - Illusion"],
+            confidence=0.95,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Cromat", normalized_name="", set_code="APC", collector_number="94", layout="normal"),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+
+    result = recognize_card(DummyImage())
+
+    assert seen_roi_labels == ["standard"]
+    assert result.best_name == "Cromat"
+    assert result.top_k_candidates[0].set_code == "APC"
+
+
 def test_recognize_card_supports_explicit_greenfield_mode(monkeypatch):
     def fake_run_ocr(image, roi_label=None, *, crop_region=None):
         return OCRResult(
@@ -346,6 +591,74 @@ def test_recognize_card_supports_explicit_greenfield_mode(monkeypatch):
     assert result.debug["mode"]["requested"] == "greenfield"
     assert result.debug["mode"]["effective"] == "greenfield"
     assert result.debug["mode"]["candidate_count"] == 1
+
+
+def test_recognize_card_can_short_circuit_small_pool_via_visual_pool(monkeypatch):
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Island", normalized_name="", set_code="M21", collector_number="264", layout="normal"),
+            CatalogRecord(name="Forest", normalized_name="", set_code="M21", collector_number="274", layout="normal"),
+        ]
+    )
+
+    detection = type("Detection", (), {"bbox": (0, 0, 80, 100), "quad": None, "debug": {"method": "fake"}})()
+    art_crop = type(
+        "Crop",
+        (),
+        {
+            "label": "art_box",
+            "bbox": (0, 0, 40, 40),
+            "shape": (40, 40, 3),
+            "image_array": numpy.zeros((40, 40, 3), dtype=numpy.uint8),
+        },
+    )()
+    normalized = type(
+        "Normalized",
+        (),
+        {
+            "normalized_image": DummyImage(),
+            "crops": {"art_match:art_box": art_crop},
+            "debug_outputs": {"roi_groups": {"art_match": [("art_box", (0, 0, 40, 40))]}},
+        },
+    )()
+
+    monkeypatch.setattr("card_engine.api.detect_card", lambda image: detection)
+    monkeypatch.setattr("card_engine.api.normalize_card", lambda *args, **kwargs: normalized)
+    monkeypatch.setattr(
+        "card_engine.api.compute_art_fingerprint",
+        lambda *_args, **_kwargs: {"gray_dhash": "a" * 64, "edge_dhash": "b" * 64, "mean_bgr": [1.0, 2.0, 3.0]},
+    )
+    monkeypatch.setattr(
+        "card_engine.api.art_fingerprint_similarity",
+        lambda observed, reference: 0.98 if reference.get("token") == "island" else 0.72,
+    )
+    monkeypatch.setattr("card_engine.api.run_ocr", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("OCR should not run")))
+
+    result = recognize_card(
+        DummyImage(),
+        mode="small_pool",
+        candidate_pool=CandidatePool.from_records(catalog.records),
+        visual_pool_candidates=[
+            VisualPoolCandidate(
+                name="Island",
+                set_code="M21",
+                collector_number="264",
+                observed_art_fingerprint={"token": "island"},
+            ),
+            VisualPoolCandidate(
+                name="Forest",
+                set_code="M21",
+                collector_number="274",
+                observed_art_fingerprint={"token": "forest"},
+            ),
+        ],
+        catalog=catalog,
+    )
+
+    assert result.best_name == "Island"
+    assert result.active_roi == "art_match"
+    assert result.debug["small_pool_visual"]["used"] is True
+    assert result.top_k_candidates[0].name == "Island"
 
 
 def test_recognize_card_small_pool_uses_candidate_pool_and_skips_secondary_ocr(monkeypatch):

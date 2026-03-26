@@ -41,6 +41,7 @@ class SortingMachineRecognizer:
         mode: str | None = None,
         expected_card: ExpectedCard | None = None,
         use_tracked_pool: bool | None = None,
+        prefer_visual_small_pool: bool = False,
         track_result: bool | None = None,
         detailed: bool = False,
     ) -> SortingMachineOutput | SortingMachineDetailedOutput:
@@ -49,6 +50,7 @@ class SortingMachineRecognizer:
             mode=mode,
             expected_card=expected_card,
             use_tracked_pool=use_tracked_pool,
+            prefer_visual_small_pool=prefer_visual_small_pool,
             track_result=track_result,
         )
         if not detailed:

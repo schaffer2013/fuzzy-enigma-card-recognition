@@ -4,6 +4,7 @@ import argparse
 from functools import lru_cache
 import inspect
 import json
+import math
 import re
 import shutil
 import sys
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .api import recognize_card
+from .art_prehash import eligible_art_records, prehash_missing_art_records
 from .catalog.local_index import CatalogRecord, LocalCatalogIndex
 from .catalog.scryfall_sync import fetch_random_card_image
 from .config import EngineConfig, load_engine_config
@@ -91,6 +93,10 @@ class EvaluationSummary:
     average_confidence: float
     average_scored_confidence: float
     average_runtime_seconds: float
+    median_runtime_seconds: float
+    runtime_stddev_seconds: float
+    runtime_p95_seconds: float
+    max_runtime_seconds: float
     calibration_error: float
     calibration_bins: list["ConfidenceCalibrationBin"]
     average_stage_timings: dict[str, float]
@@ -150,6 +156,14 @@ class OperationalModeResult:
 class OperationalModeReport:
     fixtures_dir: str
     mode_results: list[OperationalModeResult]
+
+
+@dataclass(frozen=True)
+class BenchmarkPrehashPlan:
+    fixture_count: int
+    resolved_fixture_count: int
+    oracle_group_count: int
+    records: list[CatalogRecord]
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -226,6 +240,13 @@ def discover_fixture_paths(fixtures_dir: str | Path) -> list[Path]:
     )
 
 
+def _limited_fixture_paths(fixtures_dir: str | Path, limit: int | None = None) -> list[Path]:
+    fixture_paths = discover_fixture_paths(fixtures_dir)
+    if limit is not None:
+        fixture_paths = fixture_paths[: max(0, limit)]
+    return fixture_paths
+
+
 def evaluate_fixture_set(
     fixtures_dir: str | Path,
     *,
@@ -237,9 +258,7 @@ def evaluate_fixture_set(
     progress_label: str | None = None,
     fixture_evaluator: Callable[..., FixtureEvaluation] | None = None,
 ) -> EvaluationSummary:
-    fixture_paths = discover_fixture_paths(fixtures_dir)
-    if limit is not None:
-        fixture_paths = fixture_paths[: max(0, limit)]
+    fixture_paths = _limited_fixture_paths(fixtures_dir, limit)
 
     config = config or load_engine_config()
     fixture_evaluator = fixture_evaluator or evaluate_fixture
@@ -313,6 +332,12 @@ def evaluate_benchmark_modes(
 ) -> BenchmarkReport:
     resolved_mode_names = resolve_benchmark_modes(mode_names)
     config = base_config or load_engine_config()
+    _prehash_benchmark_art_pool(
+        fixtures_dir,
+        limit=limit,
+        config=config,
+        progress_callback=progress_callback,
+    )
     mode_results: list[BenchmarkModeResult] = []
     for mode_index, mode_name in enumerate(resolved_mode_names, start=1):
         _notify(progress_callback, f"[benchmark] Mode {mode_index}/{len(resolved_mode_names)}: {mode_name}")
@@ -349,6 +374,12 @@ def evaluate_operational_modes(
 ) -> OperationalModeReport:
     resolved_mode_names = resolve_operational_modes(mode_names)
     config = base_config or load_engine_config()
+    _prehash_benchmark_art_pool(
+        fixtures_dir,
+        limit=limit,
+        config=config,
+        progress_callback=progress_callback,
+    )
     mode_results: list[OperationalModeResult] = []
     for mode_index, mode_name in enumerate(resolved_mode_names, start=1):
         _notify(progress_callback, f"[operational] Mode {mode_index}/{len(resolved_mode_names)}: {mode_name}")
@@ -415,6 +446,7 @@ def _summarize_evaluations(evaluations: list[FixtureEvaluation]) -> EvaluationSu
     total_confidence = sum(evaluation.confidence for evaluation in evaluations)
     scored_confidence = sum(evaluation.confidence for evaluation in scored)
     total_runtime = sum(evaluation.runtime_seconds for evaluation in evaluations)
+    runtimes = [evaluation.runtime_seconds for evaluation in evaluations]
     calibration_bins = _build_confidence_calibration_bins(scored)
     calibration_error = _expected_calibration_error(calibration_bins, scored_count)
 
@@ -430,6 +462,10 @@ def _summarize_evaluations(evaluations: list[FixtureEvaluation]) -> EvaluationSu
         average_confidence=_safe_ratio(total_confidence, fixture_count),
         average_scored_confidence=_safe_ratio(scored_confidence, scored_count),
         average_runtime_seconds=_safe_ratio(total_runtime, fixture_count),
+        median_runtime_seconds=_median(runtimes),
+        runtime_stddev_seconds=_population_stddev(runtimes),
+        runtime_p95_seconds=_percentile(runtimes, 0.95),
+        max_runtime_seconds=max(runtimes) if runtimes else 0.0,
         calibration_error=calibration_error,
         calibration_bins=calibration_bins,
         average_stage_timings=_average_stage_timings(evaluations),
@@ -675,6 +711,110 @@ def infer_fixture_expectation(image: LoadedImage) -> FixtureExpectation:
     )
 
 
+def _build_benchmark_prehash_plan(
+    fixtures_dir: str | Path,
+    *,
+    limit: int | None = None,
+    config: EngineConfig | None = None,
+) -> BenchmarkPrehashPlan:
+    fixture_paths = _limited_fixture_paths(fixtures_dir, limit)
+    if not fixture_paths:
+        return BenchmarkPrehashPlan(0, 0, 0, [])
+
+    catalog = _load_catalog_for_evaluation((config or load_engine_config()).catalog_path)
+    oracle_records: dict[str, list[CatalogRecord]] = {}
+    for record in catalog.records:
+        if record.oracle_id:
+            oracle_records.setdefault(record.oracle_id, []).append(record)
+
+    selected_by_key: dict[tuple[str | None, str | None, str | None], CatalogRecord] = {}
+    resolved_fixture_count = 0
+    oracle_group_ids: set[str] = set()
+
+    for fixture_path in fixture_paths:
+        expected = infer_fixture_expectation(load_image(fixture_path))
+        if not expected.name:
+            continue
+        record = catalog.find_record(
+            name=expected.name,
+            set_code=expected.set_code,
+            collector_number=expected.collector_number,
+        )
+        if record is None:
+            continue
+        resolved_fixture_count += 1
+        _add_prehash_record(selected_by_key, record)
+        if record.oracle_id:
+            oracle_group_ids.add(record.oracle_id)
+            for sibling in oracle_records.get(record.oracle_id, []):
+                _add_prehash_record(selected_by_key, sibling)
+
+    return BenchmarkPrehashPlan(
+        fixture_count=len(fixture_paths),
+        resolved_fixture_count=resolved_fixture_count,
+        oracle_group_count=len(oracle_group_ids),
+        records=eligible_art_records(list(selected_by_key.values())),
+    )
+
+
+def _add_prehash_record(
+    selected_by_key: dict[tuple[str | None, str | None, str | None], CatalogRecord],
+    record: CatalogRecord,
+) -> None:
+    key = (
+        record.scryfall_id,
+        (record.set_code or "").lower() or None,
+        str(record.collector_number or "").lower() or None,
+    )
+    selected_by_key.setdefault(key, record)
+
+
+def _prehash_benchmark_art_pool(
+    fixtures_dir: str | Path,
+    *,
+    limit: int | None = None,
+    config: EngineConfig | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> None:
+    plan = _build_benchmark_prehash_plan(fixtures_dir, limit=limit, config=config)
+    if not plan.records:
+        _notify(progress_callback, "[prehash] No eligible art refs found for this benchmark pool.")
+        return
+
+    _notify(
+        progress_callback,
+        (
+            f"[prehash] Warming art refs for {len(plan.records)} printings from "
+            f"{plan.resolved_fixture_count}/{plan.fixture_count} fixtures "
+            f"across {plan.oracle_group_count} oracle groups."
+        ),
+    )
+    result = prehash_missing_art_records(
+        plan.records,
+        progress_callback=(
+            None
+            if progress_callback is None
+            else lambda progress: _notify(progress_callback, f"[prehash] {progress.message}")
+        ),
+    )
+    if result.cancelled:
+        _notify(
+            progress_callback,
+            (
+                f"[prehash] Cancelled after hashing {result.newly_hashed} new refs "
+                f"with {len(result.failures)} failures."
+            ),
+        )
+    else:
+        _notify(
+            progress_callback,
+            (
+                f"[prehash] Ready: {result.newly_hashed} new refs, "
+                f"{result.already_hashed} already cached, {len(result.failures)} failures."
+            ),
+        )
+
+
 def build_random_sample(
     output_dir: str | Path,
     *,
@@ -712,6 +852,10 @@ def render_summary(summary: EvaluationSummary) -> str:
         f"Average confidence: {summary.average_confidence:.3f}",
         f"Average scored confidence: {summary.average_scored_confidence:.3f}",
         f"Average runtime (s): {summary.average_runtime_seconds:.3f}",
+        f"Median runtime (s): {summary.median_runtime_seconds:.3f}",
+        f"Runtime stddev (s): {summary.runtime_stddev_seconds:.3f}",
+        f"Runtime p95 (s): {summary.runtime_p95_seconds:.3f}",
+        f"Max runtime (s): {summary.max_runtime_seconds:.3f}",
         f"Calibration error (ECE): {summary.calibration_error:.3f}",
         "",
         "Confidence calibration:",
@@ -791,6 +935,10 @@ def summary_to_json(summary: EvaluationSummary) -> dict:
         "average_confidence": summary.average_confidence,
         "average_scored_confidence": summary.average_scored_confidence,
         "average_runtime_seconds": summary.average_runtime_seconds,
+        "median_runtime_seconds": summary.median_runtime_seconds,
+        "runtime_stddev_seconds": summary.runtime_stddev_seconds,
+        "runtime_p95_seconds": summary.runtime_p95_seconds,
+        "max_runtime_seconds": summary.max_runtime_seconds,
         "calibration_error": summary.calibration_error,
         "calibration_bins": [asdict(calibration_bin) for calibration_bin in summary.calibration_bins],
         "average_stage_timings": summary.average_stage_timings,
@@ -823,6 +971,10 @@ def summary_from_json(payload: dict[str, Any]) -> EvaluationSummary:
         average_confidence=float(payload.get("average_confidence", 0.0) or 0.0),
         average_scored_confidence=float(payload.get("average_scored_confidence", 0.0) or 0.0),
         average_runtime_seconds=float(payload.get("average_runtime_seconds", 0.0) or 0.0),
+        median_runtime_seconds=float(payload.get("median_runtime_seconds", 0.0) or 0.0),
+        runtime_stddev_seconds=float(payload.get("runtime_stddev_seconds", 0.0) or 0.0),
+        runtime_p95_seconds=float(payload.get("runtime_p95_seconds", 0.0) or 0.0),
+        max_runtime_seconds=float(payload.get("max_runtime_seconds", 0.0) or 0.0),
         calibration_error=float(payload.get("calibration_error", 0.0) or 0.0),
         calibration_bins=calibration_bins,
         average_stage_timings=_coerce_stage_timings(payload.get("average_stage_timings", {})),
@@ -853,6 +1005,10 @@ def compare_summaries(
         _metric_delta("Art accuracy", baseline.art_accuracy, current.art_accuracy),
         _metric_delta("Average confidence", baseline.average_confidence, current.average_confidence),
         _metric_delta("Average runtime (s)", baseline.average_runtime_seconds, current.average_runtime_seconds),
+        _metric_delta("Median runtime (s)", baseline.median_runtime_seconds, current.median_runtime_seconds),
+        _metric_delta("Runtime stddev (s)", baseline.runtime_stddev_seconds, current.runtime_stddev_seconds),
+        _metric_delta("Runtime p95 (s)", baseline.runtime_p95_seconds, current.runtime_p95_seconds),
+        _metric_delta("Max runtime (s)", baseline.max_runtime_seconds, current.max_runtime_seconds),
         _metric_delta("Calibration error (ECE)", baseline.calibration_error, current.calibration_error),
     ]
 
@@ -933,6 +1089,10 @@ def render_benchmark_report(report: BenchmarkReport) -> str:
                 f"  Art accuracy: {summary.art_accuracy:.3f}",
                 f"  Average confidence: {summary.average_confidence:.3f}",
                 f"  Average runtime (s): {summary.average_runtime_seconds:.3f}",
+                f"  Median runtime (s): {summary.median_runtime_seconds:.3f}",
+                f"  Runtime stddev (s): {summary.runtime_stddev_seconds:.3f}",
+                f"  Runtime p95 (s): {summary.runtime_p95_seconds:.3f}",
+                f"  Max runtime (s): {summary.max_runtime_seconds:.3f}",
                 f"  Calibration error (ECE): {summary.calibration_error:.3f}",
             ]
         )
@@ -1464,6 +1624,10 @@ def render_operational_mode_report(report: OperationalModeReport) -> str:
                 f"  Art accuracy: {summary.art_accuracy:.3f}",
                 f"  Average confidence: {summary.average_confidence:.3f}",
                 f"  Average runtime (s): {summary.average_runtime_seconds:.3f}",
+                f"  Median runtime (s): {summary.median_runtime_seconds:.3f}",
+                f"  Runtime stddev (s): {summary.runtime_stddev_seconds:.3f}",
+                f"  Runtime p95 (s): {summary.runtime_p95_seconds:.3f}",
+                f"  Max runtime (s): {summary.max_runtime_seconds:.3f}",
                 f"  Calibration error (ECE): {summary.calibration_error:.3f}",
             ]
         )
@@ -1551,6 +1715,41 @@ def _average_stage_timings(evaluations: list[FixtureEvaluation]) -> dict[str, fl
         for stage_name in sorted(totals)
         if counts[stage_name] > 0
     }
+
+
+def _median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        return round(float(ordered[middle]), 4)
+    return round(float((ordered[middle - 1] + ordered[middle]) / 2.0), 4)
+
+
+def _population_stddev(values: list[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    mean_value = sum(values) / len(values)
+    variance = sum((value - mean_value) ** 2 for value in values) / len(values)
+    return round(math.sqrt(variance), 4)
+
+
+def _percentile(values: list[float], quantile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return round(float(ordered[0]), 4)
+    clamped = min(max(quantile, 0.0), 1.0)
+    position = clamped * (len(ordered) - 1)
+    lower_index = int(math.floor(position))
+    upper_index = int(math.ceil(position))
+    if lower_index == upper_index:
+        return round(float(ordered[lower_index]), 4)
+    fraction = position - lower_index
+    interpolated = ordered[lower_index] + ((ordered[upper_index] - ordered[lower_index]) * fraction)
+    return round(float(interpolated), 4)
 
 
 def _coerce_count_dict(payload: object) -> dict[str, int]:

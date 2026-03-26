@@ -4,12 +4,15 @@ import argparse
 from dataclasses import dataclass
 import math
 from pathlib import Path
+import queue
 import sqlite3
+import threading
 import tkinter as tk
 from tkinter import ttk
 
 from card_engine.api import recognize_card
 from card_engine.art_match import ART_MATCH_CACHE_DIR
+from card_engine.art_prehash import ArtPrehashProgress, load_eligible_art_records, prehash_missing_art_records
 from card_engine.catalog.maintenance import catalog_refresh_needed, ensure_catalog_ready
 from card_engine.catalog.scryfall_sync import fetch_random_card_image, prune_random_card_cache
 from card_engine.roi import DEFAULT_ENABLED_ROI_GROUPS, repo_roi_overrides, roi_group_bboxes, save_repo_roi_overrides
@@ -64,8 +67,9 @@ class DragTarget:
 
 
 class OperationSplash:
-    def __init__(self, root: tk.Tk, *, title: str, initial_message: str):
+    def __init__(self, root: tk.Tk, *, title: str, initial_message: str, cancel_callback=None):
         self.root = root
+        self._cancel_callback = cancel_callback
         self.window = tk.Toplevel(root)
         self.window.title(title)
         self.window.transient(root)
@@ -88,6 +92,8 @@ class OperationSplash:
 
         self.log_text = tk.Text(frame, height=8, width=52, state="disabled", wrap="word")
         self.log_text.grid(row=2, column=0, sticky="nsew")
+        if cancel_callback is not None:
+            ttk.Button(frame, text="Cancel", command=self._cancel).grid(row=3, column=0, sticky="e", pady=(10, 0))
         self.update(initial_message)
 
         self.window.update_idletasks()
@@ -108,6 +114,11 @@ class OperationSplash:
     def close(self) -> None:
         self.window.destroy()
         self.root.update_idletasks()
+
+    def _cancel(self) -> None:
+        if self._cancel_callback is not None:
+            self._cancel_callback()
+            self.update("Cancellation requested. Waiting for the current item to finish...")
 
     def _center_on_root(self) -> None:
         self.root.update_idletasks()
@@ -138,6 +149,10 @@ class CardEngineDebugUI:
         self.preview_image: tk.PhotoImage | None = None
         self.preview_transform: PreviewTransform | None = None
         self.active_drag_target: DragTarget | None = None
+        self._prehash_queue: queue.Queue | None = None
+        self._prehash_worker: threading.Thread | None = None
+        self._prehash_splash: OperationSplash | None = None
+        self._prehash_cancel_event = threading.Event()
         self.root = tk.Tk()
         self.root.title("Card Engine Debug UI")
         self.root.minsize(1180, 720)
@@ -157,8 +172,8 @@ class CardEngineDebugUI:
 
         toolbar = ttk.Frame(self.root, padding=(12, 12, 12, 0))
         toolbar.grid(row=0, column=0, columnspan=3, sticky="ew")
-        for column in range(11):
-            toolbar.columnconfigure(column, weight=1 if column == 10 else 0)
+        for column in range(12):
+            toolbar.columnconfigure(column, weight=1 if column == 11 else 0)
 
         ttk.Button(toolbar, text="Prev", command=self._select_previous_fixture).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(toolbar, text="Next", command=self._select_next_fixture).grid(row=0, column=1, padx=(0, 8))
@@ -169,9 +184,11 @@ class CardEngineDebugUI:
         ttk.Button(toolbar, text="Re-evaluate", command=self._re_evaluate).grid(row=0, column=6, padx=(0, 8))
         ttk.Button(toolbar, text="Reset BBox", command=self._reset_manual_bbox).grid(row=0, column=7, padx=(0, 8))
         ttk.Button(toolbar, text="Reset ROI", command=self._reset_manual_roi).grid(row=0, column=8, padx=(0, 8))
+        self.prehash_button = ttk.Button(toolbar, text="Prehash Arts", command=self._start_prehash_art_refs)
+        self.prehash_button.grid(row=0, column=9, padx=(0, 8))
 
         self.fixture_count_var = tk.StringVar(value="0 fixtures")
-        ttk.Label(toolbar, textvariable=self.fixture_count_var).grid(row=0, column=10, sticky="e")
+        ttk.Label(toolbar, textvariable=self.fixture_count_var).grid(row=0, column=11, sticky="e")
 
         fixture_panel = make_panel(self.root, "Fixtures")
         fixture_panel.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=12)
@@ -767,6 +784,10 @@ class CardEngineDebugUI:
 
     def _on_close(self) -> None:
         self._save_overrides()
+        if self._prehash_splash is not None:
+            self._prehash_splash.close()
+            self._prehash_splash = None
+        self._prehash_queue = None
         self.root.destroy()
 
     def run(self) -> None:
@@ -776,6 +797,120 @@ class CardEngineDebugUI:
         total_cards = _count_hashable_catalog_cards(_default_catalog_path())
         prehashed_cards = min(total_cards, _count_prehash_cache_entries())
         self.prehash_var.set(f"{prehashed_cards}/{total_cards} cards pre-hashed")
+
+    def _start_prehash_art_refs(self) -> None:
+        if self._prehash_worker is not None and self._prehash_worker.is_alive():
+            self.state.status_message = "Art prehashing is already running."
+            set_readonly_text(self.status_text, format_status_summary(self.state))
+            return
+
+        total_cards = _count_hashable_catalog_cards(_default_catalog_path())
+        prehashed_cards = min(total_cards, _count_prehash_cache_entries())
+        pending = max(0, total_cards - prehashed_cards)
+        if pending == 0:
+            self.state.status_message = "All available art references are already pre-hashed."
+            self._refresh_prehash_summary()
+            set_readonly_text(self.status_text, format_status_summary(self.state))
+            return
+
+        self.state.status_message = f"Starting art prehash run for {pending} remaining card(s)..."
+        set_readonly_text(self.status_text, format_status_summary(self.state))
+        self._prehash_splash = OperationSplash(
+            self.root,
+            title="Prehashing Art References",
+            initial_message=f"Preparing to hash {pending} missing art reference(s)...",
+            cancel_callback=self._cancel_prehash_art_refs,
+        )
+        self._set_prehash_running(True)
+        self._prehash_queue = queue.Queue()
+        self._prehash_cancel_event.clear()
+        self._prehash_worker = threading.Thread(
+            target=self._run_prehash_worker,
+            name="art-prehash-worker",
+            daemon=True,
+        )
+        self._prehash_worker.start()
+        self.root.after(100, self._poll_prehash_queue)
+
+    def _run_prehash_worker(self) -> None:
+        assert self._prehash_queue is not None
+        try:
+            records = load_eligible_art_records(_default_catalog_path())
+            result = prehash_missing_art_records(
+                records,
+                progress_callback=lambda progress: self._prehash_queue.put(("progress", progress)),
+                should_stop=self._prehash_cancel_event.is_set,
+            )
+        except Exception as exc:
+            self._prehash_queue.put(("error", str(exc)))
+            return
+        self._prehash_queue.put(("done", result))
+
+    def _poll_prehash_queue(self) -> None:
+        queue_obj = self._prehash_queue
+        if queue_obj is None:
+            return
+
+        should_continue = True
+        while True:
+            try:
+                kind, payload = queue_obj.get_nowait()
+            except queue.Empty:
+                break
+
+            if kind == "progress":
+                progress = payload
+                assert isinstance(progress, ArtPrehashProgress)
+                if self._prehash_splash is not None:
+                    self._prehash_splash.update(progress.message)
+                self.state.status_message = progress.message
+                self._refresh_prehash_summary()
+                set_readonly_text(self.status_text, format_status_summary(self.state))
+            elif kind == "done":
+                should_continue = False
+                if self._prehash_splash is not None:
+                    self._prehash_splash.close()
+                    self._prehash_splash = None
+                self._set_prehash_running(False)
+                self._refresh_prehash_summary()
+                if payload.cancelled:
+                    self.state.status_message = (
+                        f"Art prehash run cancelled after hashing {payload.newly_hashed} card(s); "
+                        f"{len(payload.failures)} failed."
+                    )
+                else:
+                    self.state.status_message = (
+                        f"Art prehash run completed. Newly hashed {payload.newly_hashed} card(s), "
+                        f"{len(payload.failures)} failed."
+                    )
+                set_readonly_text(self.status_text, format_status_summary(self.state))
+            elif kind == "error":
+                should_continue = False
+                if self._prehash_splash is not None:
+                    self._prehash_splash.close()
+                    self._prehash_splash = None
+                self._set_prehash_running(False)
+                self._refresh_prehash_summary()
+                self.state.status_message = f"Art prehash run failed: {payload}"
+                set_readonly_text(self.status_text, format_status_summary(self.state))
+
+        if should_continue and self._prehash_worker is not None and self._prehash_worker.is_alive():
+            self.root.after(100, self._poll_prehash_queue)
+        elif should_continue:
+            if self._prehash_splash is not None:
+                self._prehash_splash.close()
+                self._prehash_splash = None
+            self._set_prehash_running(False)
+            self._refresh_prehash_summary()
+            set_readonly_text(self.status_text, format_status_summary(self.state))
+
+    def _set_prehash_running(self, running: bool) -> None:
+        self.prehash_button.configure(state="disabled" if running else "normal")
+
+    def _cancel_prehash_art_refs(self) -> None:
+        self._prehash_cancel_event.set()
+        self.state.status_message = "Cancelling art prehash run..."
+        set_readonly_text(self.status_text, format_status_summary(self.state))
 
 
 def _default_fixtures_dir() -> str:

@@ -625,15 +625,14 @@ What is effectively done today:
 - [ ] Milestone 7 is partially complete.
 - [ ] Milestone 8 is partially complete.
 - [x] Milestone 9 is complete.
-- [ ] Milestone 10 is not started.
+- [x] Milestone 10 is complete.
 - [ ] Milestone 11 is partially complete.
 
 Recommended next step:
 
-- Start **Milestone 10: Operational Recognition Modes** by formalizing the
-  mode-aware API surface and tracked-pool semantics, while using the current
-  benchmark harness from Milestone 11 to keep constrained-mode speedups
-  measurable.
+- Continue **Milestone 11: Pipeline Benchmarking and Performance Engineering**
+  by optimizing the measured OCR bottlenecks, starting with `secondary_ocr` in
+  open-ended modes and `title_ocr` in constrained modes.
 
 ### Implementation Sequencing Adjustment
 
@@ -1017,11 +1016,11 @@ Recommended early implementation order:
 - [x] Persistent benchmark harness beyond ad hoc eval/debug timing.
 - [x] Benchmark harness for repeated runs against representative fixture sets.
 - [x] Version-to-version benchmark reporting for pipeline changes.
-- [ ] Baseline latency and throughput targets for common workflows.
-- [ ] Hotspot analysis for OCR, visual tie-breaks, catalog lookup, and image preprocessing.
-- [ ] Investigation of multithreading opportunities.
-- [ ] Investigation of GPU-accelerated paths where available.
-- [ ] Optimization backlog prioritized by measured impact.
+- [x] Baseline latency and throughput targets for common workflows.
+- [x] Hotspot analysis for OCR, visual tie-breaks, catalog lookup, and image preprocessing.
+- [x] Investigation of multithreading opportunities.
+- [x] Investigation of GPU-accelerated paths where available.
+- [x] Optimization backlog prioritized by measured impact.
 
 **Deliverables**
 
@@ -1048,6 +1047,41 @@ Recommended early implementation order:
 - At least one measured optimization pass has reduced real benchmark latency on
   representative fixtures.
 
+**Current Progress Notes**
+
+- A mode-aware operational baseline now exists in
+  `docs/milestone11-baseline.md` and
+  `data/sample_outputs/m11-operational-baseline.json`.
+- On the current 66-card paper-English fixture set:
+  - `greenfield` baseline averages `3.824s`
+  - `reevaluation` baseline averages `3.382s`
+  - `small_pool` averages `1.181s`
+  - `confirmation` averages `1.216s`
+- The dominant open-ended bottleneck is still `secondary_ocr`.
+- The dominant constrained-mode bottleneck is `title_ocr`.
+- Visual tie-break stages are already cheap relative to OCR and should not be
+  the first optimization target.
+- The first measured optimization pass reduced average runtime on the same
+  fixture set to `2.678s` for `greenfield` and `2.423s` for `reevaluation`
+  without changing top-1 accuracy.
+- Variance-aware reporting is now part of the benchmark workflow, so the repo
+  tracks median, p95, max, and runtime standard deviation in addition to the
+  mean.
+- On the current 20-card operational benchmark, `small_pool` and
+  `confirmation` are already in a tight latency band, while `greenfield` and
+  `reevaluation` are mainly hurt by tail-latency outliers rather than broad
+  baseline slowness.
+- The current tail-tuning pass reduced open-ended worst-case latency
+  materially on that benchmark slice by restricting secondary reranking to the
+  already plausible candidate set and allowing secondary OCR to stop after the
+  first useful support ROI.
+- For the expected Raspberry Pi 5 deployment target, multithreading is worth
+  keeping for background/batch work such as prehashing, but it is not yet the
+  right default for live single-card recognition.
+- GPU acceleration remains a future research path rather than a Milestone 11
+  requirement, because the current Pi-oriented bottleneck is OCR policy and
+  fallback behavior, not an obviously GPU-shaped preprocessing stage.
+
 ### Milestone 12: Offline Catalog Query Layer
 
 **Status**
@@ -1059,6 +1093,9 @@ Recommended early implementation order:
   and adapter surfaces.
 - [ ] Lightweight offline inspection/query script for parent-side debugging.
 - [ ] Keep catalog/query scope focused on non-digital paper printings.
+- [ ] Investigate a custom OCR path by fine-tuning PaddleOCR on Magic-specific
+  title crops, with optional ONNX/RapidOCR deployment if the training results
+  justify the added maintenance.
 
 **Deliverables**
 
@@ -1069,6 +1106,8 @@ Recommended early implementation order:
   queries.
 - A small offline inspection/query entry point for local debugging and parent
   integration work.
+- A decision memo on whether a custom-trained OCR recognizer is worth
+  maintaining relative to ROI tuning and fallback-policy improvements.
 
 **Exit Criteria**
 
@@ -1080,6 +1119,41 @@ Recommended early implementation order:
   stable integration points.
 - The offline query surface remains scoped to paper-relevant cards and
   printings.
+- The roadmap explicitly captures whether custom OCR training remains a future
+  investment path or should be deferred in favor of cheaper OCR/ROI
+  heuristics.
+
+### Milestone 13: UI / Engine Package Decoupling
+
+**Status**
+
+- [ ] Separate engine-facing and UI-facing dependency groups cleanly.
+- [ ] Ensure parent repos can install and test engine-only code without UI
+  dependencies.
+- [ ] Move UI-only test coverage behind a UI-specific test target.
+- [ ] Keep adapter and integration examples free of UI imports.
+- [ ] Make package/module boundaries explicit in docs and CI.
+
+**Deliverables**
+
+- A packaging boundary where the recognition engine, adapter, catalog, and
+  benchmark workflows can be installed without pulling in UI code.
+- UI-specific entry points, dependencies, and tests that are optional for
+  parent repos embedding this project as a submodule.
+- A documented test matrix that distinguishes engine-only validation from
+  UI/debug validation.
+- CI or local test commands that let parent repos avoid irrelevant UI test
+  runs.
+
+**Exit Criteria**
+
+- Parent repos can depend on the engine package without importing or testing
+  the debug UI layer.
+- Engine-only test runs do not require UI libraries or UI fixtures.
+- The UI remains available for local debugging, but it is clearly optional and
+  isolated from the integration surface.
+- README/integration docs explain the package split and the intended install
+  paths for submodule consumers.
 
 ---
 
@@ -1172,3 +1246,6 @@ These can remain unresolved initially, but should be tracked:
 - Which non-collector OCR regions are most reliable for tie-breaking?
 - Should type-line OCR be part of MVP or immediately after MVP?
 - How should layout classification interact with ROI cycling?
+- Would a Magic-specific PaddleOCR fine-tune materially outperform ROI tuning
+  and fallback-policy work enough to justify dataset curation, training, and
+  long-term model maintenance?

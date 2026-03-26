@@ -23,6 +23,17 @@ SET_SYMBOL_CACHE_DIR = Path("data") / "cache" / "set_symbol_refs"
 SET_SYMBOL_MATCH_THRESHOLD = 0.84
 SET_SYMBOL_CONFIDENCE_THRESHOLD = 0.92
 SET_SYMBOL_SCORE_WINDOW = 0.12
+PRIMARY_EXACT_SKIP_CONFIDENCE_THRESHOLD = 0.9
+PRIMARY_EXACT_MARGIN_SKIP_THRESHOLD = 0.16
+SUPPORTED_FUZZY_SKIP_CONFIDENCE_THRESHOLD = 0.94
+SETTLED_NAME_SKIP_CONFIDENCE_THRESHOLD = 0.88
+SETTLED_NAME_DIFFERENT_NAME_MARGIN_THRESHOLD = 0.18
+SECONDARY_SKIP_SUPPORT_NOTES = {
+    "type_line_match",
+    "lower_text_match",
+    "set_symbol_match",
+    "art_match",
+}
 
 
 @dataclass(frozen=True)
@@ -128,10 +139,46 @@ def should_skip_secondary_ocr(candidates: list[Candidate], confidence: float) ->
     if not candidates:
         return False
     best = candidates[0]
+    notes = set(best.notes or [])
+    if (
+        len(candidates) == 1
+        and "exact" in notes
+        and "noisy_title_ocr" not in notes
+        and confidence >= PRIMARY_EXACT_SKIP_CONFIDENCE_THRESHOLD
+    ):
+        return True
+
+    if (
+        len(candidates) == 1
+        and confidence >= SUPPORTED_FUZZY_SKIP_CONFIDENCE_THRESHOLD
+        and bool(notes & SECONDARY_SKIP_SUPPORT_NOTES)
+    ):
+        return True
+
+    runner_up = candidates[1] if len(candidates) > 1 else None
+    if (
+        runner_up is not None
+        and best.name != runner_up.name
+        and "exact" in notes
+        and "noisy_title_ocr" not in notes
+        and (best.score - runner_up.score) >= PRIMARY_EXACT_MARGIN_SKIP_THRESHOLD
+        and confidence >= PRIMARY_EXACT_SKIP_CONFIDENCE_THRESHOLD
+    ):
+        return True
+
+    strongest_different_name = next((candidate for candidate in candidates[1:] if candidate.name != best.name), None)
+    if (
+        strongest_different_name is not None
+        and confidence >= SETTLED_NAME_SKIP_CONFIDENCE_THRESHOLD
+        and (best.score - strongest_different_name.score) >= SETTLED_NAME_DIFFERENT_NAME_MARGIN_THRESHOLD
+        and bool(notes & SECONDARY_SKIP_SUPPORT_NOTES)
+    ):
+        return True
+
     return (
         confidence >= SET_SYMBOL_CONFIDENCE_THRESHOLD
-        and bool(best.notes)
-        and ("set_symbol_match" in best.notes or "art_match" in best.notes)
+        and bool(notes)
+        and ("set_symbol_match" in notes or "art_match" in notes)
     )
 
 
