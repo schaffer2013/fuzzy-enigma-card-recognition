@@ -36,3 +36,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "ui: tests for the optional debug UI layer",
+]

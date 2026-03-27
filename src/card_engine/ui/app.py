@@ -5,17 +5,22 @@ from dataclasses import dataclass, replace
 import math
 from pathlib import Path
 import queue
-import sqlite3
 import threading
 import tkinter as tk
 from tkinter import ttk
 
 from card_engine.api import recognize_card
-from card_engine.art_match import ART_MATCH_CACHE_DIR
-from card_engine.art_prehash import ArtPrehashProgress, load_eligible_art_records, prehash_missing_art_records
+from card_engine.art_prehash import (
+    ArtPrehashProgress,
+    count_prehash_cache_entries,
+    load_eligible_art_records,
+    prehash_missing_art_records,
+)
+from card_engine.catalog.query import OfflineCatalogQuery
 from card_engine.catalog.maintenance import catalog_refresh_needed, ensure_catalog_ready
 from card_engine.catalog.scryfall_sync import fetch_random_card_image, prune_random_card_cache
 from card_engine.config import load_engine_config, parse_roi_expand_factors
+from card_engine.image_types import EditableLoadedImage
 from card_engine.roi import DEFAULT_ENABLED_ROI_GROUPS, repo_roi_overrides, roi_group_bboxes, save_repo_roi_overrides
 from card_engine.utils.geometry import Quad, quad_from_bbox
 from card_engine.utils.image_io import load_image
@@ -41,23 +46,6 @@ from .views import (
 from .widgets import make_panel, make_readonly_text, set_readonly_text
 
 DEFAULT_ROIS = list(DEFAULT_ENABLED_ROI_GROUPS)
-
-
-@dataclass(frozen=True)
-class EditableLoadedImage:
-    path: Path
-    image_format: str
-    width: int
-    height: int
-    layout_hint: str | None
-    content_hash: str | None
-    image_array: object | None
-    card_quad: Quad | None
-    roi_overrides: dict[str, dict[str, tuple[float, float, float, float]]]
-
-    @property
-    def shape(self) -> tuple[int, int, int]:
-        return (self.height, self.width, 3)
 
 
 @dataclass(frozen=True)
@@ -804,7 +792,7 @@ class CardEngineDebugUI:
 
     def _refresh_prehash_summary(self) -> None:
         total_cards = _count_hashable_catalog_cards(self.config.catalog_path)
-        prehashed_cards = min(total_cards, _count_prehash_cache_entries())
+        prehashed_cards = min(total_cards, count_prehash_cache_entries())
         self.prehash_var.set(f"{prehashed_cards}/{total_cards} cards pre-hashed")
 
     def _start_prehash_art_refs(self) -> None:
@@ -814,7 +802,7 @@ class CardEngineDebugUI:
             return
 
         total_cards = _count_hashable_catalog_cards(self.config.catalog_path)
-        prehashed_cards = min(total_cards, _count_prehash_cache_entries())
+        prehashed_cards = min(total_cards, count_prehash_cache_entries())
         pending = max(0, total_cards - prehashed_cards)
         if pending == 0:
             self.state.status_message = "All available art references are already pre-hashed."
@@ -956,28 +944,10 @@ def _merge_roi_override_maps(
 
 
 def _count_hashable_catalog_cards(catalog_path: str | Path) -> int:
-    database = Path(catalog_path)
-    if not database.exists():
-        return 0
     try:
-        with sqlite3.connect(database) as conn:
-            row = conn.execute(
-                """
-                SELECT COUNT(*)
-                FROM cards
-                WHERE image_uri IS NOT NULL
-                  AND TRIM(image_uri) != ''
-                """
-            ).fetchone()
-    except sqlite3.Error:
+        return OfflineCatalogQuery.from_sqlite(catalog_path).count_hashable_printed_cards()
+    except Exception:
         return 0
-    return int(row[0]) if row else 0
-
-
-def _count_prehash_cache_entries() -> int:
-    if not ART_MATCH_CACHE_DIR.exists():
-        return 0
-    return sum(1 for path in ART_MATCH_CACHE_DIR.glob("*.json") if path.name != "_cache_meta.json")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

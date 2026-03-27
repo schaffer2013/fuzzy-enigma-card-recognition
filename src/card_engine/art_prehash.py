@@ -106,6 +106,13 @@ def count_valid_cached_art_records(
     )
 
 
+def count_prehash_cache_entries(*, cache_dir: str | Path | None = None) -> int:
+    cache_root = Path(cache_dir or ART_MATCH_CACHE_DIR)
+    if not cache_root.exists():
+        return 0
+    return sum(1 for path in cache_root.glob("*.json") if path.name != "_cache_meta.json")
+
+
 def prehash_missing_art_records(
     records: list[CatalogRecord],
     *,

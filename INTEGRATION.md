@@ -13,6 +13,8 @@ The base package now includes the image stack required for recognition:
 - OCR-enabled: `pip install -e ./third_party/fuzzy-enigma-card-recognition[ocr]`
 - UI-enabled: `pip install -e ./third_party/fuzzy-enigma-card-recognition[ui]`
 - local development: `pip install -e ./third_party/fuzzy-enigma-card-recognition[ocr,ui,dev]`
+- engine-only tests: `python -m pytest --engine-only`
+- UI-only tests: `python -m pytest --ui-only`
 
 Use the `ocr` extra whenever you expect OCR backends to be available. The `ui`
 extra is only needed for the Scryfall-backed random-card UI action and catalog
@@ -78,6 +80,24 @@ Identifier guidance:
 - use `scryfall_id` when the parent needs exact-printing identity
 - use `oracle_id` when the parent wants to group same-card printings
 
+For direct offline catalog inspection outside the recognizer flow:
+
+```python
+from card_engine.catalog import OfflineCatalogQuery
+
+query = OfflineCatalogQuery.from_sqlite(config.catalog_path)
+oracle = query.get_oracle_card("oracle-id-here")
+printings = query.printings_for_oracle("oracle-id-here")
+```
+
+And from the CLI:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\query_offline_catalog.py `
+  --catalog C:\work\your-parent-app\var\card-engine\cards.sqlite3 `
+  printings-for-name "Sliver Legion"
+```
+
 ## Path Ownership
 
 Important path rule:
@@ -134,6 +154,10 @@ shape with:
 That split is meant to make parent-side querying easier when the parent wants
 either exact printings or grouped same-card identities.
 
+The query layer stays intentionally scoped to the paper-only local catalog.
+Digital-only printings are filtered out at catalog-build time and do not appear
+in these offline query results.
+
 ## First-Run Side Effects
 
 The first recognition call may be noticeably slower than later calls.
@@ -187,3 +211,17 @@ Use these modes as a starting point:
 
 The step-by-step pipeline for each of these modes is documented in
 [docs/mode-pipelines.md](docs/mode-pipelines.md).
+
+## Engine / UI Test Boundary
+
+The debug UI is now treated as optional from the test runner's point of view:
+
+- `python -m pytest --engine-only` skips UI-only test modules at collection
+  time
+- `python -m pytest --ui-only` collects only the UI/debug suite
+- the default `python -m pytest` still runs the full repo suite for local
+  development
+
+That means parent repos embedding this package can validate the engine,
+adapter, and catalog layers without importing or collecting the UI tests unless
+they explicitly opt in.

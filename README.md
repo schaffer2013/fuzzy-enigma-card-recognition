@@ -100,9 +100,23 @@ Run tests:
 python -m pytest
 ```
 
+Run engine-only tests without collecting the debug UI suite:
+
+```powershell
+python -m pytest --engine-only
+```
+
+Run only the UI/debug tests:
+
+```powershell
+python -m pytest --ui-only
+```
+
 The base package now includes the image stack used by recognition. The `ocr`
 extra adds OCR backends, and the `ui` extra adds `scrython` for the debug UI's
-random-card and Scryfall-backed helper flows.
+random-card and Scryfall-backed helper flows. Parent repos that only embed the
+engine can stay on base or `[ocr]` installs and use `--engine-only` test runs
+to avoid pulling the UI suite into their normal validation loop.
 
 ## Parent Quickstart
 
@@ -164,6 +178,33 @@ The parent project should ideally do only four things:
 
 For a fuller integration walkthrough, including path ownership and first-run
 catalog behavior, see [INTEGRATION.md](INTEGRATION.md).
+
+## Offline Catalog Query Layer
+
+The local SQLite catalog is now intentionally queryable at two levels:
+
+- `oracle_cards`: grouped Oracle identity by `oracle_id`
+- `printed_cards`: exact printings by `scryfall_id`
+
+Python example:
+
+```python
+from card_engine.catalog import OfflineCatalogQuery
+
+query = OfflineCatalogQuery.from_sqlite("data/catalog/cards.sqlite3")
+oracle = query.get_oracle_card("376601b6-fe51-4e2d-8ec6-98f965d649a3")
+printings = query.printings_for_name("Sliver Legion")
+```
+
+CLI example:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\query_offline_catalog.py `
+  printings-for-name "Sliver Legion"
+```
+
+Use `oracle_id` when you want grouped same-card identity across printings, and
+use `scryfall_id` when you need exact-printing identity.
 
 ## Parent-Facing API
 

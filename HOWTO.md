@@ -34,6 +34,18 @@ For full local development with OCR backends and tests:
 .\.venv\Scripts\python.exe -m pip install -e .[ocr,ui,dev]
 ```
 
+If you only want the engine suite during local work, use:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest --engine-only
+```
+
+If you only want the UI/debug suite, use:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest --ui-only
+```
+
 For fixture-level accuracy checks outside the UI, run:
 
 ```powershell

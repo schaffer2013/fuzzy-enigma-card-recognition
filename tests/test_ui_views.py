@@ -2,7 +2,8 @@ import json
 
 from card_engine.catalog.build_catalog import build_catalog
 from card_engine.models import Candidate, RecognitionResult
-from card_engine.ui.app import _count_hashable_catalog_cards, _count_prehash_cache_entries
+from card_engine.art_prehash import count_prehash_cache_entries
+from card_engine.catalog.query import OfflineCatalogQuery
 from card_engine.ui.state import UIState
 from card_engine.ui.views import discover_fixture_paths, format_fixture_summary, format_recognition_summary
 from card_engine.utils.image_io import LoadedImage
@@ -128,7 +129,7 @@ def test_count_hashable_catalog_cards_counts_rows_with_image_uris(tmp_path):
 
     build_catalog(str(db_path), str(source_path))
 
-    assert _count_hashable_catalog_cards(db_path) == 1
+    assert OfflineCatalogQuery.from_sqlite(db_path).count_hashable_printed_cards() == 1
 
 
 def test_count_prehash_cache_entries_ignores_cache_metadata(tmp_path, monkeypatch):
@@ -138,6 +139,6 @@ def test_count_prehash_cache_entries_ignores_cache_metadata(tmp_path, monkeypatc
     (cache_dir / "one.json").write_text("{}", encoding="utf-8")
     (cache_dir / "two.json").write_text("{}", encoding="utf-8")
 
-    monkeypatch.setattr("card_engine.ui.app.ART_MATCH_CACHE_DIR", cache_dir)
+    monkeypatch.setattr("card_engine.art_prehash.ART_MATCH_CACHE_DIR", cache_dir)
 
-    assert _count_prehash_cache_entries() == 2
+    assert count_prehash_cache_entries() == 2

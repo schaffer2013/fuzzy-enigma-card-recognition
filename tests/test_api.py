@@ -4,10 +4,10 @@ import numpy
 
 from card_engine.api import recognize_card
 from card_engine.catalog.local_index import CatalogRecord, LocalCatalogIndex
+from card_engine.image_types import EditableLoadedImage
 from card_engine.models import Candidate, VisualPoolCandidate
 from card_engine.ocr import OCRResult
 from card_engine.operational_modes import CandidatePool, ExpectedCard
-from card_engine.ui.app import EditableLoadedImage
 
 
 class DummyImage:
