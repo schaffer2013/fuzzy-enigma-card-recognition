@@ -2,6 +2,7 @@ from pathlib import Path
 from functools import lru_cache
 from typing import Any
 import inspect
+import re
 import time
 
 from .art_match import (
@@ -698,6 +699,13 @@ def _should_use_split_full_fallback(
         layout_hint=layout_hint,
     )
 
+    if _has_robust_split_title_read(
+        title_lines,
+        title_confidence=title_confidence,
+        candidate=top_candidate,
+        candidates=candidates,
+    ):
+        return False
     if "exact" in top_notes and confidence >= 0.88 and score_gap >= 0.08:
         return False
     if title_quality >= (0.82, 6.0, -2.0) and "exact" in top_notes:
@@ -705,6 +713,48 @@ def _should_use_split_full_fallback(
     if confidence >= 0.94 and score_gap >= 0.12:
         return False
     return True
+
+
+def _has_robust_split_title_read(
+    title_lines: list[str],
+    *,
+    title_confidence: float,
+    candidate: Candidate | None,
+    candidates: list[Candidate],
+) -> bool:
+    if title_confidence < 0.88:
+        return False
+
+    observed_tokens = _split_title_tokens(title_lines)
+    expected_tokens = set()
+    if candidate is not None:
+        notes = set(getattr(candidate, "notes", []) or [])
+        if "exact" in notes:
+            expected_tokens |= _split_title_tokens([candidate.name])
+        elif (
+            candidate.set_code is not None
+            and "catalog_unavailable" not in notes
+            and "title_only" not in notes
+            and candidates
+            and all(entry.name == candidate.name for entry in candidates)
+        ):
+            expected_tokens |= _split_title_tokens([candidate.name])
+
+    if not observed_tokens or not expected_tokens:
+        return False
+
+    matched = observed_tokens & expected_tokens
+    coverage = len(matched) / len(expected_tokens)
+    return coverage >= 0.75
+
+
+def _split_title_tokens(lines: list[str]) -> set[str]:
+    tokens: set[str] = set()
+    for line in lines:
+        for token in re.findall(r"[a-z]+", line.lower()):
+            if len(token) >= 3:
+                tokens.add(token)
+    return tokens
 
 
 def _persist_saved_detection(image: Any, detection) -> None:

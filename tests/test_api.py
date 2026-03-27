@@ -483,6 +483,64 @@ def test_small_pool_allows_split_full_even_when_secondary_ocr_is_normally_skippe
     assert "split_full" in seen_roi_labels
 
 
+def test_small_pool_skips_split_full_when_primary_split_title_is_robust(monkeypatch):
+    seen_roi_labels: list[str] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_roi_labels.append(roi_label)
+        if roi_label == "planar_title":
+            return OCRResult(
+                lines=["Central", "Elevator", "Promising", "Stairs"],
+                confidence=0.97,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+            )
+        if roi_label == "standard":
+            return OCRResult(
+                lines=[],
+                confidence=0.0,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+            )
+        return OCRResult(
+            lines=["Instant"] if roi_label == "type_line" else [],
+            confidence=0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Central Elevator // Promising Stairs",
+                normalized_name="",
+                set_code="DSK",
+                collector_number="336",
+                layout="split",
+                aliases=["Central", "Elevator", "Promising", "Stairs"],
+            ),
+            CatalogRecord(
+                name="Central Elevator // Promising Stairs",
+                normalized_name="",
+                set_code="DSK",
+                collector_number="44",
+                layout="split",
+                aliases=["Central", "Elevator", "Promising", "Stairs"],
+            ),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr("card_engine.api.should_skip_secondary_ocr", lambda candidates, confidence: False)
+
+    result = recognize_card(
+        SplitLayoutImage(),
+        mode="small_pool",
+        expected_card=ExpectedCard(name="Central Elevator // Promising Stairs", set_code="DSK", collector_number="336"),
+    )
+
+    assert result.best_name == "Central Elevator // Promising Stairs"
+    assert "split_full" not in seen_roi_labels
+
+
 def test_recognize_card_uses_multi_roi_matching_for_catalog_ranking(monkeypatch):
     def fake_run_ocr(image, roi_label=None, *, crop_region=None):
         lines_by_roi = {

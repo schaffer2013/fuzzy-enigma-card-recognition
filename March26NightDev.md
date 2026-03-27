@@ -50,3 +50,14 @@
 - Interpretation:
   - accuracy for room cards is now in good shape
   - runtime for split-room handling is still expensive enough that future split-family work should focus on latency, not just correctness
+## 2026-03-27 07:47 PDT
+- Added a narrower split-room latency gate on `feature/split-room-latency`.
+- New behavior: skip `split_full` rescue when the first split-title OCR already covers the same split-card name family strongly enough from catalog-backed evidence, but keep the rescue path for cards that still need recovery.
+- Validation:
+  - full suite: `184 passed`
+  - constrained room benchmark rerun (`59` fixtures) still holds `1.000` top-1 for both `small_pool` and `confirmation`
+- Measured constrained-mode improvement on the room family:
+  - `small_pool`: `15.722s -> 9.921s`
+  - `confirmation`: `14.744s -> 8.749s`
+- Runtime note:
+  - that constrained rerun still took about `18.5 minutes`, so this branch is improving latency but not yet "fast enough" for all split-room cases
