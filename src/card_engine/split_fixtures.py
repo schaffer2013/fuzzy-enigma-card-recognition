@@ -98,6 +98,25 @@ def split_face_names(name: str | None) -> tuple[str, str] | None:
     return left, right
 
 
+def split_layout_family(record: CatalogRecord) -> str:
+    name = record.name or ""
+    type_line = (record.type_line or "").casefold()
+    oracle_text = (record.oracle_text or "").casefold()
+    face_count = name.count(" // ") + 1 if name else 1
+
+    if "room" in type_line:
+        return "room"
+    if face_count >= 3:
+        return "multi_split"
+    if "aftermath" in oracle_text:
+        return "aftermath"
+    if "fuse" in oracle_text:
+        return "fuse"
+    if face_count == 2:
+        return "classic_split"
+    return "other_split"
+
+
 def _build_split_sidecar(record: CatalogRecord) -> dict:
     ocr_text_by_roi: dict[str, str] = {"standard": record.name}
     if record.type_line:
@@ -118,6 +137,7 @@ def _build_split_sidecar(record: CatalogRecord) -> dict:
         "expected_collector_number": record.collector_number,
         "expected_games": list(record.games or ()) or ["paper"],
         "layout_hint": record.layout or "split",
+        "split_family": split_layout_family(record),
         "ocr_text_by_roi": ocr_text_by_roi,
     }
     return sidecar

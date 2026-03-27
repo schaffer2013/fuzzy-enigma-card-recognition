@@ -40,6 +40,16 @@ For fixture-level accuracy checks outside the UI, run:
 .\.venv\Scripts\python.exe scripts\eval_fixture_set.py --fixtures-dir data\cache\random_cards
 ```
 
+For split-card investigations, you can build the offline split fixture pool and
+then summarize an operational benchmark by split family:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_split_fixture_set.py
+.\.venv\Scripts\python.exe scripts\report_split_family_metrics.py `
+  --report-json data\sample_outputs\split_layout_operational_full.json `
+  --csv-out data\sample_outputs\split_layout_operational_by_family.csv
+```
+
 For a fresh random accuracy run with a 10-minute cap, use:
 
 ```powershell

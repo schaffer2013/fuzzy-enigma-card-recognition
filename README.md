@@ -58,7 +58,11 @@ See [roadmap.md](roadmap.md) for the planned milestones and
 Milestone 9 validation snapshot. For parent-repo wiring, use
 [INTEGRATION.md](INTEGRATION.md). For the desktop debug UI, use
 [HOWTO.md](HOWTO.md). For the mode-by-mode recognition flow and current
-decision tree, use [docs/mode-pipelines.md](docs/mode-pipelines.md).
+decision tree, use [docs/mode-pipelines.md](docs/mode-pipelines.md). For split
+layout investigations, the repo also includes
+`scripts/build_split_fixture_set.py` and
+`scripts/report_split_family_metrics.py` so full split benchmarks can be
+summarized by family instead of treated as one bucket.
 
 ## Install
 
