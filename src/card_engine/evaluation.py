@@ -384,7 +384,7 @@ def evaluate_operational_modes(
     progress_callback: ProgressCallback | None = None,
 ) -> OperationalModeReport:
     resolved_mode_names = resolve_operational_modes(mode_names)
-    config = base_config or load_engine_config()
+    config: EngineConfig = base_config or load_engine_config()
     _prehash_benchmark_art_pool(
         fixtures_dir,
         limit=limit,
@@ -1165,7 +1165,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.fixtures_dir,
                 mode_names=operational_mode_names,
                 limit=args.limit,
-                config=base_config,
+                base_config=base_config,
                 pair_store=pair_store,
                 progress_callback=_print_console,
             )
