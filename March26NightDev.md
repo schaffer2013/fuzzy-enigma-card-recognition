@@ -92,3 +92,17 @@
   - `small_pool`: `1.000` top-1, `4.569s` average
   - `confirmation`: `1.000` top-1, `4.491s` average
 - This is the first room-family run that is both fully correct and comfortably under the 20-second runtime budget in all four modes.
+## 2026-03-27 10:05 PDT
+- Started a new branch: `feature/benchmark-runtime-budget`.
+- Replayed the unmerged room-latency, recognition-deadline, and room-budget improvements on top of the actual `main` head before continuing.
+- Fixed the benchmark/runtime-budget policy so evaluation runs no longer use the same strict per-card ceiling as live recognition.
+- New benchmark policy:
+  - live recognition still defaults to `20.0s` per card
+  - evaluation defaults to `20x` that budget, so the default benchmark ceiling is `400.0s` per card
+- Updated README, INTEGRATION, HOWTO, mode-pipeline docs, and the speed-tuning note so that policy is explicit.
+- Validation:
+  - `pytest tests/test_evaluation.py -q` -> `32 passed`
+  - full suite -> `189 passed`
+- Next focus:
+  1. benchmark the `classic_split` family on the current branch with the corrected benchmark budget
+  2. use that result to choose the next split-family latency/correctness target

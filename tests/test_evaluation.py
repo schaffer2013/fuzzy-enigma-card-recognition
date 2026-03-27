@@ -407,6 +407,55 @@ def test_evaluate_random_sample_stops_when_time_limit_is_exhausted(monkeypatch, 
     assert summary.top1_accuracy == 1.0
 
 
+def test_evaluate_random_sample_uses_benchmark_deadline_multiplier(monkeypatch, tmp_path):
+    times = iter([0.0, 0.1, 0.2, 1.2])
+    seen_deadlines: list[float] = []
+
+    def fake_fetch_random_card_image(output_dir, *, client_factory=None, downloader=None, max_cached_cards=60):
+        image_path = tmp_path / "random-eval" / "card-001.png"
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        image_path.write_bytes(_minimal_png(width=80, height=100))
+        image_path.with_suffix(".json").write_text(json.dumps({"expected_name": "Card 1"}), encoding="utf-8")
+        return image_path
+
+    def fake_evaluate_fixture(path, *, deadline=None, config=None, pair_store=None):
+        assert isinstance(config, EngineConfig)
+        seen_deadlines.append(config.recognition_deadline_seconds)
+        return FixtureEvaluation(
+            path=str(path),
+            expected_name="Card 1",
+            expected_set_code=None,
+            expected_collector_number=None,
+            predicted_name="Card 1",
+            predicted_set_code=None,
+            predicted_collector_number=None,
+            confidence=0.9,
+            name_hit=True,
+            set_hit=False,
+            art_hit=False,
+            top1_hit=True,
+            top5_hit=True,
+            active_roi="standard",
+            tried_rois=["standard"],
+            candidate_names=["Card 1"],
+            error_class="correct_top1",
+        )
+
+    monkeypatch.setattr("card_engine.evaluation.fetch_random_card_image", fake_fetch_random_card_image)
+    monkeypatch.setattr("card_engine.evaluation.evaluate_fixture", fake_evaluate_fixture)
+
+    summary = evaluate_random_sample(
+        tmp_path / "random-eval",
+        time_limit_seconds=1.0,
+        config=EngineConfig(recognition_deadline_seconds=20.0),
+        deadline_multiplier=20.0,
+        clock=lambda: next(times),
+    )
+
+    assert summary.fixture_count == 1
+    assert seen_deadlines == [400.0]
+
+
 def test_evaluate_fixture_set_passes_deadline_and_config_to_recognizer(monkeypatch, tmp_path):
     fixture_path = tmp_path / "opt-deadbeef.png"
     fixture_path.write_bytes(_minimal_png(width=80, height=100))
@@ -852,6 +901,7 @@ def test_main_passes_base_config_to_operational_mode_runs(monkeypatch, tmp_path)
         mode_names,
         limit=None,
         base_config=None,
+        deadline_multiplier=None,
         pair_store=None,
         progress_callback=None,
     ):
@@ -859,6 +909,7 @@ def test_main_passes_base_config_to_operational_mode_runs(monkeypatch, tmp_path)
         captured["mode_names"] = mode_names
         captured["limit"] = limit
         captured["base_config"] = base_config
+        captured["deadline_multiplier"] = deadline_multiplier
         return OperationalModeReport(fixtures_dir=str(fixtures_dir), mode_results=[])
 
     monkeypatch.setattr("card_engine.evaluation.evaluate_operational_modes", fake_evaluate_operational_modes)
@@ -885,6 +936,7 @@ def test_main_passes_base_config_to_operational_mode_runs(monkeypatch, tmp_path)
     assert isinstance(base_config, EngineConfig)
     assert base_config.roi_expand_long_factor == 1.1
     assert base_config.roi_expand_short_factor == 1.3
+    assert captured["deadline_multiplier"] == 20.0
 
 
 def test_evaluate_benchmark_modes_runs_same_fixture_set_across_modes(monkeypatch, tmp_path):
@@ -938,6 +990,7 @@ def test_evaluate_benchmark_modes_runs_same_fixture_set_across_modes(monkeypatch
     assert seen[0][1].lazy_group_basic_land_printings is False
     assert seen[1][1].lazy_group_basic_land_printings is True
     assert seen[2][1].lazy_default_printing_by_name is True
+    assert all(entry[1].recognition_deadline_seconds == 400.0 for entry in seen)
 
 
 def test_evaluate_operational_modes_uses_mode_specific_fixture_evaluators(monkeypatch, tmp_path):
@@ -984,6 +1037,55 @@ def test_evaluate_operational_modes_uses_mode_specific_fixture_evaluators(monkey
     assert seen_labels == ["greenfield", "reevaluation", "small_pool", "confirmation"]
     assert report.mode_results[1].implementation_note is not None
     assert report.mode_results[3].implementation_note is not None
+
+
+def test_evaluate_operational_modes_applies_benchmark_deadline_multiplier(monkeypatch, tmp_path):
+    seen_deadlines: list[float] = []
+
+    def fake_evaluate_fixture_set(
+        fixtures_dir,
+        *,
+        limit=None,
+        config=None,
+        pair_store=None,
+        progress_callback=None,
+        progress_label=None,
+        fixture_evaluator=None,
+    ):
+        assert isinstance(config, EngineConfig)
+        seen_deadlines.append(config.recognition_deadline_seconds)
+        return summary_from_json(
+            {
+                "fixture_count": 1,
+                "scored_count": 1,
+                "set_scored_count": 1,
+                "art_scored_count": 1,
+                "top1_accuracy": 1.0,
+                "top5_accuracy": 1.0,
+                "set_accuracy": 1.0,
+                "art_accuracy": 1.0,
+                "average_confidence": 0.9,
+                "average_scored_confidence": 0.9,
+                "average_runtime_seconds": 0.1,
+                "calibration_error": 0.0,
+                "calibration_bins": [],
+                "average_stage_timings": {"total": 0.1},
+                "roi_usage": {},
+                "error_classes": {"correct_top1": 1},
+                "fixtures": [],
+            }
+        )
+
+    monkeypatch.setattr("card_engine.evaluation.evaluate_fixture_set", fake_evaluate_fixture_set)
+
+    evaluate_operational_modes(
+        tmp_path,
+        mode_names=["greenfield", "confirmation"],
+        base_config=EngineConfig(recognition_deadline_seconds=20.0),
+        deadline_multiplier=5.0,
+    )
+
+    assert seen_deadlines == [100.0, 100.0]
 
 
 def test_benchmark_report_renders_and_serializes_mode_accuracy():

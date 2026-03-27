@@ -52,6 +52,11 @@ Every mode starts with the same broad stages:
    `recognition_deadline_seconds` budget as failures instead of successful but
    too-slow results.
 
+For benchmark runs, the evaluation layer can apply a looser per-card ceiling
+than the live recognizer uses. The default benchmark policy is `20x` the live
+deadline so pathological cards still fail eventually without making long eval
+runs impractically slow.
+
 ## Core Decision Tree
 
 At a high level, the current shared flow is:

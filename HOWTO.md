@@ -99,6 +99,8 @@ Useful lazy optimization toggles include:
   crops outward from their center point without changing committed ROI defaults
 - `recognition_deadline_seconds`: treat over-budget recognitions as failures
   instead of successful but too-slow results
+- `--benchmark-deadline-multiplier`: let eval runs use a larger per-card
+  ceiling than live recognition, defaulting to `20x`
 
 You can also try that live from the CLI:
 

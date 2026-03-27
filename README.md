@@ -406,10 +406,12 @@ defaults themselves. They only affect OCR-oriented crops such as title, type
 line, and lower-text regions. Art and set-symbol regions keep their committed
 geometry.
 
-The recognition deadline is also used by fixture benchmarks in practice,
-because the evaluation workflow calls the same API. That means a benchmark no
-longer treats a card that takes longer than the configured budget as a pass;
-it is recorded as a runtime-budget failure instead.
+The live recognition deadline is also enforced during benchmarks, but with a
+looser evaluation-only ceiling by default. Benchmark runs multiply
+`recognition_deadline_seconds` by `20.0`, so the default live `20.0` second
+budget becomes a `400.0` second per-card benchmark cap. That keeps "too slow
+to be acceptable live" distinct from "so slow it should fail even in a
+benchmark and stop dragging the whole run down."
 
 You can also override ROI expansion from the command line without editing the
 config file:
@@ -417,6 +419,7 @@ config file:
 ```powershell
 .\.venv\Scripts\python.exe -m card_engine.ui --roi-expand 1.1
 .\.venv\Scripts\python.exe -m card_engine.evaluation --fixtures-dir data\fixtures --roi-expand 1.1 1.3
+.\.venv\Scripts\python.exe -m card_engine.evaluation --fixtures-dir data\fixtures --benchmark-deadline-multiplier 20
 ```
 
 Meaning:

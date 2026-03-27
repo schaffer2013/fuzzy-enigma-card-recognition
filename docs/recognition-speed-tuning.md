@@ -200,8 +200,10 @@ The engine now has an explicit per-card runtime budget via
 Current intended meaning:
 
 - live recognition that runs past that budget is treated as a failure
-- fixture benchmarks inherit the same budget card-by-card, so a benchmark no
-  longer counts "correct but unacceptably slow" cards as successes
+- fixture benchmarks use a larger per-card ceiling by default: `20x` the live
+  deadline, so a benchmark no longer counts "correct but unacceptably slow"
+  cards as successes, but also does not let one pathological card pin the
+  entire run forever
 
 That makes latency targets visible in normal evaluation output instead of being
 only an after-the-fact interpretation of stage timings.

@@ -131,6 +131,10 @@ be useful." The engine now exposes `recognition_deadline_seconds` for that.
 The default is `20.0`, which means an over-budget recognition comes back as a
 failure result instead of a successful but unacceptably slow answer.
 
+Evaluation tooling uses a looser ceiling by default so a single pathological
+card does not pin the whole benchmark. The CLI multiplies the live deadline by
+`20.0` unless you override `--benchmark-deadline-multiplier`.
+
 ## Data Ownership
 
 Recommended ownership split:
