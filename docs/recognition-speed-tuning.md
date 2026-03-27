@@ -1,3 +1,5 @@
+Delete this eventually
+
 # Recognition Speed Deep Dive
 
 This is a code-path-level plan for reducing recognition latency, not a generic checklist.
