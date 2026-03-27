@@ -22,6 +22,7 @@ _PADDLE_OCR_DISABLED_REASON: str | None = None
 class OCRResult:
     lines: list[str] = field(default_factory=list)
     confidence: float = 0.0
+    line_boxes: list[dict[str, Any]] = field(default_factory=list)
     debug: dict[str, Any] = field(default_factory=dict)
 
 
@@ -45,6 +46,7 @@ def run_ocr(
                 crop_region=crop_region,
                 source=image,
                 normalized_lines=[],
+                line_boxes=[],
                 attempts=attempt_log["attempts"],
                 outcome="no_pixel_input",
             ),
@@ -71,6 +73,7 @@ def run_ocr(
             crop_region=crop_region,
             source=image,
             normalized_lines=[],
+            line_boxes=[],
             attempts=attempt_log["attempts"],
             outcome="no_backend_result",
         ),
@@ -81,6 +84,7 @@ def _result_from_lines(
     raw_lines: list[str],
     *,
     confidence: float,
+    line_boxes: list[dict[str, Any]] | None,
     backend: str,
     roi_label: str | None,
     crop_region: CropRegion | None,
@@ -89,15 +93,18 @@ def _result_from_lines(
     outcome: str,
 ) -> OCRResult:
     lines = _normalize_display_lines(raw_lines)
+    filtered_line_boxes = _normalize_line_boxes(line_boxes or [], lines)
     return OCRResult(
         lines=lines,
         confidence=(confidence if lines else 0.0),
+        line_boxes=filtered_line_boxes,
         debug=_build_debug(
             backend=backend,
             roi_label=roi_label,
             crop_region=crop_region,
             source=source,
             normalized_lines=[normalize_text(line) for line in lines],
+            line_boxes=filtered_line_boxes,
             attempts=attempts,
             outcome=outcome,
         ),
@@ -161,6 +168,7 @@ def _run_paddleocr_backend(
     result = _result_from_lines(
         lines,
         confidence=confidence,
+        line_boxes=_extract_paddle_line_boxes(raw_result),
         backend="paddleocr",
         roi_label=roi_label,
         crop_region=crop_region,
@@ -200,6 +208,7 @@ def _run_rapidocr_backend(
     entries = raw_result or []
     lines = [entry[1] for entry in entries if len(entry) > 1 and entry[1]]
     confidences = [float(entry[2]) for entry in entries if len(entry) > 2]
+    line_boxes = _extract_rapidocr_line_boxes(entries)
     confidence = (sum(confidences) / len(confidences)) if confidences else 0.0
 
     attempt["status"] = "success" if lines else "empty"
@@ -211,6 +220,7 @@ def _run_rapidocr_backend(
     result = _result_from_lines(
         lines,
         confidence=confidence,
+        line_boxes=line_boxes,
         backend="rapidocr",
         roi_label=roi_label,
         crop_region=crop_region,
@@ -286,6 +296,118 @@ def _extract_paddle_lines(raw_result: Any) -> tuple[list[str], list[float]]:
     return lines, confidences
 
 
+def _extract_rapidocr_line_boxes(entries: list[Any]) -> list[dict[str, Any]]:
+    line_boxes: list[dict[str, Any]] = []
+    for entry in entries or []:
+        if not isinstance(entry, (list, tuple)) or len(entry) < 2:
+            continue
+        points = _normalize_polygon_points(entry[0])
+        text = str(entry[1]).strip()
+        if not text:
+            continue
+        confidence = None
+        if len(entry) > 2:
+            try:
+                confidence = float(entry[2])
+            except (TypeError, ValueError):
+                confidence = None
+        line_boxes.append(
+            {
+                "text": text,
+                "normalized_text": normalize_text(text),
+                "confidence": confidence,
+                "points": points,
+                "bbox": _polygon_bbox(points),
+            }
+        )
+    return line_boxes
+
+
+def _extract_paddle_line_boxes(raw_result: Any) -> list[dict[str, Any]]:
+    line_boxes: list[dict[str, Any]] = []
+    for item in raw_result or []:
+        texts = []
+        scores = []
+        polygons = []
+
+        if hasattr(item, "rec_texts"):
+            texts = list(getattr(item, "rec_texts", []) or [])
+        if hasattr(item, "rec_scores"):
+            scores = list(getattr(item, "rec_scores", []) or [])
+        if hasattr(item, "dt_polys"):
+            polygons = list(getattr(item, "dt_polys", []) or [])
+
+        if isinstance(item, dict):
+            texts = list(item.get("rec_texts", texts) or [])
+            scores = list(item.get("rec_scores", scores) or [])
+            polygons = list(item.get("dt_polys", polygons) or [])
+
+        for index, text in enumerate(texts):
+            text = str(text).strip()
+            if not text:
+                continue
+            points = _normalize_polygon_points(polygons[index] if index < len(polygons) else None)
+            confidence = None
+            if index < len(scores):
+                try:
+                    confidence = float(scores[index])
+                except (TypeError, ValueError):
+                    confidence = None
+            line_boxes.append(
+                {
+                    "text": text,
+                    "normalized_text": normalize_text(text),
+                    "confidence": confidence,
+                    "points": points,
+                    "bbox": _polygon_bbox(points),
+                }
+            )
+    return line_boxes
+
+
+def _normalize_polygon_points(raw_points: Any) -> list[list[float]]:
+    if raw_points is None:
+        return []
+    normalized: list[list[float]] = []
+    for point in raw_points:
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            continue
+        try:
+            normalized.append([float(point[0]), float(point[1])])
+        except (TypeError, ValueError):
+            continue
+    return normalized
+
+
+def _polygon_bbox(points: list[list[float]]) -> list[float] | None:
+    if not points:
+        return None
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return [min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)]
+
+
+def _normalize_line_boxes(line_boxes: list[dict[str, Any]], normalized_lines: list[str]) -> list[dict[str, Any]]:
+    if not line_boxes:
+        return []
+    allowed = {normalize_text(line) for line in normalized_lines if normalize_text(line)}
+    filtered: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for line_box in line_boxes:
+        normalized_text = str(line_box.get("normalized_text") or "")
+        if allowed and normalized_text not in allowed:
+            continue
+        dedupe_key = (
+            normalized_text,
+            json.dumps(line_box.get("bbox"), separators=(",", ":"), sort_keys=False),
+        )
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        filtered.append(line_box)
+    return filtered
+
+
 def _base_attempt_log(*, image: Any, roi_label: str | None, crop_region: CropRegion | None) -> dict[str, Any]:
     source_path = getattr(image, "path", None) or getattr(getattr(image, "source_image", None), "path", None)
     return {
@@ -323,6 +445,7 @@ def _build_debug(
     crop_region: CropRegion | None,
     source: Any,
     normalized_lines: list[str],
+    line_boxes: list[dict[str, Any]],
     attempts: list[dict[str, Any]],
     outcome: str,
 ) -> dict[str, Any]:
@@ -338,6 +461,7 @@ def _build_debug(
         "crop_bbox": crop_bbox,
         "crop_shape": crop_shape,
         "normalized_lines": normalized_lines,
+        "line_boxes": line_boxes,
         "source_path": str(source_path) if source_path else None,
         "paddle_disabled_reason": _PADDLE_OCR_DISABLED_REASON,
         "attempts": attempts,

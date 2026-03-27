@@ -46,7 +46,7 @@ def test_recognize_card_reports_layout_specific_tried_rois():
     result = recognize_card(SplitLayoutImage())
 
     assert result.active_roi == "planar_title"
-    assert result.tried_rois == ["planar_title", "standard", "art_match", "type_line", "set_symbol", "lower_text"]
+    assert result.tried_rois == ["planar_title", "split_full", "standard", "art_match", "type_line", "set_symbol", "lower_text"]
     assert "planar_title" in result.debug["normalization"]["roi_groups"]
 
 
@@ -256,6 +256,135 @@ def test_recognize_card_uses_planar_title_for_split_layout(monkeypatch):
     assert result.debug["ocr"]["rotation_degrees"] in (90, 270)
     assert result.debug["ocr"]["results_by_roi"]["planar_title"]["debug"]["rotation_attempts"]
     assert any(shape is not None and shape[1] > shape[0] for shape in seen_shapes)
+
+
+def test_recognize_card_uses_split_full_fallback_for_split_layout(monkeypatch):
+    seen_roi_labels: list[str] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_roi_labels.append(roi_label)
+        if roi_label == "split_full" and crop_region is not None and crop_region.shape[1] > crop_region.shape[0]:
+            return OCRResult(
+                lines=["Appeal"],
+                confidence=0.9,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+            )
+        return OCRResult(
+            lines=[],
+            confidence=0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Appeal // Authority",
+                normalized_name="appeal authority",
+                set_code="HOU",
+                collector_number="152",
+                layout="split",
+                aliases=["Appeal"],
+            ),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+
+    result = recognize_card(SplitLayoutImage())
+
+    assert result.best_name == "Appeal // Authority"
+    assert result.active_roi == "split_full"
+    assert result.debug["ocr"]["results_by_roi"]["split_full"]["debug"]["rotation_attempts"]
+    assert seen_roi_labels[:3] == ["planar_title", "planar_title", "planar_title"]
+    assert "split_full" in seen_roi_labels
+
+
+def test_recognize_card_skips_split_full_when_primary_split_title_is_exact(monkeypatch):
+    seen_roi_labels: list[str] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_roi_labels.append(roi_label)
+        if roi_label == "planar_title" and crop_region is not None and crop_region.shape[1] > crop_region.shape[0]:
+            return OCRResult(
+                lines=["Wear", "Tear"],
+                confidence=0.93,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+            )
+        return OCRResult(
+            lines=["Instant"] if roi_label == "type_line" else [],
+            confidence=0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Wear // Tear",
+                normalized_name="wear tear",
+                set_code="DGM",
+                collector_number="135",
+                layout="split",
+                aliases=["Wear", "Tear"],
+            ),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr("card_engine.api.should_skip_secondary_ocr", lambda candidates, confidence: False)
+
+    result = recognize_card(SplitLayoutImage())
+
+    assert result.best_name == "Wear // Tear"
+    assert "split_full" not in seen_roi_labels
+    assert seen_roi_labels[:3] == ["planar_title", "planar_title", "planar_title"]
+
+
+def test_recognize_card_keeps_split_full_when_primary_split_title_is_weak(monkeypatch):
+    seen_roi_labels: list[str] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_roi_labels.append(roi_label)
+        if roi_label == "planar_title":
+            return OCRResult(
+                lines=["App3a1"],
+                confidence=0.51,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+            )
+        if roi_label == "split_full" and crop_region is not None and crop_region.shape[1] > crop_region.shape[0]:
+            return OCRResult(
+                lines=["Appeal"],
+                confidence=0.9,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+            )
+        return OCRResult(
+            lines=[],
+            confidence=0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Appeal // Authority",
+                normalized_name="appeal authority",
+                set_code="HOU",
+                collector_number="152",
+                layout="split",
+                aliases=["Appeal"],
+            ),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr("card_engine.api.should_skip_secondary_ocr", lambda candidates, confidence: False)
+
+    result = recognize_card(SplitLayoutImage())
+
+    assert result.best_name == "Appeal // Authority"
+    assert "split_full" in seen_roi_labels
 
 
 def test_recognize_card_uses_multi_roi_matching_for_catalog_ranking(monkeypatch):

@@ -34,6 +34,7 @@ TITLE_FIRST_ROIS = {"planar_title", "standard", "adventure", "transform_back"}
 VISUAL_ONLY_ROIS = {"set_symbol", "art_match"}
 ROTATED_TITLE_ROIS = {
     "planar_title": (90, 270, 0),
+    "split_full": (90, 270, 0),
 }
 
 
@@ -173,8 +174,8 @@ def recognize_card(
             "debug": result.debug,
         }
 
-    active_index = next((index for index, result in enumerate(ocr_results) if result.lines), 0)
-    active_roi = title_rois[active_index] if title_rois else None
+    active_roi = _best_title_roi_name(title_rois, results_by_roi, layout_hint=layout_hint) or (title_rois[0] if title_rois else None)
+    active_index = title_rois.index(active_roi) if active_roi in title_rois else 0
     ocr = ocr_results[active_index] if ocr_results else run_ocr(normalized.normalized_image, roi_label=None)
     title_match_lines = list(ocr.lines)
     _notify(progress_callback, "Matching OCR text against catalog...")
@@ -248,6 +249,13 @@ def recognize_card(
         and not _deadline_exceeded(deadline)
         and not should_skip_secondary_ocr(candidates, confidence)
     ):
+        secondary_rois = _refine_secondary_rois_for_context(
+            secondary_rois,
+            layout_hint=layout_hint,
+            results_by_roi=results_by_roi,
+            candidates=candidates,
+            confidence=confidence,
+        )
         secondary_candidates = candidates
         for roi_group in secondary_rois:
             if _deadline_exceeded(deadline):
@@ -266,7 +274,11 @@ def recognize_card(
                 "confidence": result.confidence,
                 "debug": result.debug,
             }
-            active_roi = next((roi for roi in tried_rois if results_by_roi.get(roi, {}).get("lines")), active_roi)
+            active_roi = (
+                _best_title_roi_name(tried_rois, results_by_roi, layout_hint=layout_hint)
+                or next((roi for roi in tried_rois if results_by_roi.get(roi, {}).get("lines")), active_roi)
+                or active_roi
+            )
             ocr = (
                 OCR_like(results_by_roi[active_roi])
                 if active_roi and active_roi in results_by_roi
@@ -546,6 +558,111 @@ class OCR_like:
         self.lines = payload.get("lines", [])
         self.confidence = payload.get("confidence", 0.0)
         self.debug = payload.get("debug", {})
+
+
+def _best_title_roi_name(
+    roi_names: list[str],
+    results_by_roi: dict[str, dict],
+    *,
+    layout_hint: str | None,
+) -> str | None:
+    title_like_rois = {"planar_title", "standard", "split_full", "split_left", "split_right", "adventure", "transform_back"}
+    best_name = None
+    best_key = None
+    for roi_name in roi_names:
+        if roi_name not in title_like_rois:
+            continue
+        payload = results_by_roi.get(roi_name, {})
+        lines = payload.get("lines") or []
+        if not lines:
+            continue
+        confidence = float(payload.get("confidence") or 0.0)
+        key = _title_roi_quality_key(
+            roi_name,
+            lines=lines,
+            confidence=confidence,
+            layout_hint=layout_hint,
+        )
+        if best_key is None or key > best_key:
+            best_key = key
+            best_name = roi_name
+    return best_name
+
+
+def _title_roi_quality_key(
+    roi_name: str,
+    *,
+    lines: list[str],
+    confidence: float,
+    layout_hint: str | None,
+) -> tuple[float, float, float]:
+    line_count = len(lines)
+    total_chars = sum(len(line.strip()) for line in lines)
+    penalty = max(0, line_count - 2) * 0.18
+    if (layout_hint or "").lower() == "split" and roi_name == "split_full":
+        penalty = max(0, line_count - 3) * 0.05
+    return (
+        round(confidence - penalty, 4),
+        float(total_chars),
+        -float(line_count),
+    )
+
+
+def _refine_secondary_rois_for_context(
+    secondary_rois: list[str],
+    *,
+    layout_hint: str | None,
+    results_by_roi: dict[str, dict],
+    candidates: list[Candidate],
+    confidence: float,
+) -> list[str]:
+    refined = list(secondary_rois)
+    if "split_full" in refined and not _should_use_split_full_fallback(
+        layout_hint=layout_hint,
+        results_by_roi=results_by_roi,
+        candidates=candidates,
+        confidence=confidence,
+    ):
+        refined = [roi_name for roi_name in refined if roi_name != "split_full"]
+    return refined
+
+
+def _should_use_split_full_fallback(
+    *,
+    layout_hint: str | None,
+    results_by_roi: dict[str, dict],
+    candidates: list[Candidate],
+    confidence: float,
+) -> bool:
+    if (layout_hint or "").lower() != "split":
+        return False
+
+    title_payload = results_by_roi.get("planar_title") or results_by_roi.get("standard") or {}
+    title_lines = title_payload.get("lines") or []
+    title_confidence = float(title_payload.get("confidence") or 0.0)
+    if not title_lines:
+        return True
+
+    top_candidate = candidates[0] if candidates else None
+    runner_up = candidates[1] if len(candidates) > 1 else None
+    top_notes = set(getattr(top_candidate, "notes", []) or [])
+    top_score = float(getattr(top_candidate, "score", 0.0) or 0.0)
+    runner_up_score = float(getattr(runner_up, "score", 0.0) or 0.0)
+    score_gap = round(top_score - runner_up_score, 4)
+    title_quality = _title_roi_quality_key(
+        "planar_title",
+        lines=title_lines,
+        confidence=title_confidence,
+        layout_hint=layout_hint,
+    )
+
+    if "exact" in top_notes and confidence >= 0.88 and score_gap >= 0.08:
+        return False
+    if title_quality >= (0.82, 6.0, -2.0) and "exact" in top_notes:
+        return False
+    if confidence >= 0.94 and score_gap >= 0.12:
+        return False
+    return True
 
 
 def _persist_saved_detection(image: Any, detection) -> None:

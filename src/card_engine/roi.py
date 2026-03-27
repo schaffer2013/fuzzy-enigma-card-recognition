@@ -20,6 +20,7 @@ class ROI:
 
 ROI_PRESETS: dict[str, list[ROI]] = {
     "planar_title": [ROI("plane_title", 0.03, 0.05, 0.12, 0.84)],
+    "split_full": [ROI("full_card", 0.0, 0.0, 1.0, 1.0)],
     "standard": [ROI("title_band", 0.08, 0.05, 0.84, 0.12)],
     "art_match": [ROI("art_box", 0.08, 0.13, 0.84, 0.4)],
     "type_line": [ROI("type_line", 0.08, 0.19, 0.84, 0.08)],
@@ -32,10 +33,10 @@ ROI_PRESETS: dict[str, list[ROI]] = {
 }
 
 DEFAULT_ENABLED_ROI_GROUPS = ["standard", "art_match", "type_line", "set_symbol", "lower_text"]
-DEFAULT_ROI_CYCLE_ORDER = ["planar_title", "standard", "art_match", "type_line", "set_symbol", "lower_text", "adventure", "transform_back", "split_left", "split_right"]
+DEFAULT_ROI_CYCLE_ORDER = ["planar_title", "split_full", "standard", "art_match", "type_line", "set_symbol", "lower_text", "adventure", "transform_back", "split_left", "split_right"]
 LAYOUT_TO_ROI_GROUPS: dict[str, list[str]] = {
     "normal": ["standard", "art_match", "type_line", "set_symbol", "lower_text"],
-    "split": ["planar_title", "art_match", "type_line", "set_symbol", "lower_text"],
+    "split": ["planar_title", "split_full", "art_match", "type_line", "set_symbol", "lower_text"],
     "adventure": ["standard", "art_match", "type_line", "set_symbol", "adventure", "lower_text"],
     "transform": ["standard", "art_match", "type_line", "set_symbol", "transform_back", "lower_text"],
     "modal_dfc": ["standard", "art_match", "type_line", "set_symbol", "transform_back", "lower_text"],

@@ -57,7 +57,8 @@ See [roadmap.md](roadmap.md) for the planned milestones and
 [docs/milestone9-closeout.md](docs/milestone9-closeout.md) for the measured
 Milestone 9 validation snapshot. For parent-repo wiring, use
 [INTEGRATION.md](INTEGRATION.md). For the desktop debug UI, use
-[HOWTO.md](HOWTO.md).
+[HOWTO.md](HOWTO.md). For the mode-by-mode recognition flow and current
+decision tree, use [docs/mode-pipelines.md](docs/mode-pipelines.md).
 
 ## Install
 
@@ -196,6 +197,9 @@ Today:
 - `reevaluation` biases the expected card while still allowing disagreement
   recovery
 - `confirmation` returns expected-printing confidence plus contradiction details
+
+The higher-level operational flow for these modes is documented in
+[docs/mode-pipelines.md](docs/mode-pipelines.md).
 
 Session/tracked-pool use:
 

@@ -8,6 +8,8 @@ the selected image, and seeing the engine's current recognition output.
 This file is intentionally UI-focused. If you are embedding the recognizer into
 another repository, use [INTEGRATION.md](INTEGRATION.md) for adapter wiring,
 config ownership, parent-owned data directories, and first-run catalog notes.
+For the recognition-mode pipeline and decision tree, use
+[docs/mode-pipelines.md](docs/mode-pipelines.md).
 
 The committed hash ROI bounds now live in `data/config/hash_rois.json`. The
 reference-image caches for art and set-symbol hashing are tied to those ROI
@@ -354,13 +356,16 @@ A concise benchmark/profile snapshot for the Milestone 9 closeout lives in
 The current recognition flow is moving toward a Milestone 9 fast path:
 
 1. OCR the title region first.
+   For split layouts, start with the narrow vertical title strip.
 2. Use the set-symbol ROI as a lightweight visual tie-breaker for near-tied
    title candidates, using a refined symbol fingerprint rather than a full-card
    image comparison.
-3. If the set symbol is still too weak for same-name printings, use the
+3. For split layouts whose narrow strip is weak, fall back to rotated
+   whole-card OCR before the generic support ROIs.
+4. If the set symbol is still too weak for same-name printings, use the
    `art_match` ROI as a second visual tie-breaker over the same near-tied
    candidates.
-4. Only run the remaining ROIs such as `type_line` and `lower_text` if the
+5. Only run the remaining ROIs such as `type_line` and `lower_text` if the
    title-plus-visual evidence is still not confident enough.
 
 ## Current Limitations

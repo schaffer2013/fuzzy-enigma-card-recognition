@@ -2,7 +2,8 @@
 
 This guide is for parent repositories embedding `fuzzy-enigma-card-recognition`
 as a submodule or editable dependency. For the desktop debug UI, use
-[HOWTO.md](HOWTO.md) instead.
+[HOWTO.md](HOWTO.md) instead. For the operational recognition flow and current
+mode decision tree, use [docs/mode-pipelines.md](docs/mode-pipelines.md).
 
 ## Install Matrix
 
@@ -175,3 +176,6 @@ Use these modes as a starting point:
 - `reevaluation`: bias toward an expected card while still allowing recovery
 - `confirmation`: score how strongly the observed card agrees with an expected
   printing
+
+The step-by-step pipeline for each of these modes is documented in
+[docs/mode-pipelines.md](docs/mode-pipelines.md).
