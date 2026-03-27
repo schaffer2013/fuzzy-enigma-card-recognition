@@ -148,7 +148,8 @@ Create a parent-owned config file such as `config/card-engine/engine.json`:
 {
   "catalog_path": "C:/work/your-parent-app/var/card-engine/cards.sqlite3",
   "candidate_count": 5,
-  "lazy_group_basic_land_printings": true
+  "lazy_group_basic_land_printings": true,
+  "recognition_deadline_seconds": 20.0
 }
 ```
 
@@ -388,6 +389,9 @@ Current `EngineConfig` fields:
 - `lazy_default_printing_by_name`: broader performance optimization that
   collapses all same-name printings to a default printing before expensive
   visual tie-break work.
+- `recognition_deadline_seconds`: per-card recognition budget. When a scan
+  runs past this budget, the engine returns a failure result instead of a slow
+  success. Default: `20.0`.
 - `max_visual_tiebreak_candidates`: hard cap on how many candidates are sent
   into set-symbol and art-region comparison.
 - `max_visual_tiebreak_seconds_per_card`: per-card time budget for visual
@@ -401,6 +405,11 @@ framing is slightly off-center but you do not want to change the committed ROI
 defaults themselves. They only affect OCR-oriented crops such as title, type
 line, and lower-text regions. Art and set-symbol regions keep their committed
 geometry.
+
+The recognition deadline is also used by fixture benchmarks in practice,
+because the evaluation workflow calls the same API. That means a benchmark no
+longer treats a card that takes longer than the configured budget as a pass;
+it is recorded as a runtime-budget failure instead.
 
 You can also override ROI expansion from the command line without editing the
 config file:

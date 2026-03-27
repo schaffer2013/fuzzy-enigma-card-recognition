@@ -57,6 +57,7 @@ def recognize_card(
     _notify(progress_callback, "Preparing image input...")
     prepared_image = _timed_call(stage_timings, "prepare_image_input", _prepare_image_input, image)
     config = config or load_engine_config()
+    deadline = _resolve_recognition_deadline(deadline, config)
     candidate_pool_limit = max(config.candidate_count * 4, config.candidate_count)
     if catalog is None:
         full_catalog = _timed_call(stage_timings, "load_catalog", _load_catalog, config.catalog_path)
@@ -118,43 +119,48 @@ def recognize_card(
         if winner is not None:
             _notify(progress_callback, f"Recognition complete: {winner.name}")
             stage_timings["total"] = round(time.monotonic() - start_time, 4)
-            return RecognitionResult(
-                bbox=detection.bbox,
-                best_name=winner.name,
-                confidence=visual_small_pool_result["confidence"],
-                ocr_lines=[],
-                top_k_candidates=visual_small_pool_result["candidates"][: config.candidate_count],
-                active_roi="art_match",
-                tried_rois=tried_rois,
-                debug={
-                    "image": {
-                        "source": str(getattr(prepared_image, "path", "")) or type(prepared_image).__name__,
-                        "shape": getattr(prepared_image, "shape", None),
+            return _finalize_recognition_result(
+                RecognitionResult(
+                    bbox=detection.bbox,
+                    best_name=winner.name,
+                    confidence=visual_small_pool_result["confidence"],
+                    ocr_lines=[],
+                    top_k_candidates=visual_small_pool_result["candidates"][: config.candidate_count],
+                    active_roi="art_match",
+                    tried_rois=tried_rois,
+                    debug={
+                        "image": {
+                            "source": str(getattr(prepared_image, "path", "")) or type(prepared_image).__name__,
+                            "shape": getattr(prepared_image, "shape", None),
+                        },
+                        "detection": detection.debug,
+                        "normalization": {
+                            "crop_count": len(normalized.crops),
+                            **normalized.debug_outputs,
+                        },
+                        "ocr": {
+                            "active_roi": None,
+                            "results_by_roi": results_by_roi,
+                        },
+                        "set_symbol": set_symbol_debug,
+                        "art_match": art_match_debug,
+                        "expectation": expectation_debug,
+                        "confirmation": confirmation_debug,
+                        "small_pool_visual": visual_small_pool_debug,
+                        "mode": {
+                            "requested": resolved_mode.requested_mode,
+                            "effective": resolved_mode.effective_mode,
+                            "candidate_count": len(catalog.records),
+                            "has_expected_card": expected_card is not None,
+                            "has_candidate_pool": candidate_pool is not None,
+                            "implementation_note": resolved_mode.implementation_note,
+                        },
+                        "timings": stage_timings,
                     },
-                    "detection": detection.debug,
-                    "normalization": {
-                        "crop_count": len(normalized.crops),
-                        **normalized.debug_outputs,
-                    },
-                    "ocr": {
-                        "active_roi": None,
-                        "results_by_roi": results_by_roi,
-                    },
-                    "set_symbol": set_symbol_debug,
-                    "art_match": art_match_debug,
-                    "expectation": expectation_debug,
-                    "confirmation": confirmation_debug,
-                    "small_pool_visual": visual_small_pool_debug,
-                    "mode": {
-                        "requested": resolved_mode.requested_mode,
-                        "effective": resolved_mode.effective_mode,
-                        "candidate_count": len(catalog.records),
-                        "has_expected_card": expected_card is not None,
-                        "has_candidate_pool": candidate_pool is not None,
-                        "implementation_note": resolved_mode.implementation_note,
-                    },
-                    "timings": stage_timings,
-                },
+                ),
+                stage_timings=stage_timings,
+                config=config,
+                deadline=deadline,
             )
     elif visual_pool_candidates and art_match_crop is None:
         visual_small_pool_debug = {"used": False, "reason": "missing_observed_crop"}
@@ -384,44 +390,49 @@ def recognize_card(
     _notify(progress_callback, f"Recognition complete: {best_name or 'no match'}")
     stage_timings["total"] = round(time.monotonic() - start_time, 4)
 
-    return RecognitionResult(
-        bbox=detection.bbox,
-        best_name=best_name,
-        confidence=confidence,
-        ocr_lines=ocr.lines,
-        top_k_candidates=candidates[: config.candidate_count],
-        active_roi=active_roi,
-        tried_rois=tried_rois,
-        debug={
-            "image": {
-                "source": str(getattr(prepared_image, "path", "")) or type(prepared_image).__name__,
-                "shape": getattr(prepared_image, "shape", None),
+    return _finalize_recognition_result(
+        RecognitionResult(
+            bbox=detection.bbox,
+            best_name=best_name,
+            confidence=confidence,
+            ocr_lines=ocr.lines,
+            top_k_candidates=candidates[: config.candidate_count],
+            active_roi=active_roi,
+            tried_rois=tried_rois,
+            debug={
+                "image": {
+                    "source": str(getattr(prepared_image, "path", "")) or type(prepared_image).__name__,
+                    "shape": getattr(prepared_image, "shape", None),
+                },
+                "detection": detection.debug,
+                "normalization": {
+                    "crop_count": len(normalized.crops),
+                    **normalized.debug_outputs,
+                },
+                "ocr": {
+                    "active_roi": active_roi,
+                    "results_by_roi": results_by_roi,
+                    **ocr.debug,
+                },
+                "set_symbol": set_symbol_debug,
+                "art_match": art_match_debug,
+                "expectation": expectation_debug,
+                "confirmation": confirmation_debug,
+                "small_pool_visual": visual_small_pool_debug,
+                "mode": {
+                    "requested": resolved_mode.requested_mode,
+                    "effective": resolved_mode.effective_mode,
+                    "candidate_count": len(catalog.records),
+                    "has_expected_card": expected_card is not None,
+                    "has_candidate_pool": candidate_pool is not None,
+                    "implementation_note": resolved_mode.implementation_note,
+                },
+                "timings": stage_timings,
             },
-            "detection": detection.debug,
-            "normalization": {
-                "crop_count": len(normalized.crops),
-                **normalized.debug_outputs,
-            },
-            "ocr": {
-                "active_roi": active_roi,
-                "results_by_roi": results_by_roi,
-                **ocr.debug,
-            },
-            "set_symbol": set_symbol_debug,
-            "art_match": art_match_debug,
-            "expectation": expectation_debug,
-            "confirmation": confirmation_debug,
-            "small_pool_visual": visual_small_pool_debug,
-            "mode": {
-                "requested": resolved_mode.requested_mode,
-                "effective": resolved_mode.effective_mode,
-                "candidate_count": len(catalog.records),
-                "has_expected_card": expected_card is not None,
-                "has_candidate_pool": candidate_pool is not None,
-                "implementation_note": resolved_mode.implementation_note,
-            },
-            "timings": stage_timings,
-        },
+        ),
+        stage_timings=stage_timings,
+        config=config,
+        deadline=deadline,
     )
 
 
@@ -594,6 +605,53 @@ def _resolve_visual_deadline(deadline: float | None, config: EngineConfig) -> fl
     if deadline is None:
         return capped_deadline
     return min(deadline, capped_deadline)
+
+
+def _resolve_recognition_deadline(deadline: float | None, config: EngineConfig) -> float | None:
+    if deadline is not None:
+        return deadline
+    timeout_seconds = max(0.0, getattr(config, "recognition_deadline_seconds", 0.0))
+    if timeout_seconds <= 0:
+        return None
+    return time.monotonic() + timeout_seconds
+
+
+def _finalize_recognition_result(
+    result: RecognitionResult,
+    *,
+    stage_timings: dict[str, float],
+    config: EngineConfig,
+    deadline: float | None,
+) -> RecognitionResult:
+    timeout_seconds = max(0.0, getattr(config, "recognition_deadline_seconds", 0.0))
+    exceeded = _deadline_exceeded(deadline)
+    if timeout_seconds > 0 and stage_timings.get("total", 0.0) > timeout_seconds:
+        exceeded = True
+
+    result.debug["deadline"] = {
+        "configured_seconds": timeout_seconds,
+        "deadline_used": deadline is not None,
+        "exceeded": exceeded,
+    }
+    if not exceeded:
+        return result
+
+    result.debug["deadline"]["partial_best_name"] = result.best_name
+    result.debug["deadline"]["partial_confidence"] = result.confidence
+    result.debug["deadline"]["partial_candidates"] = [
+        {
+            "name": candidate.name,
+            "set_code": candidate.set_code,
+            "collector_number": candidate.collector_number,
+            "score": candidate.score,
+            "notes": list(candidate.notes or []),
+        }
+        for candidate in result.top_k_candidates[:5]
+    ]
+    result.best_name = None
+    result.confidence = 0.0
+    result.top_k_candidates = []
+    return result
 
 
 class OCR_like:

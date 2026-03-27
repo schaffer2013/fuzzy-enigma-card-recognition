@@ -61,3 +61,24 @@
   - `confirmation`: `14.744s -> 8.749s`
 - Runtime note:
   - that constrained rerun still took about `18.5 minutes`, so this branch is improving latency but not yet "fast enough" for all split-room cases
+## 2026-03-27 08:12 PDT
+- Started a new feature branch: `feature/recognition-deadlines`.
+- Added `recognition_deadline_seconds` to `EngineConfig` and the sample config, with `20.0` seconds as the default runtime budget.
+- Recognition now marks over-budget scans as failures instead of slow successes, and evaluation classifies them as `runtime_budget_exceeded`.
+- Updated README, INTEGRATION, HOWTO, mode-pipeline docs, and the speed-tuning deep dive so the runtime-budget policy is explicit.
+- Validation:
+  - focused suites: `69 passed`
+  - full suite: `186 passed`
+## 2026-03-27 08:59 PDT
+- Reran the full `room` family benchmark (`59` fixtures) with the new 20-second recognition budget active.
+- Result:
+  - `greenfield`: `0.966` top-1, `15.527s` average, `2` runtime-budget failures
+  - `reevaluation`: `1.000` top-1, `13.904s` average
+  - `small_pool`: `1.000` top-1, `8.968s` average
+  - `confirmation`: `1.000` top-1, `9.041s` average
+- The deadline budget therefore cleaned up the worst room-family tails without harming constrained modes.
+- The remaining room-family greenfield budget failures are:
+  - `central-elevator-promising-stairs-pdsk-44s`
+  - `derelict-attic-widow-s-walk-dsk-93`
+- Runtime note:
+  - this all-modes room rerun still took about `47 minutes`, so it is much better than the old ~76-minute run, but it is still a heavy benchmark and should be used selectively.

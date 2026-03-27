@@ -280,6 +280,44 @@ def test_evaluate_fixture_set_excludes_nonpaper_fixtures_from_scored_metrics(mon
     assert rows == [("printing:inv:64", "printing:inv:64")]
 
 
+def test_evaluate_fixture_set_marks_deadline_exceeded_results_as_runtime_failures(monkeypatch, tmp_path):
+    fixture = tmp_path / "opt.png"
+    fixture.write_bytes(_minimal_png(width=80, height=100))
+    fixture.with_suffix(".json").write_text(
+        json.dumps(
+            {
+                "expected_name": "Opt",
+                "expected_set_code": "inv",
+                "expected_collector_number": "64",
+                "expected_games": ["paper"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "card_engine.evaluation.recognize_card",
+        lambda image, *, deadline=None, config=None, catalog=None, skip_secondary_ocr=False: RecognitionResult(
+            bbox=(0, 0, 80, 100),
+            best_name=None,
+            confidence=0.0,
+            top_k_candidates=[],
+            active_roi="standard",
+            tried_rois=["standard"],
+            debug={
+                "deadline": {"exceeded": True},
+                "timings": {"total": 21.0},
+            },
+        ),
+    )
+
+    summary = evaluate_fixture_set(tmp_path)
+
+    assert summary.top1_accuracy == 0.0
+    assert summary.error_classes["runtime_budget_exceeded"] == 1
+    assert summary.fixtures[0].deadline_exceeded is True
+
+
 def test_build_random_sample_fetches_until_time_limit(monkeypatch, tmp_path):
     calls: list[int] = []
     times = iter([0.0, 1.0, 2.0, 3.0])

@@ -1,9 +1,11 @@
 from pathlib import Path
+import time
 
 import numpy
 
 from card_engine.api import recognize_card
 from card_engine.catalog.local_index import CatalogRecord, LocalCatalogIndex
+from card_engine.config import EngineConfig
 from card_engine.image_types import EditableLoadedImage
 from card_engine.models import Candidate, VisualPoolCandidate
 from card_engine.ocr import OCRResult
@@ -1238,6 +1240,36 @@ def test_recognize_card_does_not_treat_lower_text_as_title_when_title_ocr_is_emp
     assert result.top_k_candidates == []
     assert result.active_roi == "lower_text"
     assert result.ocr_lines == ["2,", ": Add @ to your mana", "pool."]
+
+
+def test_recognize_card_fails_when_runtime_budget_is_exceeded(monkeypatch):
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        return OCRResult(
+            lines=["Opt"] if roi_label == "standard" else [],
+            confidence=0.99 if roi_label == "standard" else 0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Opt", normalized_name="", set_code="XLN", collector_number="65", layout="normal"),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr("card_engine.api._resolve_recognition_deadline", lambda deadline, config: time.monotonic() - 1)
+
+    result = recognize_card(
+        DummyImage(),
+        config=EngineConfig(recognition_deadline_seconds=0.001),
+    )
+
+    assert result.best_name is None
+    assert result.confidence == 0.0
+    assert result.top_k_candidates == []
+    assert result.debug["deadline"]["exceeded"] is True
+    assert result.debug["deadline"]["partial_best_name"] == "Opt"
 
 
 def _minimal_png(*, width: int, height: int) -> bytes:

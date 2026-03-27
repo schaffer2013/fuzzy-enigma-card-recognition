@@ -78,6 +78,7 @@ class FixtureEvaluation:
     stage_timings: dict[str, float] = field(default_factory=dict)
     expected_games: list[str] = field(default_factory=list)
     expected_is_paper: bool | None = None
+    deadline_exceeded: bool = False
 
 
 @dataclass(frozen=True)
@@ -636,6 +637,7 @@ def _build_fixture_evaluation(
     predicted_set_code = best_candidate.set_code if best_candidate else None
     predicted_collector_number = best_candidate.collector_number if best_candidate else None
     stage_timings = _coerce_stage_timings(result.debug.get("timings", {}))
+    deadline_exceeded = bool(result.debug.get("deadline", {}).get("exceeded"))
     top1_hit = bool(expected.name and result.best_name == expected.name)
     top5_hit = bool(expected.name and expected.name in candidate_names[:5])
     set_hit = bool(
@@ -688,11 +690,13 @@ def _build_fixture_evaluation(
             predicted_set_code=predicted_set_code,
             predicted_collector_number=predicted_collector_number,
             candidate_names=candidate_names,
+            deadline_exceeded=deadline_exceeded,
         ),
         runtime_seconds=stage_timings.get("total", runtime_seconds),
         stage_timings=stage_timings,
         expected_games=list(expected.games),
         expected_is_paper=is_paper_expectation(expected),
+        deadline_exceeded=deadline_exceeded,
     )
 
 
@@ -1529,9 +1533,12 @@ def _classify_result(
     predicted_set_code: str | None,
     predicted_collector_number: str | None,
     candidate_names: list[str],
+    deadline_exceeded: bool = False,
 ) -> str:
     if not expected_is_paper:
         return "out_of_scope_nonpaper"
+    if deadline_exceeded:
+        return "runtime_budget_exceeded"
     if expected_name is None:
         return "missing_expected_name"
     if predicted_name is None:

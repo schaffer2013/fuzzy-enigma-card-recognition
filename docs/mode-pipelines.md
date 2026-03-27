@@ -47,6 +47,11 @@ Every mode starts with the same broad stages:
    If the first title read is still not decisive enough, the engine may read
    additional ROIs such as `type_line` and `lower_text` and rerank again.
 
+10. Enforce the runtime budget.
+   The engine treats recognitions that run past the configured
+   `recognition_deadline_seconds` budget as failures instead of successful but
+   too-slow results.
+
 ## Core Decision Tree
 
 At a high level, the current shared flow is:

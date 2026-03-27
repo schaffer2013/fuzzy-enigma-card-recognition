@@ -192,6 +192,20 @@ If your goal is materially faster recognition, the highest-yield path is:
 
 That sequence is most likely to move both average and tail latency without sacrificing recognition quality.
 
+## Runtime budget policy
+
+The engine now has an explicit per-card runtime budget via
+`recognition_deadline_seconds` in `EngineConfig`.
+
+Current intended meaning:
+
+- live recognition that runs past that budget is treated as a failure
+- fixture benchmarks inherit the same budget card-by-card, so a benchmark no
+  longer counts "correct but unacceptably slow" cards as successes
+
+That makes latency targets visible in normal evaluation output instead of being
+only an after-the-fact interpretation of stage timings.
+
 ## FAQ: Was the previous approach wrong?
 
 Not wrong, but incomplete.
