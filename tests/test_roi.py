@@ -11,7 +11,7 @@ def test_roi_ordering_respects_cycle_then_remainder():
 def test_resolve_roi_groups_for_split_layout_includes_split_panels():
     groups = resolve_roi_groups_for_layout("split")
 
-    assert groups == ["planar_title", "standard", "art_match", "type_line", "set_symbol", "lower_text"]
+    assert groups == ["planar_title", "split_full", "standard", "art_match", "type_line", "set_symbol", "lower_text"]
 
 
 def test_roi_group_bboxes_projects_relative_rois_inside_card_bbox(monkeypatch):
@@ -31,6 +31,30 @@ def test_roi_group_bboxes_supports_type_line_group(monkeypatch):
 def test_roi_group_bboxes_supports_art_match_group(monkeypatch):
     monkeypatch.setattr("card_engine.roi.repo_roi_overrides", lambda config_path=None: {})
     entries = roi_group_bboxes((10, 20, 100, 200), "art_match")
+
+    assert entries == [("art_box", (18, 46, 84, 80))]
+
+
+def test_roi_group_bboxes_can_expand_from_center(monkeypatch):
+    monkeypatch.setattr("card_engine.roi.repo_roi_overrides", lambda config_path=None: {})
+    entries = roi_group_bboxes(
+        (10, 20, 100, 200),
+        "type_line",
+        expand_long_factor=1.1,
+        expand_short_factor=1.3,
+    )
+
+    assert entries == [("type_line", (14, 56, 92, 20))]
+
+
+def test_roi_group_bboxes_do_not_expand_visual_regions(monkeypatch):
+    monkeypatch.setattr("card_engine.roi.repo_roi_overrides", lambda config_path=None: {})
+    entries = roi_group_bboxes(
+        (10, 20, 100, 200),
+        "art_match",
+        expand_long_factor=1.5,
+        expand_short_factor=1.5,
+    )
 
     assert entries == [("art_box", (18, 46, 84, 80))]
 

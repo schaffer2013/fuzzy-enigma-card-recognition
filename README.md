@@ -57,7 +57,12 @@ See [roadmap.md](roadmap.md) for the planned milestones and
 [docs/milestone9-closeout.md](docs/milestone9-closeout.md) for the measured
 Milestone 9 validation snapshot. For parent-repo wiring, use
 [INTEGRATION.md](INTEGRATION.md). For the desktop debug UI, use
-[HOWTO.md](HOWTO.md).
+[HOWTO.md](HOWTO.md). For the mode-by-mode recognition flow and current
+decision tree, use [docs/mode-pipelines.md](docs/mode-pipelines.md). For split
+layout investigations, the repo also includes
+`scripts/build_split_fixture_set.py` and
+`scripts/report_split_family_metrics.py` so full split benchmarks can be
+summarized by family instead of treated as one bucket.
 
 ## Install
 
@@ -95,9 +100,23 @@ Run tests:
 python -m pytest
 ```
 
+Run engine-only tests without collecting the debug UI suite:
+
+```powershell
+python -m pytest --engine-only
+```
+
+Run only the UI/debug tests:
+
+```powershell
+python -m pytest --ui-only
+```
+
 The base package now includes the image stack used by recognition. The `ocr`
 extra adds OCR backends, and the `ui` extra adds `scrython` for the debug UI's
-random-card and Scryfall-backed helper flows.
+random-card and Scryfall-backed helper flows. Parent repos that only embed the
+engine can stay on base or `[ocr]` installs and use `--engine-only` test runs
+to avoid pulling the UI suite into their normal validation loop.
 
 ## Parent Quickstart
 
@@ -160,6 +179,33 @@ The parent project should ideally do only four things:
 For a fuller integration walkthrough, including path ownership and first-run
 catalog behavior, see [INTEGRATION.md](INTEGRATION.md).
 
+## Offline Catalog Query Layer
+
+The local SQLite catalog is now intentionally queryable at two levels:
+
+- `oracle_cards`: grouped Oracle identity by `oracle_id`
+- `printed_cards`: exact printings by `scryfall_id`
+
+Python example:
+
+```python
+from card_engine.catalog import OfflineCatalogQuery
+
+query = OfflineCatalogQuery.from_sqlite("data/catalog/cards.sqlite3")
+oracle = query.get_oracle_card("376601b6-fe51-4e2d-8ec6-98f965d649a3")
+printings = query.printings_for_name("Sliver Legion")
+```
+
+CLI example:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\query_offline_catalog.py `
+  printings-for-name "Sliver Legion"
+```
+
+Use `oracle_id` when you want grouped same-card identity across printings, and
+use `scryfall_id` when you need exact-printing identity.
+
 ## Parent-Facing API
 
 Direct API use:
@@ -196,6 +242,9 @@ Today:
 - `reevaluation` biases the expected card while still allowing disagreement
   recovery
 - `confirmation` returns expected-printing confidence plus contradiction details
+
+The higher-level operational flow for these modes is documented in
+[docs/mode-pipelines.md](docs/mode-pipelines.md).
 
 Session/tracked-pool use:
 
@@ -330,6 +379,8 @@ Current `EngineConfig` fields:
   processing.
 - `enabled_roi_groups`: ROI groups the recognizer is allowed to use.
 - `roi_cycle_order`: deterministic order for trying ROI groups.
+- `roi_expand_long_factor`: runtime multiplier for the ROI crop's long axis.
+- `roi_expand_short_factor`: runtime multiplier for the ROI crop's short axis.
 - `layout_heuristics_enabled`: toggle for layout-driven ROI heuristics.
 - `lazy_group_basic_land_printings`: performance optimization that collapses
   same-name basic-land printings to a default printing before expensive visual
@@ -343,6 +394,28 @@ Current `EngineConfig` fields:
   tie-break work.
 - `reference_download_timeout_seconds`: timeout for fetching uncached reference
   images used by visual tie-break steps.
+
+Those ROI expansion factors are applied from the center point of each ROI crop
+and then clamped to the image bounds. They are useful when real-world card
+framing is slightly off-center but you do not want to change the committed ROI
+defaults themselves. They only affect OCR-oriented crops such as title, type
+line, and lower-text regions. Art and set-symbol regions keep their committed
+geometry.
+
+You can also override ROI expansion from the command line without editing the
+config file:
+
+```powershell
+.\.venv\Scripts\python.exe -m card_engine.ui --roi-expand 1.1
+.\.venv\Scripts\python.exe -m card_engine.evaluation --fixtures-dir data\fixtures --roi-expand 1.1 1.3
+```
+
+Meaning:
+
+- `--roi-expand 1.0`: default geometry
+- `--roi-expand 1.1`: expand both axes equally
+- `--roi-expand 1.1 1.3`: expand the long axis by `1.1` and the short axis by
+  `1.3`
 
 The config surface is still growing. As new mode-aware and integration-facing
 features land, this section should be kept in sync with `EngineConfig` so the

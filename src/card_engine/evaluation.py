@@ -18,7 +18,7 @@ from .api import recognize_card
 from .art_prehash import eligible_art_records, prehash_missing_art_records
 from .catalog.local_index import CatalogRecord, LocalCatalogIndex
 from .catalog.scryfall_sync import fetch_random_card_image
-from .config import EngineConfig, load_engine_config
+from .config import EngineConfig, load_engine_config, parse_roi_expand_factors
 from .eval_pair_store import (
     DEFAULT_SIMULATED_PAIR_DB_PATH,
     SimulatedPairStore,
@@ -227,6 +227,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Counts are aggregated across runs and capped to 10,000 unique pairs."
         ),
     )
+    parser.add_argument(
+        "--roi-expand",
+        nargs="+",
+        type=float,
+        default=None,
+        metavar="FACTOR",
+        help=(
+            "Scale ROI crops from their center point. Pass one value to scale both directions equally, "
+            "or pass LONG SHORT to scale the crop's long and short axes separately."
+        ),
+    )
     return parser
 
 
@@ -373,7 +384,7 @@ def evaluate_operational_modes(
     progress_callback: ProgressCallback | None = None,
 ) -> OperationalModeReport:
     resolved_mode_names = resolve_operational_modes(mode_names)
-    config = base_config or load_engine_config()
+    config: EngineConfig = base_config or load_engine_config()
     _prehash_benchmark_art_pool(
         fixtures_dir,
         limit=limit,
@@ -1131,6 +1142,17 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--compare-to currently supports summary runs only, not operational mode suites.")
     if args.compare_to and len(benchmark_mode_names) > 1:
         parser.error("--compare-to currently supports single-mode runs only.")
+    base_config = load_engine_config()
+    try:
+        roi_expand = parse_roi_expand_factors(args.roi_expand)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if roi_expand is not None:
+        base_config = replace(
+            base_config,
+            roi_expand_long_factor=roi_expand[0],
+            roi_expand_short_factor=roi_expand[1],
+        )
 
     with SimulatedPairStore(args.pair_db) as pair_store:
         if operational_mode_names:
@@ -1143,6 +1165,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.fixtures_dir,
                 mode_names=operational_mode_names,
                 limit=args.limit,
+                base_config=base_config,
                 pair_store=pair_store,
                 progress_callback=_print_console,
             )
@@ -1182,6 +1205,7 @@ def main(argv: list[str] | None = None) -> int:
                 sample_dir,
                 mode_names=benchmark_mode_names,
                 limit=args.limit,
+                base_config=base_config,
                 pair_store=pair_store,
                 progress_callback=_print_console,
             )
@@ -1207,6 +1231,7 @@ def main(argv: list[str] | None = None) -> int:
             summary = evaluate_random_sample(
                 args.random_output_dir,
                 time_limit_seconds=args.random_time_limit_minutes * 60.0,
+                config=base_config,
                 progress_callback=_print_console,
                 pair_store=pair_store,
             )
@@ -1220,6 +1245,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.fixtures_dir,
                 mode_names=benchmark_mode_names,
                 limit=args.limit,
+                base_config=base_config,
                 pair_store=pair_store,
                 progress_callback=_print_console,
             )
@@ -1245,6 +1271,7 @@ def main(argv: list[str] | None = None) -> int:
             summary = evaluate_fixture_set(
                 args.fixtures_dir,
                 limit=args.limit,
+                config=base_config,
                 pair_store=pair_store,
                 progress_callback=_print_console,
                 progress_label="default",

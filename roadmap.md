@@ -626,13 +626,15 @@ What is effectively done today:
 - [ ] Milestone 8 is partially complete.
 - [x] Milestone 9 is complete.
 - [x] Milestone 10 is complete.
-- [ ] Milestone 11 is partially complete.
+- [x] Milestone 11 is complete.
+- [x] Milestone 12 is complete.
+- [x] Milestone 13 is complete.
 
 Recommended next step:
 
-- Continue **Milestone 11: Pipeline Benchmarking and Performance Engineering**
-  by optimizing the measured OCR bottlenecks, starting with `secondary_ocr` in
-  open-ended modes and `title_ocr` in constrained modes.
+- Continue the immediate split-family hardening work by treating split layouts
+  as multiple operational families instead of one global path, with latency
+  work now taking priority over raw correctness for the `room` family.
 
 ### Implementation Sequencing Adjustment
 
@@ -1086,14 +1088,14 @@ Recommended early implementation order:
 
 **Status**
 
-- [ ] Direct query helpers for `oracle_cards`.
-- [ ] Direct query helpers for `printed_cards`.
-- [ ] Parent-facing guidance on when to use `oracle_id` versus `scryfall_id`.
-- [ ] Decide which offline catalog fields should flow into parent-facing query
+- [x] Direct query helpers for `oracle_cards`.
+- [x] Direct query helpers for `printed_cards`.
+- [x] Parent-facing guidance on when to use `oracle_id` versus `scryfall_id`.
+- [x] Decide which offline catalog fields should flow into parent-facing query
   and adapter surfaces.
-- [ ] Lightweight offline inspection/query script for parent-side debugging.
-- [ ] Keep catalog/query scope focused on non-digital paper printings.
-- [ ] Investigate a custom OCR path by fine-tuning PaddleOCR on Magic-specific
+- [x] Lightweight offline inspection/query script for parent-side debugging.
+- [x] Keep catalog/query scope focused on non-digital paper printings.
+- [x] Investigate a custom OCR path by fine-tuning PaddleOCR on Magic-specific
   title crops, with optional ONNX/RapidOCR deployment if the training results
   justify the added maintenance.
 
@@ -1123,16 +1125,28 @@ Recommended early implementation order:
   investment path or should be deferred in favor of cheaper OCR/ROI
   heuristics.
 
+**Current Progress Notes**
+
+- `card_engine.catalog.query.OfflineCatalogQuery` now exposes direct Oracle and
+  printed-card queries against the normalized offline SQLite catalog.
+- `scripts/query_offline_catalog.py` provides a lightweight parent-side
+  inspection entry point for Oracle-level and exact-printing lookups.
+- Parent-facing docs now explain when to use `oracle_id` versus `scryfall_id`.
+- The offline query layer stays scoped to the paper-only catalog build.
+- A short decision note in `docs/custom-ocr-decision.md` records the current
+  choice to defer custom OCR training until cheaper OCR/ROI improvements are
+  exhausted.
+
 ### Milestone 13: UI / Engine Package Decoupling
 
 **Status**
 
-- [ ] Separate engine-facing and UI-facing dependency groups cleanly.
-- [ ] Ensure parent repos can install and test engine-only code without UI
+- [x] Separate engine-facing and UI-facing dependency groups cleanly.
+- [x] Ensure parent repos can install and test engine-only code without UI
   dependencies.
-- [ ] Move UI-only test coverage behind a UI-specific test target.
-- [ ] Keep adapter and integration examples free of UI imports.
-- [ ] Make package/module boundaries explicit in docs and CI.
+- [x] Move UI-only test coverage behind a UI-specific test target.
+- [x] Keep adapter and integration examples free of UI imports.
+- [x] Make package/module boundaries explicit in docs and CI/local commands.
 
 **Deliverables**
 
@@ -1154,6 +1168,16 @@ Recommended early implementation order:
   isolated from the integration surface.
 - README/integration docs explain the package split and the intended install
   paths for submodule consumers.
+
+**Current Progress Notes**
+
+- Engine-only tests can now run with `python -m pytest --engine-only`, which
+  skips UI-only test modules at collection time.
+- UI-only tests can run with `python -m pytest --ui-only`.
+- Core API tests no longer import the debug UI module just to construct
+  editable image fixtures.
+- Install and test docs now distinguish engine-only and UI/debug workflows for
+  parent repos.
 
 ---
 

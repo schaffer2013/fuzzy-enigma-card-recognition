@@ -95,7 +95,22 @@ def count_valid_cached_art_records(
     cache_dir: str | Path = ART_MATCH_CACHE_DIR,
 ) -> int:
     cache_root = Path(cache_dir)
-    return sum(1 for record in records if _has_valid_cached_fingerprint(record, cache_dir=cache_root))
+    return sum(
+        1
+        for record in records
+        if _call_with_supported_kwargs(
+            _has_valid_cached_fingerprint,
+            record,
+            cache_dir=cache_root,
+        )
+    )
+
+
+def count_prehash_cache_entries(*, cache_dir: str | Path | None = None) -> int:
+    cache_root = Path(cache_dir or ART_MATCH_CACHE_DIR)
+    if not cache_root.exists():
+        return 0
+    return sum(1 for path in cache_root.glob("*.json") if path.name != "_cache_meta.json")
 
 
 def prehash_missing_art_records(
@@ -110,9 +125,19 @@ def prehash_missing_art_records(
     max_workers: int = DEFAULT_ART_PREHASH_WORKERS,
 ) -> ArtPrehashResult:
     cache_root = Path(cache_dir)
-    _refresh_reference_cache_if_needed()
+    _call_with_supported_kwargs(
+        _refresh_reference_cache_if_needed,
+    )
     ordered = list(records)
-    missing = [record for record in ordered if not _has_valid_cached_fingerprint(record, cache_dir=cache_root)]
+    missing = [
+        record
+        for record in ordered
+        if not _call_with_supported_kwargs(
+            _has_valid_cached_fingerprint,
+            record,
+            cache_dir=cache_root,
+        )
+    ]
     if shuffle:
         random.shuffle(missing)
     else:
@@ -223,7 +248,11 @@ def record_label(record: CatalogRecord) -> str:
     return f"{record.name} [{record.set_code or '?'} {record.collector_number or '?'}]"
 
 
-def _has_valid_cached_fingerprint(record: CatalogRecord, *, cache_dir: Path) -> bool:
+def _has_valid_cached_fingerprint(
+    record: CatalogRecord,
+    *,
+    cache_dir: Path,
+) -> bool:
     cache_path = cache_dir / _reference_cache_name(record)
     if not cache_path.exists():
         return False
@@ -231,7 +260,9 @@ def _has_valid_cached_fingerprint(record: CatalogRecord, *, cache_dir: Path) -> 
         payload = json.loads(cache_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    return _cached_fingerprint(payload) is not None
+    return _cached_fingerprint(
+        payload,
+    ) is not None
 
 
 def _record_secondary_sort_key(record: CatalogRecord) -> tuple[str, str, str]:
@@ -251,3 +282,19 @@ def _supports_keyword_argument(func, keyword: str) -> bool:
         if parameter.kind == inspect.Parameter.VAR_KEYWORD:
             return True
     return keyword in signature.parameters
+
+
+def _call_with_supported_kwargs(function, *args, **kwargs):
+    try:
+        signature = inspect.signature(function)
+    except (TypeError, ValueError):
+        return function(*args)
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
+        return function(*args, **kwargs)
+
+    supported_kwargs = {
+        key: value
+        for key, value in kwargs.items()
+        if key in signature.parameters
+    }
+    return function(*args, **supported_kwargs)

@@ -52,3 +52,45 @@ def test_run_ocr_logs_successful_backend_attempt(tmp_path, monkeypatch):
     payload = json.loads(log_path.read_text(encoding="utf-8").splitlines()[0])
     assert payload["attempts"][0]["backend"] == "rapidocr"
     assert payload["attempts"][0]["status"] == "success"
+
+
+def test_extract_rapidocr_line_boxes_preserves_geometry():
+    entries = [
+        (
+            [[10, 20], [50, 20], [50, 40], [10, 40]],
+            "Fire",
+            0.98,
+        ),
+        (
+            [[60, 20], [90, 20], [90, 40], [60, 40]],
+            "Ice",
+            0.95,
+        ),
+    ]
+
+    line_boxes = ocr_module._extract_rapidocr_line_boxes(entries)
+
+    assert [box["text"] for box in line_boxes] == ["Fire", "Ice"]
+    assert line_boxes[0]["bbox"] == [10.0, 20.0, 40.0, 20.0]
+    assert line_boxes[0]["points"] == [[10.0, 20.0], [50.0, 20.0], [50.0, 40.0], [10.0, 40.0]]
+
+
+def test_result_from_lines_keeps_matching_line_boxes():
+    result = ocr_module._result_from_lines(
+        ["Fire", "Ice"],
+        confidence=0.96,
+        line_boxes=[
+            {"text": "Fire", "normalized_text": "fire", "bbox": [0, 0, 10, 20], "points": [], "confidence": 0.9},
+            {"text": "Noise", "normalized_text": "noise", "bbox": [1, 1, 5, 5], "points": [], "confidence": 0.1},
+        ],
+        backend="rapidocr",
+        roi_label="planar_title",
+        crop_region=None,
+        source=None,
+        attempts=[],
+        outcome="success",
+    )
+
+    assert result.lines == ["Fire", "Ice"]
+    assert [box["text"] for box in result.line_boxes] == ["Fire"]
+    assert [box["text"] for box in result.debug["line_boxes"]] == ["Fire"]

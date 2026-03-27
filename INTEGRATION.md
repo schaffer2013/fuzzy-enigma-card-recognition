@@ -2,7 +2,8 @@
 
 This guide is for parent repositories embedding `fuzzy-enigma-card-recognition`
 as a submodule or editable dependency. For the desktop debug UI, use
-[HOWTO.md](HOWTO.md) instead.
+[HOWTO.md](HOWTO.md) instead. For the operational recognition flow and current
+mode decision tree, use [docs/mode-pipelines.md](docs/mode-pipelines.md).
 
 ## Install Matrix
 
@@ -12,6 +13,8 @@ The base package now includes the image stack required for recognition:
 - OCR-enabled: `pip install -e ./third_party/fuzzy-enigma-card-recognition[ocr]`
 - UI-enabled: `pip install -e ./third_party/fuzzy-enigma-card-recognition[ui]`
 - local development: `pip install -e ./third_party/fuzzy-enigma-card-recognition[ocr,ui,dev]`
+- engine-only tests: `python -m pytest --engine-only`
+- UI-only tests: `python -m pytest --ui-only`
 
 Use the `ocr` extra whenever you expect OCR backends to be available. The `ui`
 extra is only needed for the Scryfall-backed random-card UI action and catalog
@@ -37,7 +40,9 @@ Create a parent-owned config file such as
 {
   "catalog_path": "C:/work/your-parent-app/var/card-engine/cards.sqlite3",
   "candidate_count": 5,
-  "lazy_group_basic_land_printings": true
+  "lazy_group_basic_land_printings": true,
+  "roi_expand_long_factor": 1.1,
+  "roi_expand_short_factor": 1.2
 }
 ```
 
@@ -75,6 +80,24 @@ Identifier guidance:
 - use `scryfall_id` when the parent needs exact-printing identity
 - use `oracle_id` when the parent wants to group same-card printings
 
+For direct offline catalog inspection outside the recognizer flow:
+
+```python
+from card_engine.catalog import OfflineCatalogQuery
+
+query = OfflineCatalogQuery.from_sqlite(config.catalog_path)
+oracle = query.get_oracle_card("oracle-id-here")
+printings = query.printings_for_oracle("oracle-id-here")
+```
+
+And from the CLI:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\query_offline_catalog.py `
+  --catalog C:\work\your-parent-app\var\card-engine\cards.sqlite3 `
+  printings-for-name "Sliver Legion"
+```
+
 ## Path Ownership
 
 Important path rule:
@@ -95,6 +118,12 @@ Practical recommendation:
 
 - set `CARD_ENGINE_CONFIG_PATH` to an absolute parent-owned config path, or
 - construct `EngineConfig` directly with parent-owned absolute paths
+
+If your camera framing is not perfectly centered, the parent can also use
+`roi_expand_long_factor` and `roi_expand_short_factor` to expand OCR-oriented
+regions from their center point. This affects text-reading crops such as title,
+type line, and lower text, but it does not change art-match or set-symbol
+reference regions.
 
 ## Data Ownership
 
@@ -124,6 +153,10 @@ shape with:
 
 That split is meant to make parent-side querying easier when the parent wants
 either exact printings or grouped same-card identities.
+
+The query layer stays intentionally scoped to the paper-only local catalog.
+Digital-only printings are filtered out at catalog-build time and do not appear
+in these offline query results.
 
 ## First-Run Side Effects
 
@@ -175,3 +208,20 @@ Use these modes as a starting point:
 - `reevaluation`: bias toward an expected card while still allowing recovery
 - `confirmation`: score how strongly the observed card agrees with an expected
   printing
+
+The step-by-step pipeline for each of these modes is documented in
+[docs/mode-pipelines.md](docs/mode-pipelines.md).
+
+## Engine / UI Test Boundary
+
+The debug UI is now treated as optional from the test runner's point of view:
+
+- `python -m pytest --engine-only` skips UI-only test modules at collection
+  time
+- `python -m pytest --ui-only` collects only the UI/debug suite
+- the default `python -m pytest` still runs the full repo suite for local
+  development
+
+That means parent repos embedding this package can validate the engine,
+adapter, and catalog layers without importing or collecting the UI tests unless
+they explicitly opt in.

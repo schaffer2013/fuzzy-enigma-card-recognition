@@ -25,6 +25,7 @@ from card_engine.evaluation import (
     FixtureEvaluation,
     FixtureExpectation,
     load_summary_json,
+    main,
     operational_mode_report_to_json,
     render_benchmark_report,
     render_comparison,
@@ -797,6 +798,57 @@ def test_evaluate_operational_modes_prehashes_fixture_pool_and_same_oracle_recor
     assert seen_records == [[("Opt", "xln", "65"), ("Opt", "inv", "64")]]
 
 
+def test_main_passes_base_config_to_operational_mode_runs(monkeypatch, tmp_path):
+    fixture = tmp_path / "fixture.png"
+    fixture.write_bytes(_minimal_png(width=80, height=100))
+    fixture.with_suffix(".json").write_text(
+        json.dumps({"expected_name": "Fire // Ice", "expected_games": ["paper"]}),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_evaluate_operational_modes(
+        fixtures_dir,
+        *,
+        mode_names,
+        limit=None,
+        base_config=None,
+        pair_store=None,
+        progress_callback=None,
+    ):
+        captured["fixtures_dir"] = fixtures_dir
+        captured["mode_names"] = mode_names
+        captured["limit"] = limit
+        captured["base_config"] = base_config
+        return OperationalModeReport(fixtures_dir=str(fixtures_dir), mode_results=[])
+
+    monkeypatch.setattr("card_engine.evaluation.evaluate_operational_modes", fake_evaluate_operational_modes)
+    monkeypatch.setattr("card_engine.evaluation.render_operational_mode_report", lambda report: "ok")
+
+    exit_code = main(
+        [
+            "--fixtures-dir",
+            str(tmp_path),
+            "--operational-modes",
+            "greenfield",
+            "--json-out",
+            str(tmp_path / "out.json"),
+            "--roi-expand",
+            "1.1",
+            "1.3",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["fixtures_dir"] == str(tmp_path)
+    assert captured["mode_names"] == ["greenfield"]
+    base_config = captured["base_config"]
+    assert isinstance(base_config, EngineConfig)
+    assert base_config.roi_expand_long_factor == 1.1
+    assert base_config.roi_expand_short_factor == 1.3
+
+
 def test_evaluate_benchmark_modes_runs_same_fixture_set_across_modes(monkeypatch, tmp_path):
     seen: list[tuple[str, EngineConfig]] = []
 
@@ -825,7 +877,12 @@ def test_evaluate_benchmark_modes_runs_same_fixture_set_across_modes(monkeypatch
 
     summaries = iter([fake_summary(0.9, 0.8), fake_summary(0.8, 0.7), fake_summary(0.7, 0.6)])
 
-    monkeypatch.setattr("card_engine.evaluation.evaluate_fixture_set", lambda fixtures_dir, *, limit=None, config=None: (seen.append((str(fixtures_dir), config)) or next(summaries)))
+    def fake_evaluate_fixture_set(fixtures_dir, *, limit=None, config=None):
+        assert isinstance(config, EngineConfig)
+        seen.append((str(fixtures_dir), config))
+        return next(summaries)
+
+    monkeypatch.setattr("card_engine.evaluation.evaluate_fixture_set", fake_evaluate_fixture_set)
 
     report = evaluate_benchmark_modes(
         tmp_path,

@@ -16,6 +16,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Directory to write the split-card fixtures into.",
     )
     parser.add_argument(
+        "--family",
+        default=None,
+        help="Optional split family filter such as classic_split, aftermath, fuse, room, or multi_split.",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -44,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
     written = build_split_fixture_set(
         catalog_path=config.catalog_path,
         output_dir=Path(args.output_dir),
+        family=args.family,
         limit=args.limit,
         overwrite=args.overwrite,
         progress_callback=_safe_print,

@@ -42,20 +42,30 @@ def match_candidates(
     candidate_records: list | None = None,
 ) -> list[Candidate]:
     config = config or EngineConfig()
-    title_query = _select_title_query(ocr_lines, results_by_roi)
-    if not title_query:
+    title_queries = _candidate_title_queries(ocr_lines, results_by_roi, layout_hint=layout_hint)
+    if not title_queries:
         return []
+    title_query = title_queries[0]
 
     type_line_query = _select_type_line_query(results_by_roi)
     lower_text_query = _select_lower_text_query(results_by_roi)
 
     if catalog is not None:
         search_limit = max(limit * 3, limit)
-        matches = (
-            _search_records_by_name(candidate_records, title_query, limit=search_limit)
-            if candidate_records is not None
-            else catalog.search_name(title_query, limit=search_limit)
+        title_query, matches = _best_title_query_and_matches(
+            title_queries,
+            catalog=catalog,
+            candidate_records=candidate_records,
+            limit=search_limit,
         )
+        if not title_query:
+            title_query = title_queries[0]
+        if not matches:
+            matches = (
+                _search_records_by_name(candidate_records, title_query, limit=search_limit)
+                if candidate_records is not None
+                else catalog.search_name(title_query, limit=search_limit)
+            )
         if matches:
             matches, collapsed_for_lazy_optimization = _apply_lazy_printing_optimizations(matches, config)
             if collapsed_for_lazy_optimization:
@@ -139,16 +149,84 @@ def _candidate_from_catalog_match(
     )
 
 
-def _select_title_query(ocr_lines: list[str], results_by_roi: dict[str, dict] | None) -> str:
-    title_like_rois = ("planar_title", "standard", "split_left", "split_right", "adventure", "transform_back")
+def _candidate_title_queries(
+    ocr_lines: list[str],
+    results_by_roi: dict[str, dict] | None,
+    *,
+    layout_hint: str | None,
+) -> list[str]:
+    title_like_rois = ("planar_title", "standard", "split_full", "split_left", "split_right", "adventure", "transform_back")
+    queries: list[str] = []
+    seen: set[str] = set()
 
     for roi_name in title_like_rois:
         roi_lines = _roi_lines(results_by_roi, roi_name)
-        candidate = _clean_title_query(roi_lines)
-        if candidate:
-            return candidate
+        for candidate in _title_queries_for_roi(roi_name, roi_lines, layout_hint=layout_hint):
+            normalized = normalize_text(candidate)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            queries.append(candidate)
 
-    return _clean_title_query(ocr_lines)
+    if not queries:
+        fallback = _clean_title_query(ocr_lines)
+        if fallback:
+            queries.append(fallback)
+    return queries
+
+
+def _title_queries_for_roi(roi_name: str, roi_lines: list[str], *, layout_hint: str | None) -> list[str]:
+    if not roi_lines:
+        return []
+    if (layout_hint or "").lower() == "split" and roi_name == "split_full":
+        candidates: list[str] = []
+        for line in roi_lines:
+            cleaned = _clean_title_query([line])
+            if cleaned:
+                candidates.append(cleaned)
+        split_title_fragments = [candidate for candidate in candidates if _looks_like_split_title_fragment(candidate)]
+        if len(split_title_fragments) >= 2:
+            candidates.append(f"{split_title_fragments[0]} {split_title_fragments[1]}")
+        joined = _clean_title_query(roi_lines)
+        if joined:
+            candidates.append(joined)
+        return candidates
+    candidate = _clean_title_query(roi_lines)
+    return [candidate] if candidate else []
+
+
+def _best_title_query_and_matches(
+    title_queries: list[str],
+    *,
+    catalog: LocalCatalogIndex,
+    candidate_records: list | None,
+    limit: int,
+) -> tuple[str, list[CatalogMatch]]:
+    best_query = ""
+    best_matches: list[CatalogMatch] = []
+    best_key: tuple[float, float, float] | None = None
+
+    for query in title_queries:
+        matches = (
+            _search_records_by_name(candidate_records, query, limit=limit)
+            if candidate_records is not None
+            else catalog.search_name(query, limit=limit)
+        )
+        if not matches:
+            continue
+        top_match = matches[0]
+        exact_bonus = 1.0 if top_match.match_type == "exact" else 0.0
+        key = (
+            exact_bonus,
+            float(top_match.score),
+            _title_query_quality(query),
+        )
+        if best_key is None or key > best_key:
+            best_key = key
+            best_query = query
+            best_matches = matches
+
+    return best_query, best_matches
 
 
 def _select_type_line_query(results_by_roi: dict[str, dict] | None) -> str | None:
@@ -186,6 +264,17 @@ def _clean_title_query(lines: list[str]) -> str:
     return candidate
 
 
+def _title_query_quality(value: str) -> float:
+    normalized = normalize_text(value)
+    if not normalized:
+        return 0.0
+    tokens = normalized.split()
+    length_bonus = min(len(normalized) / 24.0, 1.0)
+    token_penalty = max(0, len(tokens) - 2) * 0.08
+    noise_penalty = 0.18 if _normalized_contains_noise(value) else 0.0
+    return max(0.0, length_bonus - token_penalty - noise_penalty)
+
+
 def _looks_like_mana_or_noise(token: str) -> bool:
     stripped = token.strip("()[]{}<>")
     if not stripped:
@@ -193,6 +282,18 @@ def _looks_like_mana_or_noise(token: str) -> bool:
     if stripped.isdigit() and len(stripped) <= 2:
         return True
     return False
+
+
+def _looks_like_split_title_fragment(value: str) -> bool:
+    normalized = normalize_text(value)
+    if not normalized:
+        return False
+    tokens = normalized.split()
+    if len(tokens) == 0 or len(tokens) > 3:
+        return False
+    if any(any(character.isdigit() for character in token) for token in tokens):
+        return False
+    return 3 <= len(normalized) <= 32
 
 
 def _compatibility_score(query: str, candidate: str) -> float:

@@ -8,6 +8,8 @@ the selected image, and seeing the engine's current recognition output.
 This file is intentionally UI-focused. If you are embedding the recognizer into
 another repository, use [INTEGRATION.md](INTEGRATION.md) for adapter wiring,
 config ownership, parent-owned data directories, and first-run catalog notes.
+For the recognition-mode pipeline and decision tree, use
+[docs/mode-pipelines.md](docs/mode-pipelines.md).
 
 The committed hash ROI bounds now live in `data/config/hash_rois.json`. The
 reference-image caches for art and set-symbol hashing are tied to those ROI
@@ -32,10 +34,32 @@ For full local development with OCR backends and tests:
 .\.venv\Scripts\python.exe -m pip install -e .[ocr,ui,dev]
 ```
 
+If you only want the engine suite during local work, use:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest --engine-only
+```
+
+If you only want the UI/debug suite, use:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest --ui-only
+```
+
 For fixture-level accuracy checks outside the UI, run:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\eval_fixture_set.py --fixtures-dir data\cache\random_cards
+```
+
+For split-card investigations, you can build the offline split fixture pool and
+then summarize an operational benchmark by split family:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\build_split_fixture_set.py
+.\.venv\Scripts\python.exe scripts\report_split_family_metrics.py `
+  --report-json data\sample_outputs\split_layout_operational_full.json `
+  --csv-out data\sample_outputs\split_layout_operational_by_family.csv
 ```
 
 For a fresh random accuracy run with a 10-minute cap, use:
@@ -71,6 +95,18 @@ Useful lazy optimization toggles include:
   card has spent this much time in those steps
 - `reference_download_timeout_seconds`: cap per-reference download waits during
   visual comparisons
+- `roi_expand_long_factor` / `roi_expand_short_factor`: expand OCR-oriented ROI
+  crops outward from their center point without changing committed ROI defaults
+
+You can also try that live from the CLI:
+
+```powershell
+.\.venv\Scripts\python.exe -m card_engine.ui --roi-expand 1.1
+.\.venv\Scripts\python.exe scripts\eval_fixture_set.py --fixtures-dir data\fixtures --roi-expand 1.1 1.3
+```
+
+This only affects OCR-style crops such as title, type line, and lower text. It
+does not expand art-match or set-symbol regions.
 
 ## Integration Note
 
@@ -354,13 +390,16 @@ A concise benchmark/profile snapshot for the Milestone 9 closeout lives in
 The current recognition flow is moving toward a Milestone 9 fast path:
 
 1. OCR the title region first.
+   For split layouts, start with the narrow vertical title strip.
 2. Use the set-symbol ROI as a lightweight visual tie-breaker for near-tied
    title candidates, using a refined symbol fingerprint rather than a full-card
    image comparison.
-3. If the set symbol is still too weak for same-name printings, use the
+3. For split layouts whose narrow strip is weak, fall back to rotated
+   whole-card OCR before the generic support ROIs.
+4. If the set symbol is still too weak for same-name printings, use the
    `art_match` ROI as a second visual tie-breaker over the same near-tied
    candidates.
-4. Only run the remaining ROIs such as `type_line` and `lower_text` if the
+5. Only run the remaining ROIs such as `type_line` and `lower_text` if the
    title-plus-visual evidence is still not confident enough.
 
 ## Current Limitations

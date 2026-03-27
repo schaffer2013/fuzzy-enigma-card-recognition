@@ -1,20 +1,26 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 from pathlib import Path
 import queue
-import sqlite3
 import threading
 import tkinter as tk
 from tkinter import ttk
 
 from card_engine.api import recognize_card
-from card_engine.art_match import ART_MATCH_CACHE_DIR
-from card_engine.art_prehash import ArtPrehashProgress, load_eligible_art_records, prehash_missing_art_records
+from card_engine.art_prehash import (
+    ArtPrehashProgress,
+    count_prehash_cache_entries,
+    load_eligible_art_records,
+    prehash_missing_art_records,
+)
+from card_engine.catalog.query import OfflineCatalogQuery
 from card_engine.catalog.maintenance import catalog_refresh_needed, ensure_catalog_ready
 from card_engine.catalog.scryfall_sync import fetch_random_card_image, prune_random_card_cache
+from card_engine.config import load_engine_config, parse_roi_expand_factors
+from card_engine.image_types import EditableLoadedImage
 from card_engine.roi import DEFAULT_ENABLED_ROI_GROUPS, repo_roi_overrides, roi_group_bboxes, save_repo_roi_overrides
 from card_engine.utils.geometry import Quad, quad_from_bbox
 from card_engine.utils.image_io import load_image
@@ -40,23 +46,6 @@ from .views import (
 from .widgets import make_panel, make_readonly_text, set_readonly_text
 
 DEFAULT_ROIS = list(DEFAULT_ENABLED_ROI_GROUPS)
-
-
-@dataclass(frozen=True)
-class EditableLoadedImage:
-    path: Path
-    image_format: str
-    width: int
-    height: int
-    layout_hint: str | None
-    content_hash: str | None
-    image_array: object | None
-    card_quad: Quad | None
-    roi_overrides: dict[str, dict[str, tuple[float, float, float, float]]]
-
-    @property
-    def shape(self) -> tuple[int, int, int]:
-        return (self.height, self.width, 3)
 
 
 @dataclass(frozen=True)
@@ -134,8 +123,9 @@ class OperationSplash:
 
 
 class CardEngineDebugUI:
-    def __init__(self, fixtures_dir: str | None = None):
+    def __init__(self, fixtures_dir: str | None = None, *, config=None):
         self.fixtures_dir = fixtures_dir or _default_fixtures_dir()
+        self.config = config or load_engine_config()
         self._overrides_path = _default_overrides_path()
         self.state = UIState()
         self.state.fixture_paths = discover_fixture_paths(self.fixtures_dir)
@@ -391,6 +381,7 @@ class CardEngineDebugUI:
         try:
             self.state.recognition_result = recognize_card(
                 self._build_recognition_input(),
+                config=self.config,
                 progress_callback=splash.update,
             )
             self.state.recognition_error = None
@@ -620,7 +611,13 @@ class CardEngineDebugUI:
         if self.state.recognition_result is None or self.state.recognition_result.bbox is None:
             return []
         overrides = self.state.manual_roi_overrides.get(self.state.active_roi, {})
-        return roi_group_bboxes(self.state.recognition_result.bbox, self.state.active_roi, overrides=overrides)
+        return roi_group_bboxes(
+            self.state.recognition_result.bbox,
+            self.state.active_roi,
+            overrides=overrides,
+            expand_long_factor=self.config.roi_expand_long_factor,
+            expand_short_factor=self.config.roi_expand_short_factor,
+        )
 
     def _apply_manual_corner_update(self, corner_index: int, point: tuple[int, int]) -> None:
         fixture_path = selected_fixture(self.state)
@@ -736,7 +733,7 @@ class CardEngineDebugUI:
         save_repo_roi_overrides(self.state.manual_roi_overrides)
 
     def _ensure_catalog(self) -> None:
-        needs_refresh, age_days = catalog_refresh_needed(db_path=_default_catalog_path())
+        needs_refresh, age_days = catalog_refresh_needed(db_path=self.config.catalog_path)
         if not needs_refresh:
             self.state.status_message = (
                 f"Catalog ready ({age_days:.1f} days old)." if age_days is not None else "Catalog ready."
@@ -751,7 +748,7 @@ class CardEngineDebugUI:
         )
         try:
             status = ensure_catalog_ready(
-                db_path=_default_catalog_path(),
+                db_path=self.config.catalog_path,
                 source_json_path=_default_catalog_source_path(),
                 max_age_days=7,
                 progress_callback=splash.update,
@@ -794,8 +791,8 @@ class CardEngineDebugUI:
         self.root.mainloop()
 
     def _refresh_prehash_summary(self) -> None:
-        total_cards = _count_hashable_catalog_cards(_default_catalog_path())
-        prehashed_cards = min(total_cards, _count_prehash_cache_entries())
+        total_cards = _count_hashable_catalog_cards(self.config.catalog_path)
+        prehashed_cards = min(total_cards, count_prehash_cache_entries())
         self.prehash_var.set(f"{prehashed_cards}/{total_cards} cards pre-hashed")
 
     def _start_prehash_art_refs(self) -> None:
@@ -804,8 +801,8 @@ class CardEngineDebugUI:
             set_readonly_text(self.status_text, format_status_summary(self.state))
             return
 
-        total_cards = _count_hashable_catalog_cards(_default_catalog_path())
-        prehashed_cards = min(total_cards, _count_prehash_cache_entries())
+        total_cards = _count_hashable_catalog_cards(self.config.catalog_path)
+        prehashed_cards = min(total_cards, count_prehash_cache_entries())
         pending = max(0, total_cards - prehashed_cards)
         if pending == 0:
             self.state.status_message = "All available art references are already pre-hashed."
@@ -835,7 +832,7 @@ class CardEngineDebugUI:
     def _run_prehash_worker(self) -> None:
         assert self._prehash_queue is not None
         try:
-            records = load_eligible_art_records(_default_catalog_path())
+            records = load_eligible_art_records(self.config.catalog_path)
             result = prehash_missing_art_records(
                 records,
                 progress_callback=lambda progress: self._prehash_queue.put(("progress", progress)),
@@ -947,28 +944,10 @@ def _merge_roi_override_maps(
 
 
 def _count_hashable_catalog_cards(catalog_path: str | Path) -> int:
-    database = Path(catalog_path)
-    if not database.exists():
-        return 0
     try:
-        with sqlite3.connect(database) as conn:
-            row = conn.execute(
-                """
-                SELECT COUNT(*)
-                FROM cards
-                WHERE image_uri IS NOT NULL
-                  AND TRIM(image_uri) != ''
-                """
-            ).fetchone()
-    except sqlite3.Error:
+        return OfflineCatalogQuery.from_sqlite(catalog_path).count_hashable_printed_cards()
+    except Exception:
         return 0
-    return int(row[0]) if row else 0
-
-
-def _count_prehash_cache_entries() -> int:
-    if not ART_MATCH_CACHE_DIR.exists():
-        return 0
-    return sum(1 for path in ART_MATCH_CACHE_DIR.glob("*.json") if path.name != "_cache_meta.json")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -978,18 +957,40 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=_default_fixtures_dir(),
         help="Directory containing fixture images to browse.",
     )
+    parser.add_argument(
+        "--roi-expand",
+        nargs="+",
+        type=float,
+        default=None,
+        metavar="FACTOR",
+        help=(
+            "Scale ROI crops from their center point. Pass one value to scale both directions equally, "
+            "or pass LONG SHORT to scale the crop's long and short axes separately."
+        ),
+    )
     return parser
 
 
-def run_ui(fixtures_dir: str | None = None) -> None:
-    app = CardEngineDebugUI(fixtures_dir=fixtures_dir)
+def run_ui(fixtures_dir: str | None = None, *, config=None) -> None:
+    app = CardEngineDebugUI(fixtures_dir=fixtures_dir, config=config)
     app.run()
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
-    run_ui(fixtures_dir=args.fixtures_dir)
+    config = load_engine_config()
+    try:
+        roi_expand = parse_roi_expand_factors(args.roi_expand)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if roi_expand is not None:
+        config = replace(
+            config,
+            roi_expand_long_factor=roi_expand[0],
+            roi_expand_short_factor=roi_expand[1],
+        )
+    run_ui(fixtures_dir=args.fixtures_dir, config=config)
     return 0
 
 
