@@ -387,6 +387,102 @@ def test_recognize_card_keeps_split_full_when_primary_split_title_is_weak(monkey
     assert "split_full" in seen_roi_labels
 
 
+def test_recognize_card_allows_split_full_to_reopen_catalog_search(monkeypatch):
+    seen_candidate_record_lengths: list[int | None] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        if roi_label == "planar_title":
+            return OCRResult(
+                lines=["or,"],
+                confidence=0.99,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+            )
+        if roi_label == "split_full":
+            return OCRResult(
+                lines=["Meat Locker", "2C", "Drowned Diner"],
+                confidence=0.95,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+            )
+        return OCRResult(
+            lines=[],
+            confidence=0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Meat Locker // Drowned Diner", normalized_name="", set_code="DSK", layout="split"),
+            CatalogRecord(name="Orgg", normalized_name="", set_code="TMP", layout="normal"),
+        ]
+    )
+
+    def fake_match_candidates(ocr_lines, limit=5, catalog=None, *, results_by_roi=None, layout_hint=None, config=None, candidate_records=None):
+        has_split_full = bool(results_by_roi and results_by_roi.get("split_full", {}).get("lines"))
+        if not has_split_full:
+            return [Candidate(name="Orgg", score=0.4, set_code="TMP", notes=["fuzzy"])]
+        seen_candidate_record_lengths.append(None if candidate_records is None else len(candidate_records))
+        return [Candidate(name="Meat Locker // Drowned Diner", score=0.9, set_code="DSK", notes=["exact"])]
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr("card_engine.api.match_candidates", fake_match_candidates)
+    monkeypatch.setattr("card_engine.api.should_skip_secondary_ocr", lambda candidates, confidence: False)
+
+    result = recognize_card(SplitLayoutImage())
+
+    assert result.best_name == "Meat Locker // Drowned Diner"
+    assert seen_candidate_record_lengths[0] == 1
+
+
+def test_small_pool_allows_split_full_even_when_secondary_ocr_is_normally_skipped(monkeypatch):
+    seen_roi_labels: list[str] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_roi_labels.append(roi_label)
+        if roi_label == "planar_title":
+            return OCRResult(
+                lines=["or,"],
+                confidence=0.99,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+            )
+        if roi_label == "split_full":
+            return OCRResult(
+                lines=["Meat Locker", "2C", "Drowned Diner"],
+                confidence=0.95,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+            )
+        return OCRResult(
+            lines=[],
+            confidence=0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Meat Locker // Drowned Diner",
+                normalized_name="",
+                set_code="DSK",
+                collector_number="65",
+                layout="split",
+            ),
+            CatalogRecord(name="Orgg", normalized_name="", set_code="TMP", layout="normal"),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+
+    result = recognize_card(
+        SplitLayoutImage(),
+        mode="small_pool",
+        expected_card=ExpectedCard(name="Meat Locker // Drowned Diner", set_code="DSK", collector_number="65"),
+    )
+
+    assert result.best_name == "Meat Locker // Drowned Diner"
+    assert "split_full" in seen_roi_labels
+
+
 def test_recognize_card_uses_multi_roi_matching_for_catalog_ranking(monkeypatch):
     def fake_run_ocr(image, roi_label=None, *, crop_region=None):
         lines_by_roi = {

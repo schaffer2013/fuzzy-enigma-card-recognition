@@ -19,6 +19,7 @@ def build_split_fixture_set(
     *,
     catalog_path: str | Path,
     output_dir: str | Path = DEFAULT_SPLIT_FIXTURES_DIR,
+    family: str | None = None,
     limit: int | None = None,
     overwrite: bool = False,
     downloader=None,
@@ -28,6 +29,7 @@ def build_split_fixture_set(
     return build_split_fixture_set_from_catalog(
         catalog,
         output_dir=output_dir,
+        family=family,
         limit=limit,
         overwrite=overwrite,
         downloader=downloader,
@@ -39,6 +41,7 @@ def build_split_fixture_set_from_catalog(
     catalog: LocalCatalogIndex,
     *,
     output_dir: str | Path = DEFAULT_SPLIT_FIXTURES_DIR,
+    family: str | None = None,
     limit: int | None = None,
     overwrite: bool = False,
     downloader=None,
@@ -48,7 +51,7 @@ def build_split_fixture_set_from_catalog(
     output_root.mkdir(parents=True, exist_ok=True)
     downloader = downloader or _download_to_path
 
-    records = split_layout_records(catalog)
+    records = split_layout_records(catalog, family=family)
     if limit is not None:
         records = records[: max(0, limit)]
 
@@ -68,11 +71,14 @@ def build_split_fixture_set_from_catalog(
     return written_paths
 
 
-def split_layout_records(catalog: LocalCatalogIndex) -> list[CatalogRecord]:
+def split_layout_records(catalog: LocalCatalogIndex, *, family: str | None = None) -> list[CatalogRecord]:
+    normalized_family = (family or "").strip().lower()
     records = [
         record
         for record in catalog.records
-        if (record.layout or "").lower() == "split" and record.image_uri
+        if (record.layout or "").lower() == "split"
+        and record.image_uri
+        and (not normalized_family or split_layout_family(record) == normalized_family)
     ]
     records.sort(
         key=lambda record: (

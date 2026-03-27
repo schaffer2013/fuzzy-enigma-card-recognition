@@ -14,7 +14,7 @@ from .catalog.local_index import CatalogRecord, LocalCatalogIndex
 from .config import EngineConfig, load_engine_config
 from .detector import detect_card
 from .fixture_cache import persist_saved_detection
-from .matcher import match_candidates
+from .matcher import _title_queries_for_roi, match_candidates
 from .models import Candidate, RecognitionResult, VisualPoolCandidate
 from .normalize import CropRegion, normalize_card
 from .ocr import run_ocr
@@ -245,11 +245,26 @@ def recognize_card(
     else:
         best_name, confidence = _timed_call(stage_timings, "score_candidates_primary", score_candidates, candidates)
 
+    force_split_full_secondary = bool(
+        secondary_rois
+        and "split_full" in secondary_rois
+        and _should_use_split_full_fallback(
+            layout_hint=layout_hint,
+            results_by_roi=results_by_roi,
+            candidates=candidates,
+            confidence=confidence,
+        )
+    )
     if (
         secondary_rois
-        and not skip_secondary_ocr
         and not _deadline_exceeded(deadline)
-        and not should_skip_secondary_ocr(candidates, confidence)
+        and (
+            force_split_full_secondary
+            or (
+                not skip_secondary_ocr
+                and not should_skip_secondary_ocr(candidates, confidence)
+            )
+        )
     ):
         secondary_rois = _refine_secondary_rois_for_context(
             secondary_rois,
@@ -258,6 +273,8 @@ def recognize_card(
             candidates=candidates,
             confidence=confidence,
         )
+        if skip_secondary_ocr and force_split_full_secondary:
+            secondary_rois = [roi_name for roi_name in secondary_rois if roi_name == "split_full"]
         secondary_candidates = candidates
         for roi_group in secondary_rois:
             if _deadline_exceeded(deadline):
@@ -288,6 +305,10 @@ def recognize_card(
             )
             _notify(progress_callback, "Re-ranking with secondary OCR signals...")
             secondary_catalog_records = _catalog_records_for_candidates(catalog, secondary_candidates)
+            if (layout_hint or "").lower() == "split" and roi_group == "split_full":
+                split_full_records = _catalog_records_for_split_full_recovery(catalog, results_by_roi)
+                if split_full_records:
+                    secondary_catalog_records = split_full_records
             secondary_candidates = _timed_call(
                 stage_timings,
                 "match_candidates_secondary",
@@ -355,7 +376,7 @@ def recognize_card(
             if should_skip_secondary_ocr(candidates, confidence):
                 break
     elif secondary_rois:
-        if skip_secondary_ocr:
+        if skip_secondary_ocr and not force_split_full_secondary:
             _notify(progress_callback, "Skipping secondary OCR for constrained candidate pool...")
         else:
             _notify(progress_callback, "Skipping secondary OCR after confident title and visual tie-break match...")
@@ -429,6 +450,25 @@ def _catalog_records_for_candidates(
             continue
         seen.add(key)
         records.append(record)
+    return records
+
+
+def _catalog_records_for_split_full_recovery(
+    catalog: LocalCatalogIndex,
+    results_by_roi: dict[str, dict],
+) -> list[CatalogRecord]:
+    split_full_lines = results_by_roi.get("split_full", {}).get("lines") or []
+    if not split_full_lines:
+        return []
+    records: list[CatalogRecord] = []
+    seen: set[tuple[str, str | None, str | None]] = set()
+    for query in _title_queries_for_roi("split_full", split_full_lines, layout_hint="split"):
+        for record in catalog.exact_lookup(query):
+            key = (record.name, record.set_code, record.collector_number)
+            if key in seen:
+                continue
+            seen.add(key)
+            records.append(record)
     return records
 
 

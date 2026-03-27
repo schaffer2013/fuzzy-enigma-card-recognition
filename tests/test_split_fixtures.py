@@ -28,6 +28,37 @@ def test_split_layout_records_only_returns_split_printings():
     assert [record.name for record in records] == ["Boom // Bust", "Fire // Ice"]
 
 
+def test_split_layout_records_can_filter_by_family():
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Fire // Ice",
+                normalized_name="",
+                set_code="UMA",
+                collector_number="225",
+                layout="split",
+                type_line="Instant // Instant",
+                oracle_text="Deal damage.",
+                image_uri="https://example.com/fire-ice.png",
+            ),
+            CatalogRecord(
+                name="Appeal // Authority",
+                normalized_name="",
+                set_code="HOU",
+                collector_number="152",
+                layout="split",
+                type_line="Sorcery // Sorcery",
+                oracle_text="Aftermath (Cast this spell only from your graveyard. Then exile it.)",
+                image_uri="https://example.com/appeal-authority.png",
+            ),
+        ]
+    )
+
+    records = split_layout_records(catalog, family="aftermath")
+
+    assert [record.name for record in records] == ["Appeal // Authority"]
+
+
 def test_build_split_fixture_set_from_catalog_writes_sidecars(tmp_path):
     downloaded: list[tuple[str, str]] = []
 

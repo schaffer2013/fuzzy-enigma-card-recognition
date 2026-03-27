@@ -184,6 +184,9 @@ def _title_queries_for_roi(roi_name: str, roi_lines: list[str], *, layout_hint: 
             cleaned = _clean_title_query([line])
             if cleaned:
                 candidates.append(cleaned)
+        split_title_fragments = [candidate for candidate in candidates if _looks_like_split_title_fragment(candidate)]
+        if len(split_title_fragments) >= 2:
+            candidates.append(f"{split_title_fragments[0]} {split_title_fragments[1]}")
         joined = _clean_title_query(roi_lines)
         if joined:
             candidates.append(joined)
@@ -279,6 +282,18 @@ def _looks_like_mana_or_noise(token: str) -> bool:
     if stripped.isdigit() and len(stripped) <= 2:
         return True
     return False
+
+
+def _looks_like_split_title_fragment(value: str) -> bool:
+    normalized = normalize_text(value)
+    if not normalized:
+        return False
+    tokens = normalized.split()
+    if len(tokens) == 0 or len(tokens) > 3:
+        return False
+    if any(any(character.isdigit() for character in token) for token in tokens):
+        return False
+    return 3 <= len(normalized) <= 32
 
 
 def _compatibility_score(query: str, candidate: str) -> float:

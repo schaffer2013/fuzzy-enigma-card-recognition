@@ -626,13 +626,15 @@ What is effectively done today:
 - [ ] Milestone 8 is partially complete.
 - [x] Milestone 9 is complete.
 - [x] Milestone 10 is complete.
-- [ ] Milestone 11 is partially complete.
+- [x] Milestone 11 is complete.
+- [x] Milestone 12 is complete.
+- [x] Milestone 13 is complete.
 
 Recommended next step:
 
-- Continue **Milestone 11: Pipeline Benchmarking and Performance Engineering**
-  by optimizing the measured OCR bottlenecks, starting with `secondary_ocr` in
-  open-ended modes and `title_ocr` in constrained modes.
+- Continue the immediate split-family hardening work by treating split layouts
+  as multiple operational families instead of one global path, with latency
+  work now taking priority over raw correctness for the `room` family.
 
 ### Implementation Sequencing Adjustment
 

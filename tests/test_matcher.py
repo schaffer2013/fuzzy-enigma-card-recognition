@@ -77,6 +77,38 @@ def test_matcher_uses_layout_hint_to_rerank_candidates():
     assert "layout_match" in (candidates[0].notes or [])
 
 
+def test_matcher_combines_split_full_title_fragments_for_room_cards():
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Meat Locker // Drowned Diner",
+                normalized_name="",
+                set_code="DSK",
+                layout="split",
+            ),
+            CatalogRecord(
+                name="Orgg",
+                normalized_name="",
+                set_code="TMP",
+                layout="normal",
+            ),
+        ]
+    )
+
+    candidates = match_candidates(
+        ["or"],
+        catalog=catalog,
+        results_by_roi={
+            "standard": {"lines": ["or,"]},
+            "split_full": {"lines": ["Meat Locker", "2C", "Drowned Diner", "Enchantment - Room"]},
+        },
+        layout_hint="split",
+    )
+
+    assert candidates[0].name == "Meat Locker // Drowned Diner"
+    assert "exact" in (candidates[0].notes or [])
+
+
 def test_matcher_uses_lower_text_to_separate_same_name_printings():
     catalog = LocalCatalogIndex.from_records(
         [
