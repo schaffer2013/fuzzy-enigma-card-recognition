@@ -45,6 +45,7 @@ def match_candidates(
     title_queries = _candidate_title_queries(ocr_lines, results_by_roi, layout_hint=layout_hint)
     if not title_queries:
         return []
+    title_query = title_queries[0]
 
     type_line_query = _select_type_line_query(results_by_roi)
     lower_text_query = _select_lower_text_query(results_by_roi)

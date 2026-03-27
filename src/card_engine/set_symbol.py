@@ -237,7 +237,9 @@ def _load_or_compute_reference_hash(
             payload = json.loads(cache_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             payload = None
-        cached_fingerprint = _cached_fingerprint(payload)
+        cached_fingerprint = _cached_fingerprint(
+            payload,
+        )
         if cached_fingerprint is not None:
             return cached_fingerprint
 
@@ -246,7 +248,8 @@ def _load_or_compute_reference_hash(
     image = _download_reference_image(record.image_uri, download_timeout_seconds=download_timeout_seconds)
     if image is None:
         return None
-    normalized = normalize_card(
+    normalized = _call_with_supported_kwargs(
+        normalize_card,
         image,
         (0, 0, image.width, image.height),
         quad=quad_from_bbox((0, 0, image.width, image.height)),
@@ -260,7 +263,16 @@ def _load_or_compute_reference_hash(
     if reference_hash is None:
         return None
 
-    cache_path.write_text(json.dumps(_cache_payload(reference_hash), indent=2, sort_keys=True), encoding="utf-8")
+    cache_path.write_text(
+        json.dumps(
+            _cache_payload(
+                reference_hash,
+            ),
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
     return reference_hash
 
 
@@ -298,9 +310,14 @@ def compute_symbol_fingerprint(image_array) -> dict[str, float | str] | None:
     return _compute_symbol_fingerprint(image_array)
 
 
-def _refresh_reference_cache_if_needed() -> None:
+def _refresh_reference_cache_if_needed(
+) -> None:
     manifest_path = SET_SYMBOL_CACHE_DIR / "_cache_meta.json"
-    current_meta = {"roi_signature": _current_roi_signature()}
+    current_meta = {
+        "roi_signature": _call_with_supported_kwargs(
+            _current_roi_signature,
+        )
+    }
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -312,21 +329,30 @@ def _refresh_reference_cache_if_needed() -> None:
     manifest_path.write_text(json.dumps(current_meta, indent=2, sort_keys=True), encoding="utf-8")
 
 
-def _current_roi_signature() -> str:
+def _current_roi_signature(
+) -> str:
     return roi_group_signature("set_symbol")
 
 
-def _cache_payload(fingerprint: dict[str, float | str]) -> dict[str, object]:
+def _cache_payload(
+    fingerprint: dict[str, float | str],
+) -> dict[str, object]:
     return {
         "fingerprint": fingerprint,
-        "roi_signature": _current_roi_signature(),
+        "roi_signature": _call_with_supported_kwargs(
+            _current_roi_signature,
+        ),
     }
 
 
-def _cached_fingerprint(payload: object) -> dict[str, float | str] | None:
+def _cached_fingerprint(
+    payload: object,
+) -> dict[str, float | str] | None:
     if not isinstance(payload, dict):
         return None
-    if payload.get("roi_signature") != _current_roi_signature():
+    if payload.get("roi_signature") != _call_with_supported_kwargs(
+        _current_roi_signature,
+    ):
         return None
     fingerprint = payload.get("fingerprint")
     return fingerprint if _is_valid_fingerprint(fingerprint) else None

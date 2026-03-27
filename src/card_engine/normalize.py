@@ -6,7 +6,7 @@ from typing import Any
 import cv2
 import numpy
 
-from .roi import ROI_PRESETS, resolved_group_rois
+from .roi import ROI_PRESETS, resolved_group_rois, roi_group_expand_factors, scaled_roi_bbox_within_bounds
 from .utils.geometry import Quad, quad_from_bbox
 
 CANONICAL_CARD_SIZE = (880, 630)  # height, width
@@ -45,6 +45,8 @@ def normalize_card(
     *,
     quad: Quad | None = None,
     roi_groups: list[str] | None = None,
+    expand_long_factor: float = 1.0,
+    expand_short_factor: float = 1.0,
 ) -> NormalizationResult:
     """Normalize the detected region into a canonical card-sized descriptor."""
     if bbox is None:
@@ -78,6 +80,8 @@ def normalize_card(
         active_roi_groups,
         roi_overrides=roi_overrides,
         normalized_pixels=normalized_pixels,
+        expand_long_factor=expand_long_factor,
+        expand_short_factor=expand_short_factor,
     )
     debug_outputs = {
         "source_bbox": bbox,
@@ -95,17 +99,27 @@ def _build_roi_crops(
     *,
     roi_overrides: dict[str, dict[str, tuple[float, float, float, float]]] | None = None,
     normalized_pixels: Any | None = None,
+    expand_long_factor: float = 1.0,
+    expand_short_factor: float = 1.0,
 ) -> dict[str, CropRegion]:
     height, width, _ = normalized_shape
     crops: dict[str, CropRegion] = {}
 
     for group_name in roi_groups:
         rois = resolved_group_rois(group_name, overrides=(roi_overrides or {}).get(group_name))
+        effective_long_factor, effective_short_factor = roi_group_expand_factors(
+            group_name,
+            expand_long_factor=expand_long_factor,
+            expand_short_factor=expand_short_factor,
+        )
         for roi in rois:
-            crop_width = max(1, int(round(width * roi.w)))
-            crop_height = max(1, int(round(height * roi.h)))
-            crop_left = max(0, int(round(width * roi.x)))
-            crop_top = max(0, int(round(height * roi.y)))
+            crop_left, crop_top, crop_width, crop_height = scaled_roi_bbox_within_bounds(
+                frame_width=width,
+                frame_height=height,
+                roi=roi,
+                expand_long_factor=effective_long_factor,
+                expand_short_factor=effective_short_factor,
+            )
             crops[f"{group_name}:{roi.label}"] = CropRegion(
                 label=roi.label,
                 bbox=(crop_left, crop_top, crop_width, crop_height),

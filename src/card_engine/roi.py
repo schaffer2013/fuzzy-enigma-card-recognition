@@ -42,6 +42,17 @@ LAYOUT_TO_ROI_GROUPS: dict[str, list[str]] = {
     "modal_dfc": ["standard", "art_match", "type_line", "set_symbol", "transform_back", "lower_text"],
     "planar": ["planar_title", "art_match", "lower_text"],
 }
+OCR_EXPANDABLE_ROI_GROUPS = {
+    "planar_title",
+    "split_full",
+    "standard",
+    "type_line",
+    "lower_text",
+    "split_left",
+    "split_right",
+    "adventure",
+    "transform_back",
+}
 
 
 def ordered_roi_groups(
@@ -73,15 +84,27 @@ def roi_group_bboxes(
     group_name: str,
     *,
     overrides: dict[str, RelativeROI] | None = None,
+    expand_long_factor: float = 1.0,
+    expand_short_factor: float = 1.0,
 ) -> list[tuple[str, tuple[int, int, int, int]]]:
     left, top, width, height = card_bbox
     rois = resolved_group_rois(group_name, overrides=overrides)
     bboxes: list[tuple[str, tuple[int, int, int, int]]] = []
+    effective_long_factor, effective_short_factor = roi_group_expand_factors(
+        group_name,
+        expand_long_factor=expand_long_factor,
+        expand_short_factor=expand_short_factor,
+    )
     for roi in rois:
-        roi_left = left + int(round(width * roi.x))
-        roi_top = top + int(round(height * roi.y))
-        roi_width = max(1, int(round(width * roi.w)))
-        roi_height = max(1, int(round(height * roi.h)))
+        roi_left, roi_top, roi_width, roi_height = scaled_roi_bbox_within_bounds(
+            frame_width=width,
+            frame_height=height,
+            roi=roi,
+            expand_long_factor=effective_long_factor,
+            expand_short_factor=effective_short_factor,
+        )
+        roi_left += left
+        roi_top += top
         bboxes.append((roi.label, (roi_left, roi_top, roi_width, roi_height)))
     return bboxes
 
@@ -91,9 +114,17 @@ def grouped_roi_bboxes(
     group_names: list[str],
     *,
     overrides: dict[str, dict[str, RelativeROI]] | None = None,
+    expand_long_factor: float = 1.0,
+    expand_short_factor: float = 1.0,
 ) -> dict[str, list[tuple[str, tuple[int, int, int, int]]]]:
     return {
-        group_name: roi_group_bboxes(card_bbox, group_name, overrides=(overrides or {}).get(group_name))
+        group_name: roi_group_bboxes(
+            card_bbox,
+            group_name,
+            overrides=(overrides or {}).get(group_name),
+            expand_long_factor=expand_long_factor,
+            expand_short_factor=expand_short_factor,
+        )
         for group_name in group_names
         if group_name in ROI_PRESETS
     }
@@ -175,16 +206,82 @@ def _looks_like_relative_roi(value: object) -> bool:
     return isinstance(value, (list, tuple)) and len(value) == 4
 
 
-def roi_group_signature(group_name: str) -> str:
+def roi_group_signature(
+    group_name: str,
+    *,
+    expand_long_factor: float = 1.0,
+    expand_short_factor: float = 1.0,
+) -> str:
     rois = resolved_group_rois(group_name)
-    payload = [
-        {
-            "label": roi.label,
-            "x": round(roi.x, 6),
-            "y": round(roi.y, 6),
-            "w": round(roi.w, 6),
-            "h": round(roi.h, 6),
-        }
-        for roi in rois
-    ]
+    effective_long_factor, effective_short_factor = roi_group_expand_factors(
+        group_name,
+        expand_long_factor=expand_long_factor,
+        expand_short_factor=expand_short_factor,
+    )
+    payload = {
+        "expand_long_factor": round(float(effective_long_factor), 6),
+        "expand_short_factor": round(float(effective_short_factor), 6),
+        "rois": [
+            {
+                "label": roi.label,
+                "x": round(roi.x, 6),
+                "y": round(roi.y, 6),
+                "w": round(roi.w, 6),
+                "h": round(roi.h, 6),
+            }
+            for roi in rois
+        ],
+    }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def roi_group_expand_factors(
+    group_name: str,
+    *,
+    expand_long_factor: float = 1.0,
+    expand_short_factor: float = 1.0,
+) -> tuple[float, float]:
+    if group_name not in OCR_EXPANDABLE_ROI_GROUPS:
+        return (1.0, 1.0)
+    return (expand_long_factor, expand_short_factor)
+
+
+def scaled_roi_bbox_within_bounds(
+    *,
+    frame_width: int,
+    frame_height: int,
+    roi: ROI,
+    expand_long_factor: float = 1.0,
+    expand_short_factor: float = 1.0,
+) -> tuple[int, int, int, int]:
+    base_width = max(1, int(round(frame_width * roi.w)))
+    base_height = max(1, int(round(frame_height * roi.h)))
+    base_left = max(0, int(round(frame_width * roi.x)))
+    base_top = max(0, int(round(frame_height * roi.y)))
+    base_right = min(frame_width, base_left + base_width)
+    base_bottom = min(frame_height, base_top + base_height)
+    base_width = max(1, base_right - base_left)
+    base_height = max(1, base_bottom - base_top)
+
+    if base_width >= base_height:
+        target_width = base_width * expand_long_factor
+        target_height = base_height * expand_short_factor
+    else:
+        target_width = base_width * expand_short_factor
+        target_height = base_height * expand_long_factor
+
+    center_x = base_left + (base_width / 2.0)
+    center_y = base_top + (base_height / 2.0)
+    left = int(round(center_x - (target_width / 2.0)))
+    top = int(round(center_y - (target_height / 2.0)))
+    right = int(round(center_x + (target_width / 2.0)))
+    bottom = int(round(center_y + (target_height / 2.0)))
+
+    left = max(0, left)
+    top = max(0, top)
+    right = min(frame_width, right)
+    bottom = min(frame_height, bottom)
+
+    width = max(1, right - left)
+    height = max(1, bottom - top)
+    return (left, top, width, height)

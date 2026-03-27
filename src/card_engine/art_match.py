@@ -249,7 +249,9 @@ def _load_or_compute_reference_fingerprint(
             payload = json.loads(cache_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             payload = None
-        cached_fingerprint = _cached_fingerprint(payload)
+        cached_fingerprint = _cached_fingerprint(
+            payload,
+        )
         if cached_fingerprint is not None:
             return cached_fingerprint
 
@@ -265,7 +267,8 @@ def _load_or_compute_reference_fingerprint(
     )
     if image is None:
         return None
-    normalized = normalize_card(
+    normalized = _call_with_supported_kwargs(
+        normalize_card,
         image,
         (0, 0, image.width, image.height),
         quad=quad_from_bbox((0, 0, image.width, image.height)),
@@ -279,7 +282,16 @@ def _load_or_compute_reference_fingerprint(
     if reference_fingerprint is None:
         return None
 
-    cache_path.write_text(json.dumps(_cache_payload(reference_fingerprint), indent=2, sort_keys=True), encoding="utf-8")
+    cache_path.write_text(
+        json.dumps(
+            _cache_payload(
+                reference_fingerprint,
+            ),
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
     return reference_fingerprint
 
 
@@ -341,9 +353,14 @@ def art_fingerprint_similarity(
     return _fingerprint_similarity(observed_fingerprint, reference_fingerprint)
 
 
-def _refresh_reference_cache_if_needed() -> None:
+def _refresh_reference_cache_if_needed(
+) -> None:
     manifest_path = ART_MATCH_CACHE_DIR / "_cache_meta.json"
-    current_meta = {"roi_signature": _current_roi_signature()}
+    current_meta = {
+        "roi_signature": _call_with_supported_kwargs(
+            _current_roi_signature,
+        )
+    }
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -355,21 +372,30 @@ def _refresh_reference_cache_if_needed() -> None:
     manifest_path.write_text(json.dumps(current_meta, indent=2, sort_keys=True), encoding="utf-8")
 
 
-def _current_roi_signature() -> str:
+def _current_roi_signature(
+) -> str:
     return roi_group_signature("art_match")
 
 
-def _cache_payload(fingerprint: dict[str, float | str | list[float]]) -> dict[str, object]:
+def _cache_payload(
+    fingerprint: dict[str, float | str | list[float]],
+) -> dict[str, object]:
     return {
         "fingerprint": fingerprint,
-        "roi_signature": _current_roi_signature(),
+        "roi_signature": _call_with_supported_kwargs(
+            _current_roi_signature,
+        ),
     }
 
 
-def _cached_fingerprint(payload: object) -> dict[str, float | str | list[float]] | None:
+def _cached_fingerprint(
+    payload: object,
+) -> dict[str, float | str | list[float]] | None:
     if not isinstance(payload, dict):
         return None
-    if payload.get("roi_signature") != _current_roi_signature():
+    if payload.get("roi_signature") != _call_with_supported_kwargs(
+        _current_roi_signature,
+    ):
         return None
     fingerprint = payload.get("fingerprint")
     return fingerprint if _is_valid_fingerprint(fingerprint) else None

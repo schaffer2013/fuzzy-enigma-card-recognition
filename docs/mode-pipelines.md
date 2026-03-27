@@ -26,7 +26,9 @@ Every mode starts with the same broad stages:
 
 4. Normalize the card image.
    The card is rectified into a normalized card view and the ROI crops are
-   prepared.
+   prepared. If ROI expansion is enabled, only the OCR-oriented crops are
+   enlarged from their center point; visual tie-break regions keep their
+   committed geometry.
 
 5. Try title-first OCR.
    The engine starts with title-oriented ROIs such as `standard` or

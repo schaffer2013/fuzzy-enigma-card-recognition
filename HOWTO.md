@@ -73,6 +73,18 @@ Useful lazy optimization toggles include:
   card has spent this much time in those steps
 - `reference_download_timeout_seconds`: cap per-reference download waits during
   visual comparisons
+- `roi_expand_long_factor` / `roi_expand_short_factor`: expand OCR-oriented ROI
+  crops outward from their center point without changing committed ROI defaults
+
+You can also try that live from the CLI:
+
+```powershell
+.\.venv\Scripts\python.exe -m card_engine.ui --roi-expand 1.1
+.\.venv\Scripts\python.exe scripts\eval_fixture_set.py --fixtures-dir data\fixtures --roi-expand 1.1 1.3
+```
+
+This only affects OCR-style crops such as title, type line, and lower text. It
+does not expand art-match or set-symbol regions.
 
 ## Integration Note
 

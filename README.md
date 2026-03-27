@@ -334,6 +334,8 @@ Current `EngineConfig` fields:
   processing.
 - `enabled_roi_groups`: ROI groups the recognizer is allowed to use.
 - `roi_cycle_order`: deterministic order for trying ROI groups.
+- `roi_expand_long_factor`: runtime multiplier for the ROI crop's long axis.
+- `roi_expand_short_factor`: runtime multiplier for the ROI crop's short axis.
 - `layout_heuristics_enabled`: toggle for layout-driven ROI heuristics.
 - `lazy_group_basic_land_printings`: performance optimization that collapses
   same-name basic-land printings to a default printing before expensive visual
@@ -347,6 +349,28 @@ Current `EngineConfig` fields:
   tie-break work.
 - `reference_download_timeout_seconds`: timeout for fetching uncached reference
   images used by visual tie-break steps.
+
+Those ROI expansion factors are applied from the center point of each ROI crop
+and then clamped to the image bounds. They are useful when real-world card
+framing is slightly off-center but you do not want to change the committed ROI
+defaults themselves. They only affect OCR-oriented crops such as title, type
+line, and lower-text regions. Art and set-symbol regions keep their committed
+geometry.
+
+You can also override ROI expansion from the command line without editing the
+config file:
+
+```powershell
+.\.venv\Scripts\python.exe -m card_engine.ui --roi-expand 1.1
+.\.venv\Scripts\python.exe -m card_engine.evaluation --fixtures-dir data\fixtures --roi-expand 1.1 1.3
+```
+
+Meaning:
+
+- `--roi-expand 1.0`: default geometry
+- `--roi-expand 1.1`: expand both axes equally
+- `--roi-expand 1.1 1.3`: expand the long axis by `1.1` and the short axis by
+  `1.3`
 
 The config surface is still growing. As new mode-aware and integration-facing
 features land, this section should be kept in sync with `EngineConfig` so the

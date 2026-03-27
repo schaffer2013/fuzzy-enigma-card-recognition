@@ -31,6 +31,8 @@ class EngineConfig:
     max_image_edge: int = 1600
     enabled_roi_groups: list[str] = field(default_factory=lambda: list(DEFAULT_ENABLED_ROI_GROUPS))
     roi_cycle_order: list[str] = field(default_factory=lambda: list(DEFAULT_ROI_CYCLE_ORDER))
+    roi_expand_long_factor: float = 1.0
+    roi_expand_short_factor: float = 1.0
     layout_heuristics_enabled: bool = True
     lazy_group_basic_land_printings: bool = False
     lazy_default_printing_by_name: bool = False
@@ -69,3 +71,20 @@ def load_engine_config(config_path: str | None = None) -> EngineConfig:
         return EngineConfig.from_file(DEFAULT_ENGINE_CONFIG_PATH)
 
     return EngineConfig()
+
+
+def parse_roi_expand_factors(raw_values: list[float] | tuple[float, ...] | None) -> tuple[float, float] | None:
+    if raw_values is None:
+        return None
+    values = [float(value) for value in raw_values]
+    if len(values) == 1:
+        factor = values[0]
+        if factor <= 0:
+            raise ValueError("ROI expansion factors must be greater than zero.")
+        return (factor, factor)
+    if len(values) == 2:
+        long_factor, short_factor = values
+        if long_factor <= 0 or short_factor <= 0:
+            raise ValueError("ROI expansion factors must be greater than zero.")
+        return (long_factor, short_factor)
+    raise ValueError("ROI expansion accepts one value or two values: LONG [SHORT].")

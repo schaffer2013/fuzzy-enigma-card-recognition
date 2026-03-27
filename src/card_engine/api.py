@@ -88,6 +88,8 @@ def recognize_card(
         detection.bbox,
         quad=detection.quad,
         roi_groups=tried_rois,
+        expand_long_factor=config.roi_expand_long_factor,
+        expand_short_factor=config.roi_expand_short_factor,
     )
 
     results_by_roi: dict[str, dict] = {}

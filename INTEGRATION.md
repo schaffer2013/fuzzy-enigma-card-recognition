@@ -38,7 +38,9 @@ Create a parent-owned config file such as
 {
   "catalog_path": "C:/work/your-parent-app/var/card-engine/cards.sqlite3",
   "candidate_count": 5,
-  "lazy_group_basic_land_printings": true
+  "lazy_group_basic_land_printings": true,
+  "roi_expand_long_factor": 1.1,
+  "roi_expand_short_factor": 1.2
 }
 ```
 
@@ -96,6 +98,12 @@ Practical recommendation:
 
 - set `CARD_ENGINE_CONFIG_PATH` to an absolute parent-owned config path, or
 - construct `EngineConfig` directly with parent-owned absolute paths
+
+If your camera framing is not perfectly centered, the parent can also use
+`roi_expand_long_factor` and `roi_expand_short_factor` to expand OCR-oriented
+regions from their center point. This affects text-reading crops such as title,
+type line, and lower text, but it does not change art-match or set-symbol
+reference regions.
 
 ## Data Ownership
 
