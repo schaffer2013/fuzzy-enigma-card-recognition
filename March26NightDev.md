@@ -82,3 +82,13 @@
   - `derelict-attic-widow-s-walk-dsk-93`
 - Runtime note:
   - this all-modes room rerun still took about `47 minutes`, so it is much better than the old ~76-minute run, but it is still a heavy benchmark and should be used selectively.
+## 2026-03-27 09:33 PDT
+- Started a new branch: `feature/split-room-greenfield-budget`.
+- Removed the unnecessary `0`-degree OCR attempt for vertical title regions (`planar_title` and `split_full` now try only `90` and `270`).
+- Added an early-stop rule for split/planar title OCR so a strong `planar_title` read can skip the extra `standard` title pass.
+- Result on the full `room` family benchmark (`59` fixtures):
+  - `greenfield`: `1.000` top-1, `8.268s` average, `15.266s` max
+  - `reevaluation`: `1.000` top-1, `7.302s` average
+  - `small_pool`: `1.000` top-1, `4.569s` average
+  - `confirmation`: `1.000` top-1, `4.491s` average
+- This is the first room-family run that is both fully correct and comfortably under the 20-second runtime budget in all four modes.

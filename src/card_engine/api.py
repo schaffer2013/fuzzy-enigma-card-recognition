@@ -34,8 +34,8 @@ from .utils.image_io import load_image
 TITLE_FIRST_ROIS = {"planar_title", "standard", "adventure", "transform_back"}
 VISUAL_ONLY_ROIS = {"set_symbol", "art_match"}
 ROTATED_TITLE_ROIS = {
-    "planar_title": (90, 270, 0),
-    "split_full": (90, 270, 0),
+    "planar_title": (90, 270),
+    "split_full": (90, 270),
 }
 
 
@@ -182,6 +182,12 @@ def recognize_card(
             "confidence": result.confidence,
             "debug": result.debug,
         }
+        if _should_stop_title_ocr_early(
+            layout_hint=layout_hint,
+            roi_group=roi_group,
+            result=result,
+        ):
+            break
 
     active_roi = _best_title_roi_name(title_rois, results_by_roi, layout_hint=layout_hint) or (title_rois[0] if title_rois else None)
     active_index = title_rois.index(active_roi) if active_roi in title_rois else 0
@@ -543,6 +549,25 @@ def _rotated_crop_region(crop_region: CropRegion | None, rotation_degrees: int) 
 
 def _ocr_result_sort_key(result) -> tuple[int, float, int]:
     return (len(result.lines), result.confidence, sum(len(line) for line in result.lines))
+
+
+def _should_stop_title_ocr_early(
+    *,
+    layout_hint: str | None,
+    roi_group: str,
+    result,
+) -> bool:
+    normalized_layout = (layout_hint or "").lower()
+    if normalized_layout not in {"split", "planar"}:
+        return False
+    if roi_group != "planar_title":
+        return False
+    if result.confidence < 0.9:
+        return False
+    tokens = _split_title_tokens(result.lines)
+    if not tokens:
+        return False
+    return sum(len(token) for token in tokens) >= 8
 
 
 @lru_cache(maxsize=4)

@@ -260,6 +260,46 @@ def test_recognize_card_uses_planar_title_for_split_layout(monkeypatch):
     assert any(shape is not None and shape[1] > shape[0] for shape in seen_shapes)
 
 
+def test_recognize_card_stops_split_title_ocr_early_when_planar_title_is_strong(monkeypatch):
+    seen_roi_labels: list[str] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_roi_labels.append(roi_label)
+        if roi_label == "planar_title":
+            return OCRResult(
+                lines=["Central", "Elevator", "Promising", "Stairs"],
+                confidence=0.97,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+            )
+        return OCRResult(
+            lines=[],
+            confidence=0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Central Elevator // Promising Stairs",
+                normalized_name="central elevator promising stairs",
+                set_code="DSK",
+                collector_number="336",
+                layout="split",
+                aliases=["Central", "Elevator", "Promising", "Stairs"],
+            ),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+
+    result = recognize_card(SplitLayoutImage())
+
+    assert result.best_name == "Central Elevator // Promising Stairs"
+    assert seen_roi_labels[:2] == ["planar_title", "planar_title"]
+    assert "standard" not in seen_roi_labels
+
+
 def test_recognize_card_uses_split_full_fallback_for_split_layout(monkeypatch):
     seen_roi_labels: list[str] = []
 
@@ -298,7 +338,7 @@ def test_recognize_card_uses_split_full_fallback_for_split_layout(monkeypatch):
     assert result.best_name == "Appeal // Authority"
     assert result.active_roi == "split_full"
     assert result.debug["ocr"]["results_by_roi"]["split_full"]["debug"]["rotation_attempts"]
-    assert seen_roi_labels[:3] == ["planar_title", "planar_title", "planar_title"]
+    assert seen_roi_labels[:2] == ["planar_title", "planar_title"]
     assert "split_full" in seen_roi_labels
 
 
@@ -340,7 +380,7 @@ def test_recognize_card_skips_split_full_when_primary_split_title_is_exact(monke
 
     assert result.best_name == "Wear // Tear"
     assert "split_full" not in seen_roi_labels
-    assert seen_roi_labels[:3] == ["planar_title", "planar_title", "planar_title"]
+    assert seen_roi_labels[:2] == ["planar_title", "planar_title"]
 
 
 def test_recognize_card_keeps_split_full_when_primary_split_title_is_weak(monkeypatch):

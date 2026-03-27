@@ -89,7 +89,11 @@ Today, the important families are:
 - `transform` and `modal_dfc`: can use the back-face title area
 
 For split and planar-style titles, rotated OCR matters a lot. The engine may
-try multiple rotations before choosing the best OCR result.
+try multiple rotations before choosing the best OCR result. For these vertical
+title families, the engine now only tries the meaningful rotated orientations,
+and it can stop the title-first pass early when `planar_title` is already
+strong enough that running the horizontal `standard` title crop would just add
+latency.
 
 ## Greenfield
 
