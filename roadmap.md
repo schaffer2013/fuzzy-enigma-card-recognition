@@ -1182,6 +1182,118 @@ Recommended early implementation order:
   true `core` / `ui` distribution split, with the UI package depending on the
   engine package rather than parent repos depending on the UI layer directly.
 
+### Milestone 14: Release And Operationalization
+
+**Status**
+
+- [ ] Versioning policy and first tagged release.
+- [ ] Changelog and release checklist.
+- [ ] Minimal CI matrix for engine-only and full-suite validation.
+- [ ] Clean-install smoke test from a parent-repo workflow.
+- [ ] Supported-platform guidance, especially for Raspberry Pi 5.
+
+**Deliverables**
+
+- A documented release process that can produce a stable first public release.
+- A lightweight changelog or release-notes flow.
+- Automated validation that distinguishes engine-only usage from full local
+  development coverage.
+- A clean-room smoke test showing that a parent repo can install and call the
+  engine without relying on local dev state.
+- A short supported-platform note for the intended Pi-oriented deployment
+  target.
+
+**Exit Criteria**
+
+- The project can produce a repeatable tagged release with a documented
+  validation checklist.
+- Engine-only consumers have a clear install-and-test story.
+- Basic publish/install regressions are caught before release.
+
+### Milestone 15: Long-Tail Recognition Cleanup
+
+**Status**
+
+- [ ] Long-tail promotional and nonstandard split printings.
+- [ ] Benchmark filtering or separate labeling for tokens, emblems, and other
+  out-of-scope objects.
+- [ ] Remaining pathological slow-card cases.
+- [ ] Clearer documentation of low-confidence or out-of-scope object classes.
+
+**Deliverables**
+
+- A tracked set of long-tail recognition fixtures that are outside the main
+  family-level split/layout fixes.
+- Cleaner benchmark interpretation for paper-card recognition by separating
+  or excluding out-of-scope objects.
+- Follow-up runtime improvements on the slowest remaining live-recognition
+  outliers.
+- Explicit docs for what the engine currently treats as supported,
+  unsupported, or best-effort.
+
+**Exit Criteria**
+
+- Benchmarks are no longer meaningfully distorted by obviously out-of-scope
+  objects.
+- Remaining split/layout work is reduced to isolated edge cases rather than
+  recurring family-level regressions.
+- The project has a clearer public statement of current recognition limits.
+
+### Milestone 16: Packaging Split Decision
+
+**Status**
+
+- [ ] Decide whether the current dependency/test boundary is sufficient long
+  term.
+- [ ] If needed, design a real `core` / `ui` package split.
+- [ ] Document the migration path for parent repos if that harder split is
+  ever adopted.
+
+**Deliverables**
+
+- A decision note on whether to keep the current single-package structure.
+- If needed, a concrete package layout for a true engine/UI distribution
+  split.
+- A compatibility/migration note for existing parent repos.
+
+**Exit Criteria**
+
+- The project has an explicit packaging direction instead of an implied one.
+- Parent repos know whether they should expect a future package-boundary
+  change.
+
+### Milestone 17: Parent Workflow Polish
+
+**Status**
+
+- [ ] Higher-level result states for parent workflows.
+- [ ] Clearer low-confidence, timeout, and out-of-scope semantics.
+- [ ] Parent-facing guidance for how to react to ambiguous or over-budget
+  scans.
+
+**Deliverables**
+
+- A clearer parent-facing result vocabulary such as recognized, ambiguous,
+  over-budget, and out-of-scope.
+- Parent-integration guidance for handling low-confidence and failure cases
+  consistently.
+- Any needed adapter/API tweaks that make sorter behavior easier to reason
+  about.
+
+**Exit Criteria**
+
+- Parent repos can make better workflow decisions without reading deep engine
+  debug payloads.
+- Timeout and ambiguity behavior are easier to consume operationally.
+
+## Operational Quality Gates
+
+- Live recognition should not treat results over `20s` as success cases.
+- Benchmarks should track median, p95, max, and variance in addition to the
+  mean.
+- Engine-only install and test workflows should remain clean for submodule
+  consumers.
+
 ---
 
 ## Testing Strategy
