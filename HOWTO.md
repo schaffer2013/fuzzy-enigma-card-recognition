@@ -112,6 +112,10 @@ You can also try that live from the CLI:
 This only affects OCR-style crops such as title, type line, and lower text. It
 does not expand art-match or set-symbol regions.
 
+The UI remains optional tooling. Parent repos that only embed the recognizer do
+not need to use this guide, install the `ui` extra, or collect the UI test
+suite.
+
 ## Integration Note
 
 The sorter-facing adapter and tracked-session workflow live outside the UI.

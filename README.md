@@ -14,6 +14,13 @@ Today, the repo already exposes a callable recognition API, a thin
 `SortingMachineArray`-style adapter, a local catalog pipeline, evaluation
 tools, and a desktop debug UI.
 
+For embedding, the important boundary is now clear:
+
+- parent repos can install and test the engine without pulling in the optional
+  UI-specific dependency path
+- the debug UI remains available as an optional local tool for fixture review
+  and failure analysis
+
 ## Why Use It As a Submodule
 
 This repo is a good fit when another project needs card recognition without
@@ -126,6 +133,13 @@ extra adds OCR backends, and the `ui` extra adds `scrython` for the debug UI's
 random-card and Scryfall-backed helper flows. Parent repos that only embed the
 engine can stay on base or `[ocr]` installs and use `--engine-only` test runs
 to avoid pulling the UI suite into their normal validation loop.
+
+This is a dependency-and-test boundary, not a separate published package split.
+In other words:
+
+- engine-only consumers should install `.[ocr]` and ignore the UI entry point
+- local developers who want the desktop tooling can additionally install
+  `.[ui]`
 
 ## Parent Quickstart
 
@@ -614,7 +628,10 @@ Current limitations worth knowing before parent-project adoption:
 
 - deeper refinement of mode-specific confidence semantics is still in progress
 - first-run catalog setup can make the initial recognition call slower
-- split-card/nonstandard-title fallback OCR is still future expansion
+- split-family long-tail polish is still ongoing for odd promotional and other
+  nonstandard printings
+- engine and UI are decoupled for dependency/test purposes, but they are still
+  shipped from one package rather than as two separately published distributions
 
 If you want the shortest answer on readiness: this repo is already usable as a
 submodule for direct recognition integration, but it is still moving from

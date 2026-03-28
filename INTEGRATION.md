@@ -20,6 +20,14 @@ Use the `ocr` extra whenever you expect OCR backends to be available. The `ui`
 extra is only needed for the Scryfall-backed random-card UI action and catalog
 helpers.
 
+For parent repos, the intended default is:
+
+- install `.[ocr]`
+- use the engine API or sorter adapter
+- run `pytest --engine-only`
+
+The UI remains optional local tooling and is not required for embedding.
+
 ## Parent Quickstart
 
 Concrete end-to-end example:
@@ -235,3 +243,7 @@ The debug UI is now treated as optional from the test runner's point of view:
 That means parent repos embedding this package can validate the engine,
 adapter, and catalog layers without importing or collecting the UI tests unless
 they explicitly opt in.
+
+One important nuance: this is an engine/UI boundary in dependency usage, import
+surface, and test collection. It is not yet a split into two separately
+published Python packages.
