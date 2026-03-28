@@ -192,6 +192,22 @@ If your goal is materially faster recognition, the highest-yield path is:
 
 That sequence is most likely to move both average and tail latency without sacrificing recognition quality.
 
+## Runtime budget policy
+
+The engine now has an explicit per-card runtime budget via
+`recognition_deadline_seconds` in `EngineConfig`.
+
+Current intended meaning:
+
+- live recognition that runs past that budget is treated as a failure
+- fixture benchmarks use a larger per-card ceiling by default: `20x` the live
+  deadline, so a benchmark no longer counts "correct but unacceptably slow"
+  cards as successes, but also does not let one pathological card pin the
+  entire run forever
+
+That makes latency targets visible in normal evaluation output instead of being
+only an after-the-fact interpretation of stage timings.
+
 ## FAQ: Was the previous approach wrong?
 
 Not wrong, but incomplete.
@@ -203,6 +219,13 @@ The earlier documentation correctly emphasized OCR-first optimization, but it di
 - **Step 3:** only then optimize non-dominant stages
 
 If you skip Step 1 and Step 2, multithreading alone tends to hide symptoms instead of removing the dominant work.
+
+A concrete example now in the codebase:
+
+- vertical title ROIs no longer pay for a meaningless `0`-degree OCR attempt
+- split/planar title OCR can stop early when the rotated `planar_title`
+  result is already strong enough that the horizontal `standard` title pass
+  would mostly add latency
 
 ## FAQ: Can OCR for different regions run in parallel?
 

@@ -109,6 +109,38 @@ def test_matcher_combines_split_full_title_fragments_for_room_cards():
     assert "exact" in (candidates[0].notes or [])
 
 
+def test_matcher_uses_reversed_planar_title_fragments_for_classic_split_cards():
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Assure // Assemble",
+                normalized_name="",
+                set_code="GRN",
+                layout="split",
+            ),
+            CatalogRecord(
+                name="Vigilance",
+                normalized_name="",
+                set_code="CHK",
+                layout="normal",
+            ),
+        ]
+    )
+
+    candidates = match_candidates(
+        ["4", "Assemble", "Assure"],
+        catalog=catalog,
+        results_by_roi={
+            "planar_title": {"lines": ["4", "Assemble", "Assure"]},
+            "lower_text": {"lines": ["Vigilance"]},
+        },
+        layout_hint="split",
+    )
+
+    assert candidates[0].name == "Assure // Assemble"
+    assert "exact" in (candidates[0].notes or [])
+
+
 def test_matcher_uses_lower_text_to_separate_same_name_printings():
     catalog = LocalCatalogIndex.from_records(
         [

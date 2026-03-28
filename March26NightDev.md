@@ -50,3 +50,75 @@
 - Interpretation:
   - accuracy for room cards is now in good shape
   - runtime for split-room handling is still expensive enough that future split-family work should focus on latency, not just correctness
+## 2026-03-27 07:47 PDT
+- Added a narrower split-room latency gate on `feature/split-room-latency`.
+- New behavior: skip `split_full` rescue when the first split-title OCR already covers the same split-card name family strongly enough from catalog-backed evidence, but keep the rescue path for cards that still need recovery.
+- Validation:
+  - full suite: `184 passed`
+  - constrained room benchmark rerun (`59` fixtures) still holds `1.000` top-1 for both `small_pool` and `confirmation`
+- Measured constrained-mode improvement on the room family:
+  - `small_pool`: `15.722s -> 9.921s`
+  - `confirmation`: `14.744s -> 8.749s`
+- Runtime note:
+  - that constrained rerun still took about `18.5 minutes`, so this branch is improving latency but not yet "fast enough" for all split-room cases
+## 2026-03-27 08:12 PDT
+- Started a new feature branch: `feature/recognition-deadlines`.
+- Added `recognition_deadline_seconds` to `EngineConfig` and the sample config, with `20.0` seconds as the default runtime budget.
+- Recognition now marks over-budget scans as failures instead of slow successes, and evaluation classifies them as `runtime_budget_exceeded`.
+- Updated README, INTEGRATION, HOWTO, mode-pipeline docs, and the speed-tuning deep dive so the runtime-budget policy is explicit.
+- Validation:
+  - focused suites: `69 passed`
+  - full suite: `186 passed`
+## 2026-03-27 08:59 PDT
+- Reran the full `room` family benchmark (`59` fixtures) with the new 20-second recognition budget active.
+- Result:
+  - `greenfield`: `0.966` top-1, `15.527s` average, `2` runtime-budget failures
+  - `reevaluation`: `1.000` top-1, `13.904s` average
+  - `small_pool`: `1.000` top-1, `8.968s` average
+  - `confirmation`: `1.000` top-1, `9.041s` average
+- The deadline budget therefore cleaned up the worst room-family tails without harming constrained modes.
+- The remaining room-family greenfield budget failures are:
+  - `central-elevator-promising-stairs-pdsk-44s`
+  - `derelict-attic-widow-s-walk-dsk-93`
+- Runtime note:
+  - this all-modes room rerun still took about `47 minutes`, so it is much better than the old ~76-minute run, but it is still a heavy benchmark and should be used selectively.
+## 2026-03-27 09:33 PDT
+- Started a new branch: `feature/split-room-greenfield-budget`.
+- Removed the unnecessary `0`-degree OCR attempt for vertical title regions (`planar_title` and `split_full` now try only `90` and `270`).
+- Added an early-stop rule for split/planar title OCR so a strong `planar_title` read can skip the extra `standard` title pass.
+- Result on the full `room` family benchmark (`59` fixtures):
+  - `greenfield`: `1.000` top-1, `8.268s` average, `15.266s` max
+  - `reevaluation`: `1.000` top-1, `7.302s` average
+  - `small_pool`: `1.000` top-1, `4.569s` average
+  - `confirmation`: `1.000` top-1, `4.491s` average
+- This is the first room-family run that is both fully correct and comfortably under the 20-second runtime budget in all four modes.
+## 2026-03-27 10:05 PDT
+- Started a new branch: `feature/benchmark-runtime-budget`.
+- Replayed the unmerged room-latency, recognition-deadline, and room-budget improvements on top of the actual `main` head before continuing.
+- Fixed the benchmark/runtime-budget policy so evaluation runs no longer use the same strict per-card ceiling as live recognition.
+- New benchmark policy:
+  - live recognition still defaults to `20.0s` per card
+  - evaluation defaults to `20x` that budget, so the default benchmark ceiling is `400.0s` per card
+- Updated README, INTEGRATION, HOWTO, mode-pipeline docs, and the speed-tuning note so that policy is explicit.
+- Validation:
+  - `pytest tests/test_evaluation.py -q` -> `32 passed`
+  - full suite -> `189 passed`
+- Next focus:
+  1. benchmark the `classic_split` family on the current branch with the corrected benchmark budget
+  2. use that result to choose the next split-family latency/correctness target
+## 2026-03-27 12:18 PDT
+- Started a new branch: `feature/classic-split-recovery`.
+- Benchmarked the `classic_split` family (`134` fixtures) under the corrected benchmark deadline policy.
+- First pass showed only two remaining open-ended name misses, both narrow `Assure // Assemble` / `Bind // Liberate` style failures caused by split-title query ordering and an over-eager split-full skip gate.
+- Fixes added:
+  - split-title query generation now tries both face orders for split-title fragments
+  - the split-full skip gate now requires the primary split-title tokens to actually agree with the candidate before suppressing the whole-card rescue path
+- Validation:
+  - direct spot checks fixed `Assure // Assemble` and `Bind // Liberate`
+  - `pytest tests/test_api.py tests/test_matcher.py -q`
+- Current focused split-family results on this branch:
+  - `classic_split` open-ended rerun (`greenfield`, `reevaluation`): `1.000` top-1 in both modes
+  - `fuse` family full rerun (`32` fixtures): `1.000` top-1 across all four modes
+  - `multi_split` family full rerun (`5` fixtures): `1.000` top-1 across all four modes
+- Combined with the earlier room and aftermath work, the major split families are now in good shape on current code.
+- Remaining split work should be treated as long-tail cleanup and latency tuning, not broad family-level correctness repair.

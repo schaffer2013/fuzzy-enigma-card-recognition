@@ -178,21 +178,42 @@ def _candidate_title_queries(
 def _title_queries_for_roi(roi_name: str, roi_lines: list[str], *, layout_hint: str | None) -> list[str]:
     if not roi_lines:
         return []
-    if (layout_hint or "").lower() == "split" and roi_name == "split_full":
-        candidates: list[str] = []
-        for line in roi_lines:
-            cleaned = _clean_title_query([line])
-            if cleaned:
-                candidates.append(cleaned)
-        split_title_fragments = [candidate for candidate in candidates if _looks_like_split_title_fragment(candidate)]
-        if len(split_title_fragments) >= 2:
-            candidates.append(f"{split_title_fragments[0]} {split_title_fragments[1]}")
-        joined = _clean_title_query(roi_lines)
-        if joined:
-            candidates.append(joined)
-        return candidates
+    if (layout_hint or "").lower() == "split" and roi_name in {"planar_title", "split_full", "split_left", "split_right"}:
+        return _split_title_queries(roi_lines)
     candidate = _clean_title_query(roi_lines)
     return [candidate] if candidate else []
+
+
+def _split_title_queries(roi_lines: list[str]) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    for line in roi_lines:
+        cleaned = _clean_title_query([line])
+        if cleaned and normalize_text(cleaned) not in seen:
+            candidates.append(cleaned)
+            seen.add(normalize_text(cleaned))
+
+    split_title_fragments = [candidate for candidate in candidates if _looks_like_split_title_fragment(candidate)]
+    if len(split_title_fragments) >= 2:
+        left = split_title_fragments[0]
+        right = split_title_fragments[1]
+        for combined in (
+            f"{left} // {right}",
+            f"{right} // {left}",
+            f"{left} {right}",
+            f"{right} {left}",
+        ):
+            normalized = normalize_text(combined)
+            if normalized and normalized not in seen:
+                candidates.append(combined)
+                seen.add(normalized)
+
+    joined = _clean_title_query(roi_lines)
+    if joined and normalize_text(joined) not in seen:
+        candidates.append(joined)
+
+    return candidates
 
 
 def _best_title_query_and_matches(

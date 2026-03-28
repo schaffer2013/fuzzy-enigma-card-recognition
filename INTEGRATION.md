@@ -41,6 +41,7 @@ Create a parent-owned config file such as
   "catalog_path": "C:/work/your-parent-app/var/card-engine/cards.sqlite3",
   "candidate_count": 5,
   "lazy_group_basic_land_printings": true,
+  "recognition_deadline_seconds": 20.0,
   "roi_expand_long_factor": 1.1,
   "roi_expand_short_factor": 1.2
 }
@@ -124,6 +125,15 @@ If your camera framing is not perfectly centered, the parent can also use
 regions from their center point. This affects text-reading crops such as title,
 type line, and lower text, but it does not change art-match or set-symbol
 reference regions.
+
+For live sorter use, the parent should also decide what counts as "too slow to
+be useful." The engine now exposes `recognition_deadline_seconds` for that.
+The default is `20.0`, which means an over-budget recognition comes back as a
+failure result instead of a successful but unacceptably slow answer.
+
+Evaluation tooling uses a looser ceiling by default so a single pathological
+card does not pin the whole benchmark. The CLI multiplies the live deadline by
+`20.0` unless you override `--benchmark-deadline-multiplier`.
 
 ## Data Ownership
 

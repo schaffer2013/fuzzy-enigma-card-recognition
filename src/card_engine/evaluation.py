@@ -33,6 +33,7 @@ ProgressCallback = Callable[[str], None]
 MAX_RANDOM_TEST_MINUTES = 10.0
 DEFAULT_BENCHMARK_MODES = ("default", "lazy_basic_lands", "lazy_all_printings")
 DEFAULT_OPERATIONAL_MODES = ("greenfield", "reevaluation", "small_pool", "confirmation")
+DEFAULT_BENCHMARK_DEADLINE_MULTIPLIER = 20.0
 LONG_RUN_ETA_THRESHOLD_SECONDS = 180.0
 DEFAULT_MODE_RUNTIME_ESTIMATES = {
     "default": 7.0,
@@ -78,6 +79,7 @@ class FixtureEvaluation:
     stage_timings: dict[str, float] = field(default_factory=dict)
     expected_games: list[str] = field(default_factory=list)
     expected_is_paper: bool | None = None
+    deadline_exceeded: bool = False
 
 
 @dataclass(frozen=True)
@@ -238,6 +240,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "or pass LONG SHORT to scale the crop's long and short axes separately."
         ),
     )
+    parser.add_argument(
+        "--benchmark-deadline-multiplier",
+        type=float,
+        default=DEFAULT_BENCHMARK_DEADLINE_MULTIPLIER,
+        help=(
+            "Multiplier applied to recognition_deadline_seconds during evaluation runs so benchmarks can "
+            "tolerate slower cards without hanging forever. Default: 20.0."
+        ),
+    )
     return parser
 
 
@@ -297,6 +308,8 @@ def evaluate_random_sample(
     output_dir: str | Path,
     *,
     time_limit_seconds: float,
+    config: EngineConfig | None = None,
+    deadline_multiplier: float = DEFAULT_BENCHMARK_DEADLINE_MULTIPLIER,
     progress_callback: ProgressCallback | None = None,
     clock: Callable[[], float] = time.monotonic,
     pair_store: SimulatedPairStore | None = None,
@@ -305,7 +318,7 @@ def evaluate_random_sample(
         raise ValueError("time_limit_seconds must be greater than 0.")
 
     deadline = clock() + time_limit_seconds
-    config = load_engine_config()
+    config = _config_with_benchmark_deadline(config or load_engine_config(), deadline_multiplier)
     output_root = Path(output_dir)
     if output_root.exists():
         shutil.rmtree(output_root)
@@ -338,11 +351,12 @@ def evaluate_benchmark_modes(
     mode_names: list[str],
     limit: int | None = None,
     base_config: EngineConfig | None = None,
+    deadline_multiplier: float = DEFAULT_BENCHMARK_DEADLINE_MULTIPLIER,
     pair_store: SimulatedPairStore | None = None,
     progress_callback: ProgressCallback | None = None,
 ) -> BenchmarkReport:
     resolved_mode_names = resolve_benchmark_modes(mode_names)
-    config = base_config or load_engine_config()
+    config = _config_with_benchmark_deadline(base_config or load_engine_config(), deadline_multiplier)
     _prehash_benchmark_art_pool(
         fixtures_dir,
         limit=limit,
@@ -380,11 +394,12 @@ def evaluate_operational_modes(
     mode_names: list[str],
     limit: int | None = None,
     base_config: EngineConfig | None = None,
+    deadline_multiplier: float = DEFAULT_BENCHMARK_DEADLINE_MULTIPLIER,
     pair_store: SimulatedPairStore | None = None,
     progress_callback: ProgressCallback | None = None,
 ) -> OperationalModeReport:
     resolved_mode_names = resolve_operational_modes(mode_names)
-    config: EngineConfig = base_config or load_engine_config()
+    config: EngineConfig = _config_with_benchmark_deadline(base_config or load_engine_config(), deadline_multiplier)
     _prehash_benchmark_art_pool(
         fixtures_dir,
         limit=limit,
@@ -636,6 +651,7 @@ def _build_fixture_evaluation(
     predicted_set_code = best_candidate.set_code if best_candidate else None
     predicted_collector_number = best_candidate.collector_number if best_candidate else None
     stage_timings = _coerce_stage_timings(result.debug.get("timings", {}))
+    deadline_exceeded = bool(result.debug.get("deadline", {}).get("exceeded"))
     top1_hit = bool(expected.name and result.best_name == expected.name)
     top5_hit = bool(expected.name and expected.name in candidate_names[:5])
     set_hit = bool(
@@ -688,11 +704,13 @@ def _build_fixture_evaluation(
             predicted_set_code=predicted_set_code,
             predicted_collector_number=predicted_collector_number,
             candidate_names=candidate_names,
+            deadline_exceeded=deadline_exceeded,
         ),
         runtime_seconds=stage_timings.get("total", runtime_seconds),
         stage_timings=stage_timings,
         expected_games=list(expected.games),
         expected_is_paper=is_paper_expectation(expected),
+        deadline_exceeded=deadline_exceeded,
     )
 
 
@@ -1153,6 +1171,10 @@ def main(argv: list[str] | None = None) -> int:
             roi_expand_long_factor=roi_expand[0],
             roi_expand_short_factor=roi_expand[1],
         )
+    benchmark_config = _config_with_benchmark_deadline(
+        base_config,
+        args.benchmark_deadline_multiplier,
+    )
 
     with SimulatedPairStore(args.pair_db) as pair_store:
         if operational_mode_names:
@@ -1166,6 +1188,7 @@ def main(argv: list[str] | None = None) -> int:
                 mode_names=operational_mode_names,
                 limit=args.limit,
                 base_config=base_config,
+                deadline_multiplier=args.benchmark_deadline_multiplier,
                 pair_store=pair_store,
                 progress_callback=_print_console,
             )
@@ -1206,6 +1229,7 @@ def main(argv: list[str] | None = None) -> int:
                 mode_names=benchmark_mode_names,
                 limit=args.limit,
                 base_config=base_config,
+                deadline_multiplier=args.benchmark_deadline_multiplier,
                 pair_store=pair_store,
                 progress_callback=_print_console,
             )
@@ -1232,6 +1256,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.random_output_dir,
                 time_limit_seconds=args.random_time_limit_minutes * 60.0,
                 config=base_config,
+                deadline_multiplier=args.benchmark_deadline_multiplier,
                 progress_callback=_print_console,
                 pair_store=pair_store,
             )
@@ -1246,6 +1271,7 @@ def main(argv: list[str] | None = None) -> int:
                 mode_names=benchmark_mode_names,
                 limit=args.limit,
                 base_config=base_config,
+                deadline_multiplier=args.benchmark_deadline_multiplier,
                 pair_store=pair_store,
                 progress_callback=_print_console,
             )
@@ -1271,7 +1297,7 @@ def main(argv: list[str] | None = None) -> int:
             summary = evaluate_fixture_set(
                 args.fixtures_dir,
                 limit=args.limit,
-                config=base_config,
+                config=benchmark_config,
                 pair_store=pair_store,
                 progress_callback=_print_console,
                 progress_label="default",
@@ -1342,6 +1368,20 @@ def _print_console(message: str = "") -> None:
             sys.stdout.write(safe_message + "\n")
         except UnicodeEncodeError:
             print(safe_message.encode("ascii", "replace").decode("ascii"))
+
+
+def _config_with_benchmark_deadline(
+    config: EngineConfig,
+    deadline_multiplier: float = DEFAULT_BENCHMARK_DEADLINE_MULTIPLIER,
+) -> EngineConfig:
+    if deadline_multiplier <= 0:
+        raise ValueError("benchmark deadline multiplier must be greater than 0.")
+    if config.recognition_deadline_seconds <= 0:
+        return config
+    return replace(
+        config,
+        recognition_deadline_seconds=round(config.recognition_deadline_seconds * deadline_multiplier, 4),
+    )
 
 
 def _call_with_supported_kwargs(function, *args, **kwargs):
@@ -1529,9 +1569,12 @@ def _classify_result(
     predicted_set_code: str | None,
     predicted_collector_number: str | None,
     candidate_names: list[str],
+    deadline_exceeded: bool = False,
 ) -> str:
     if not expected_is_paper:
         return "out_of_scope_nonpaper"
+    if deadline_exceeded:
+        return "runtime_budget_exceeded"
     if expected_name is None:
         return "missing_expected_name"
     if predicted_name is None:

@@ -14,6 +14,7 @@ def test_engine_config_from_file_reads_lazy_optimization_settings(tmp_path):
                 "max_visual_tiebreak_candidates": 3,
                 "max_visual_tiebreak_seconds_per_card": 12.5,
                 "reference_download_timeout_seconds": 4.0,
+                "recognition_deadline_seconds": 18.0,
                 "roi_expand_long_factor": 1.1,
                 "roi_expand_short_factor": 1.3,
             }
@@ -28,6 +29,7 @@ def test_engine_config_from_file_reads_lazy_optimization_settings(tmp_path):
     assert config.max_visual_tiebreak_candidates == 3
     assert config.max_visual_tiebreak_seconds_per_card == 12.5
     assert config.reference_download_timeout_seconds == 4.0
+    assert config.recognition_deadline_seconds == 18.0
     assert config.roi_expand_long_factor == 1.1
     assert config.roi_expand_short_factor == 1.3
 

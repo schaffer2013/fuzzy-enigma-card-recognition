@@ -1,9 +1,11 @@
 from pathlib import Path
+import time
 
 import numpy
 
-from card_engine.api import recognize_card
+from card_engine.api import _should_use_split_full_fallback, recognize_card
 from card_engine.catalog.local_index import CatalogRecord, LocalCatalogIndex
+from card_engine.config import EngineConfig
 from card_engine.image_types import EditableLoadedImage
 from card_engine.models import Candidate, VisualPoolCandidate
 from card_engine.ocr import OCRResult
@@ -258,6 +260,46 @@ def test_recognize_card_uses_planar_title_for_split_layout(monkeypatch):
     assert any(shape is not None and shape[1] > shape[0] for shape in seen_shapes)
 
 
+def test_recognize_card_stops_split_title_ocr_early_when_planar_title_is_strong(monkeypatch):
+    seen_roi_labels: list[str] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_roi_labels.append(roi_label)
+        if roi_label == "planar_title":
+            return OCRResult(
+                lines=["Central", "Elevator", "Promising", "Stairs"],
+                confidence=0.97,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+            )
+        return OCRResult(
+            lines=[],
+            confidence=0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Central Elevator // Promising Stairs",
+                normalized_name="central elevator promising stairs",
+                set_code="DSK",
+                collector_number="336",
+                layout="split",
+                aliases=["Central", "Elevator", "Promising", "Stairs"],
+            ),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+
+    result = recognize_card(SplitLayoutImage())
+
+    assert result.best_name == "Central Elevator // Promising Stairs"
+    assert seen_roi_labels[:2] == ["planar_title", "planar_title"]
+    assert "standard" not in seen_roi_labels
+
+
 def test_recognize_card_uses_split_full_fallback_for_split_layout(monkeypatch):
     seen_roi_labels: list[str] = []
 
@@ -296,7 +338,7 @@ def test_recognize_card_uses_split_full_fallback_for_split_layout(monkeypatch):
     assert result.best_name == "Appeal // Authority"
     assert result.active_roi == "split_full"
     assert result.debug["ocr"]["results_by_roi"]["split_full"]["debug"]["rotation_attempts"]
-    assert seen_roi_labels[:3] == ["planar_title", "planar_title", "planar_title"]
+    assert seen_roi_labels[:2] == ["planar_title", "planar_title"]
     assert "split_full" in seen_roi_labels
 
 
@@ -338,7 +380,26 @@ def test_recognize_card_skips_split_full_when_primary_split_title_is_exact(monke
 
     assert result.best_name == "Wear // Tear"
     assert "split_full" not in seen_roi_labels
-    assert seen_roi_labels[:3] == ["planar_title", "planar_title", "planar_title"]
+    assert seen_roi_labels[:2] == ["planar_title", "planar_title"]
+
+
+def test_split_full_fallback_is_kept_when_primary_exact_split_title_disagrees():
+    should_retry = _should_use_split_full_fallback(
+        layout_hint="split",
+        results_by_roi={
+            "planar_title": {
+                "lines": ["Assure", "Assemblo"],
+                "confidence": 0.98,
+            }
+        },
+        candidates=[
+            Candidate(name="Bind // Liberate", score=0.95, set_code="CMB1", notes=["exact"]),
+            Candidate(name="Assure // Assemble", score=0.91, set_code="GRN", notes=["exact"]),
+        ],
+        confidence=0.95,
+    )
+
+    assert should_retry is True
 
 
 def test_recognize_card_keeps_split_full_when_primary_split_title_is_weak(monkeypatch):
@@ -481,6 +542,64 @@ def test_small_pool_allows_split_full_even_when_secondary_ocr_is_normally_skippe
 
     assert result.best_name == "Meat Locker // Drowned Diner"
     assert "split_full" in seen_roi_labels
+
+
+def test_small_pool_skips_split_full_when_primary_split_title_is_robust(monkeypatch):
+    seen_roi_labels: list[str] = []
+
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        seen_roi_labels.append(roi_label)
+        if roi_label == "planar_title":
+            return OCRResult(
+                lines=["Central", "Elevator", "Promising", "Stairs"],
+                confidence=0.97,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+            )
+        if roi_label == "standard":
+            return OCRResult(
+                lines=[],
+                confidence=0.0,
+                debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+            )
+        return OCRResult(
+            lines=["Instant"] if roi_label == "type_line" else [],
+            confidence=0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Central Elevator // Promising Stairs",
+                normalized_name="",
+                set_code="DSK",
+                collector_number="336",
+                layout="split",
+                aliases=["Central", "Elevator", "Promising", "Stairs"],
+            ),
+            CatalogRecord(
+                name="Central Elevator // Promising Stairs",
+                normalized_name="",
+                set_code="DSK",
+                collector_number="44",
+                layout="split",
+                aliases=["Central", "Elevator", "Promising", "Stairs"],
+            ),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr("card_engine.api.should_skip_secondary_ocr", lambda candidates, confidence: False)
+
+    result = recognize_card(
+        SplitLayoutImage(),
+        mode="small_pool",
+        expected_card=ExpectedCard(name="Central Elevator // Promising Stairs", set_code="DSK", collector_number="336"),
+    )
+
+    assert result.best_name == "Central Elevator // Promising Stairs"
+    assert "split_full" not in seen_roi_labels
 
 
 def test_recognize_card_uses_multi_roi_matching_for_catalog_ranking(monkeypatch):
@@ -1180,6 +1299,36 @@ def test_recognize_card_does_not_treat_lower_text_as_title_when_title_ocr_is_emp
     assert result.top_k_candidates == []
     assert result.active_roi == "lower_text"
     assert result.ocr_lines == ["2,", ": Add @ to your mana", "pool."]
+
+
+def test_recognize_card_fails_when_runtime_budget_is_exceeded(monkeypatch):
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        return OCRResult(
+            lines=["Opt"] if roi_label == "standard" else [],
+            confidence=0.99 if roi_label == "standard" else 0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Opt", normalized_name="", set_code="XLN", collector_number="65", layout="normal"),
+        ]
+    )
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr("card_engine.api._resolve_recognition_deadline", lambda deadline, config: time.monotonic() - 1)
+
+    result = recognize_card(
+        DummyImage(),
+        config=EngineConfig(recognition_deadline_seconds=0.001),
+    )
+
+    assert result.best_name is None
+    assert result.confidence == 0.0
+    assert result.top_k_candidates == []
+    assert result.debug["deadline"]["exceeded"] is True
+    assert result.debug["deadline"]["partial_best_name"] == "Opt"
 
 
 def _minimal_png(*, width: int, height: int) -> bytes:

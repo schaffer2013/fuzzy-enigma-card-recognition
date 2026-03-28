@@ -47,6 +47,16 @@ Every mode starts with the same broad stages:
    If the first title read is still not decisive enough, the engine may read
    additional ROIs such as `type_line` and `lower_text` and rerank again.
 
+10. Enforce the runtime budget.
+   The engine treats recognitions that run past the configured
+   `recognition_deadline_seconds` budget as failures instead of successful but
+   too-slow results.
+
+For benchmark runs, the evaluation layer can apply a looser per-card ceiling
+than the live recognizer uses. The default benchmark policy is `20x` the live
+deadline so pathological cards still fail eventually without making long eval
+runs impractically slow.
+
 ## Core Decision Tree
 
 At a high level, the current shared flow is:
@@ -84,7 +94,16 @@ Today, the important families are:
 - `transform` and `modal_dfc`: can use the back-face title area
 
 For split and planar-style titles, rotated OCR matters a lot. The engine may
-try multiple rotations before choosing the best OCR result.
+try multiple rotations before choosing the best OCR result. For these vertical
+title families, the engine now only tries the meaningful rotated orientations,
+and it can stop the title-first pass early when `planar_title` is already
+strong enough that running the horizontal `standard` title crop would just add
+latency.
+
+For split layouts specifically, the title-query builder also tries both face
+orders when OCR captures the two split names in reversed reading order. That
+helps open-ended recognition recover cards such as `Assure // Assemble` and
+`Bind // Liberate` without needing layout-specific hardcoded card lists.
 
 ## Greenfield
 
@@ -106,7 +125,8 @@ Decision shape:
    If yes, score and stop.
 2. For split layouts, if the narrow title strip is weak, try rotated whole-card
    fallback OCR before generic support ROIs. If the first split-title read is
-   already a clean exact hit, skip that whole-card rescue path.
+   already a clean exact hit and its token coverage actually agrees with the
+   candidate, skip that whole-card rescue path.
 3. If not, can the set symbol or art ROI break the tie?
    If yes, score and stop.
 4. If not, run the slower supporting ROIs and rerank.

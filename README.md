@@ -50,8 +50,17 @@ Milestone 9 closeout status:
 
 Still ahead:
 
-- split-card and nonstandard-title fallback OCR
+- split-family long-tail polish for odd promotional and nonstandard printings
 - deeper mode/output polish for parent workflows
+
+Recent split-layout validation highlights:
+
+- `room`: `1.000` top-1 across all four modes, under the 20-second live budget
+- `classic_split`: `1.000` top-1 in `greenfield` and `reevaluation` on the
+  current focused rerun, with `small_pool` and `confirmation` already at
+  `1.000`
+- `fuse`: `1.000` top-1 across all four modes
+- `multi_split`: `1.000` top-1 across all four modes
 
 See [roadmap.md](roadmap.md) for the planned milestones and
 [docs/milestone9-closeout.md](docs/milestone9-closeout.md) for the measured
@@ -148,7 +157,8 @@ Create a parent-owned config file such as `config/card-engine/engine.json`:
 {
   "catalog_path": "C:/work/your-parent-app/var/card-engine/cards.sqlite3",
   "candidate_count": 5,
-  "lazy_group_basic_land_printings": true
+  "lazy_group_basic_land_printings": true,
+  "recognition_deadline_seconds": 20.0
 }
 ```
 
@@ -388,6 +398,9 @@ Current `EngineConfig` fields:
 - `lazy_default_printing_by_name`: broader performance optimization that
   collapses all same-name printings to a default printing before expensive
   visual tie-break work.
+- `recognition_deadline_seconds`: per-card recognition budget. When a scan
+  runs past this budget, the engine returns a failure result instead of a slow
+  success. Default: `20.0`.
 - `max_visual_tiebreak_candidates`: hard cap on how many candidates are sent
   into set-symbol and art-region comparison.
 - `max_visual_tiebreak_seconds_per_card`: per-card time budget for visual
@@ -402,12 +415,20 @@ defaults themselves. They only affect OCR-oriented crops such as title, type
 line, and lower-text regions. Art and set-symbol regions keep their committed
 geometry.
 
+The live recognition deadline is also enforced during benchmarks, but with a
+looser evaluation-only ceiling by default. Benchmark runs multiply
+`recognition_deadline_seconds` by `20.0`, so the default live `20.0` second
+budget becomes a `400.0` second per-card benchmark cap. That keeps "too slow
+to be acceptable live" distinct from "so slow it should fail even in a
+benchmark and stop dragging the whole run down."
+
 You can also override ROI expansion from the command line without editing the
 config file:
 
 ```powershell
 .\.venv\Scripts\python.exe -m card_engine.ui --roi-expand 1.1
 .\.venv\Scripts\python.exe -m card_engine.evaluation --fixtures-dir data\fixtures --roi-expand 1.1 1.3
+.\.venv\Scripts\python.exe -m card_engine.evaluation --fixtures-dir data\fixtures --benchmark-deadline-multiplier 20
 ```
 
 Meaning:

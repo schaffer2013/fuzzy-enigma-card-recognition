@@ -2,6 +2,7 @@ from pathlib import Path
 from functools import lru_cache
 from typing import Any
 import inspect
+import re
 import time
 
 from .art_match import (
@@ -33,8 +34,8 @@ from .utils.image_io import load_image
 TITLE_FIRST_ROIS = {"planar_title", "standard", "adventure", "transform_back"}
 VISUAL_ONLY_ROIS = {"set_symbol", "art_match"}
 ROTATED_TITLE_ROIS = {
-    "planar_title": (90, 270, 0),
-    "split_full": (90, 270, 0),
+    "planar_title": (90, 270),
+    "split_full": (90, 270),
 }
 
 
@@ -56,6 +57,7 @@ def recognize_card(
     _notify(progress_callback, "Preparing image input...")
     prepared_image = _timed_call(stage_timings, "prepare_image_input", _prepare_image_input, image)
     config = config or load_engine_config()
+    deadline = _resolve_recognition_deadline(deadline, config)
     candidate_pool_limit = max(config.candidate_count * 4, config.candidate_count)
     if catalog is None:
         full_catalog = _timed_call(stage_timings, "load_catalog", _load_catalog, config.catalog_path)
@@ -117,43 +119,48 @@ def recognize_card(
         if winner is not None:
             _notify(progress_callback, f"Recognition complete: {winner.name}")
             stage_timings["total"] = round(time.monotonic() - start_time, 4)
-            return RecognitionResult(
-                bbox=detection.bbox,
-                best_name=winner.name,
-                confidence=visual_small_pool_result["confidence"],
-                ocr_lines=[],
-                top_k_candidates=visual_small_pool_result["candidates"][: config.candidate_count],
-                active_roi="art_match",
-                tried_rois=tried_rois,
-                debug={
-                    "image": {
-                        "source": str(getattr(prepared_image, "path", "")) or type(prepared_image).__name__,
-                        "shape": getattr(prepared_image, "shape", None),
+            return _finalize_recognition_result(
+                RecognitionResult(
+                    bbox=detection.bbox,
+                    best_name=winner.name,
+                    confidence=visual_small_pool_result["confidence"],
+                    ocr_lines=[],
+                    top_k_candidates=visual_small_pool_result["candidates"][: config.candidate_count],
+                    active_roi="art_match",
+                    tried_rois=tried_rois,
+                    debug={
+                        "image": {
+                            "source": str(getattr(prepared_image, "path", "")) or type(prepared_image).__name__,
+                            "shape": getattr(prepared_image, "shape", None),
+                        },
+                        "detection": detection.debug,
+                        "normalization": {
+                            "crop_count": len(normalized.crops),
+                            **normalized.debug_outputs,
+                        },
+                        "ocr": {
+                            "active_roi": None,
+                            "results_by_roi": results_by_roi,
+                        },
+                        "set_symbol": set_symbol_debug,
+                        "art_match": art_match_debug,
+                        "expectation": expectation_debug,
+                        "confirmation": confirmation_debug,
+                        "small_pool_visual": visual_small_pool_debug,
+                        "mode": {
+                            "requested": resolved_mode.requested_mode,
+                            "effective": resolved_mode.effective_mode,
+                            "candidate_count": len(catalog.records),
+                            "has_expected_card": expected_card is not None,
+                            "has_candidate_pool": candidate_pool is not None,
+                            "implementation_note": resolved_mode.implementation_note,
+                        },
+                        "timings": stage_timings,
                     },
-                    "detection": detection.debug,
-                    "normalization": {
-                        "crop_count": len(normalized.crops),
-                        **normalized.debug_outputs,
-                    },
-                    "ocr": {
-                        "active_roi": None,
-                        "results_by_roi": results_by_roi,
-                    },
-                    "set_symbol": set_symbol_debug,
-                    "art_match": art_match_debug,
-                    "expectation": expectation_debug,
-                    "confirmation": confirmation_debug,
-                    "small_pool_visual": visual_small_pool_debug,
-                    "mode": {
-                        "requested": resolved_mode.requested_mode,
-                        "effective": resolved_mode.effective_mode,
-                        "candidate_count": len(catalog.records),
-                        "has_expected_card": expected_card is not None,
-                        "has_candidate_pool": candidate_pool is not None,
-                        "implementation_note": resolved_mode.implementation_note,
-                    },
-                    "timings": stage_timings,
-                },
+                ),
+                stage_timings=stage_timings,
+                config=config,
+                deadline=deadline,
             )
     elif visual_pool_candidates and art_match_crop is None:
         visual_small_pool_debug = {"used": False, "reason": "missing_observed_crop"}
@@ -175,6 +182,12 @@ def recognize_card(
             "confidence": result.confidence,
             "debug": result.debug,
         }
+        if _should_stop_title_ocr_early(
+            layout_hint=layout_hint,
+            roi_group=roi_group,
+            result=result,
+        ):
+            break
 
     active_roi = _best_title_roi_name(title_rois, results_by_roi, layout_hint=layout_hint) or (title_rois[0] if title_rois else None)
     active_index = title_rois.index(active_roi) if active_roi in title_rois else 0
@@ -383,44 +396,49 @@ def recognize_card(
     _notify(progress_callback, f"Recognition complete: {best_name or 'no match'}")
     stage_timings["total"] = round(time.monotonic() - start_time, 4)
 
-    return RecognitionResult(
-        bbox=detection.bbox,
-        best_name=best_name,
-        confidence=confidence,
-        ocr_lines=ocr.lines,
-        top_k_candidates=candidates[: config.candidate_count],
-        active_roi=active_roi,
-        tried_rois=tried_rois,
-        debug={
-            "image": {
-                "source": str(getattr(prepared_image, "path", "")) or type(prepared_image).__name__,
-                "shape": getattr(prepared_image, "shape", None),
+    return _finalize_recognition_result(
+        RecognitionResult(
+            bbox=detection.bbox,
+            best_name=best_name,
+            confidence=confidence,
+            ocr_lines=ocr.lines,
+            top_k_candidates=candidates[: config.candidate_count],
+            active_roi=active_roi,
+            tried_rois=tried_rois,
+            debug={
+                "image": {
+                    "source": str(getattr(prepared_image, "path", "")) or type(prepared_image).__name__,
+                    "shape": getattr(prepared_image, "shape", None),
+                },
+                "detection": detection.debug,
+                "normalization": {
+                    "crop_count": len(normalized.crops),
+                    **normalized.debug_outputs,
+                },
+                "ocr": {
+                    "active_roi": active_roi,
+                    "results_by_roi": results_by_roi,
+                    **ocr.debug,
+                },
+                "set_symbol": set_symbol_debug,
+                "art_match": art_match_debug,
+                "expectation": expectation_debug,
+                "confirmation": confirmation_debug,
+                "small_pool_visual": visual_small_pool_debug,
+                "mode": {
+                    "requested": resolved_mode.requested_mode,
+                    "effective": resolved_mode.effective_mode,
+                    "candidate_count": len(catalog.records),
+                    "has_expected_card": expected_card is not None,
+                    "has_candidate_pool": candidate_pool is not None,
+                    "implementation_note": resolved_mode.implementation_note,
+                },
+                "timings": stage_timings,
             },
-            "detection": detection.debug,
-            "normalization": {
-                "crop_count": len(normalized.crops),
-                **normalized.debug_outputs,
-            },
-            "ocr": {
-                "active_roi": active_roi,
-                "results_by_roi": results_by_roi,
-                **ocr.debug,
-            },
-            "set_symbol": set_symbol_debug,
-            "art_match": art_match_debug,
-            "expectation": expectation_debug,
-            "confirmation": confirmation_debug,
-            "small_pool_visual": visual_small_pool_debug,
-            "mode": {
-                "requested": resolved_mode.requested_mode,
-                "effective": resolved_mode.effective_mode,
-                "candidate_count": len(catalog.records),
-                "has_expected_card": expected_card is not None,
-                "has_candidate_pool": candidate_pool is not None,
-                "implementation_note": resolved_mode.implementation_note,
-            },
-            "timings": stage_timings,
-        },
+        ),
+        stage_timings=stage_timings,
+        config=config,
+        deadline=deadline,
     )
 
 
@@ -533,6 +551,25 @@ def _ocr_result_sort_key(result) -> tuple[int, float, int]:
     return (len(result.lines), result.confidence, sum(len(line) for line in result.lines))
 
 
+def _should_stop_title_ocr_early(
+    *,
+    layout_hint: str | None,
+    roi_group: str,
+    result,
+) -> bool:
+    normalized_layout = (layout_hint or "").lower()
+    if normalized_layout not in {"split", "planar"}:
+        return False
+    if roi_group != "planar_title":
+        return False
+    if result.confidence < 0.9:
+        return False
+    tokens = _split_title_tokens(result.lines)
+    if not tokens:
+        return False
+    return sum(len(token) for token in tokens) >= 8
+
+
 @lru_cache(maxsize=4)
 def _load_catalog(db_path: str) -> LocalCatalogIndex:
     ensure_catalog_ready(db_path=db_path)
@@ -593,6 +630,53 @@ def _resolve_visual_deadline(deadline: float | None, config: EngineConfig) -> fl
     if deadline is None:
         return capped_deadline
     return min(deadline, capped_deadline)
+
+
+def _resolve_recognition_deadline(deadline: float | None, config: EngineConfig) -> float | None:
+    if deadline is not None:
+        return deadline
+    timeout_seconds = max(0.0, getattr(config, "recognition_deadline_seconds", 0.0))
+    if timeout_seconds <= 0:
+        return None
+    return time.monotonic() + timeout_seconds
+
+
+def _finalize_recognition_result(
+    result: RecognitionResult,
+    *,
+    stage_timings: dict[str, float],
+    config: EngineConfig,
+    deadline: float | None,
+) -> RecognitionResult:
+    timeout_seconds = max(0.0, getattr(config, "recognition_deadline_seconds", 0.0))
+    exceeded = _deadline_exceeded(deadline)
+    if timeout_seconds > 0 and stage_timings.get("total", 0.0) > timeout_seconds:
+        exceeded = True
+
+    result.debug["deadline"] = {
+        "configured_seconds": timeout_seconds,
+        "deadline_used": deadline is not None,
+        "exceeded": exceeded,
+    }
+    if not exceeded:
+        return result
+
+    result.debug["deadline"]["partial_best_name"] = result.best_name
+    result.debug["deadline"]["partial_confidence"] = result.confidence
+    result.debug["deadline"]["partial_candidates"] = [
+        {
+            "name": candidate.name,
+            "set_code": candidate.set_code,
+            "collector_number": candidate.collector_number,
+            "score": candidate.score,
+            "notes": list(candidate.notes or []),
+        }
+        for candidate in result.top_k_candidates[:5]
+    ]
+    result.best_name = None
+    result.confidence = 0.0
+    result.top_k_candidates = []
+    return result
 
 
 class OCR_like:
@@ -698,13 +782,60 @@ def _should_use_split_full_fallback(
         layout_hint=layout_hint,
     )
 
-    if "exact" in top_notes and confidence >= 0.88 and score_gap >= 0.08:
+    if _has_robust_split_title_read(
+        title_lines,
+        title_confidence=title_confidence,
+        candidate=top_candidate,
+        candidates=candidates,
+    ):
         return False
-    if title_quality >= (0.82, 6.0, -2.0) and "exact" in top_notes:
+    if "exact" in top_notes and confidence >= 0.88 and score_gap >= 0.08:
         return False
     if confidence >= 0.94 and score_gap >= 0.12:
         return False
     return True
+
+
+def _has_robust_split_title_read(
+    title_lines: list[str],
+    *,
+    title_confidence: float,
+    candidate: Candidate | None,
+    candidates: list[Candidate],
+) -> bool:
+    if title_confidence < 0.88:
+        return False
+
+    observed_tokens = _split_title_tokens(title_lines)
+    expected_tokens = set()
+    if candidate is not None:
+        notes = set(getattr(candidate, "notes", []) or [])
+        if "exact" in notes:
+            expected_tokens |= _split_title_tokens([candidate.name])
+        elif (
+            candidate.set_code is not None
+            and "catalog_unavailable" not in notes
+            and "title_only" not in notes
+            and candidates
+            and all(entry.name == candidate.name for entry in candidates)
+        ):
+            expected_tokens |= _split_title_tokens([candidate.name])
+
+    if not observed_tokens or not expected_tokens:
+        return False
+
+    matched = observed_tokens & expected_tokens
+    coverage = len(matched) / len(expected_tokens)
+    return coverage >= 0.75
+
+
+def _split_title_tokens(lines: list[str]) -> set[str]:
+    tokens: set[str] = set()
+    for line in lines:
+        for token in re.findall(r"[a-z]+", line.lower()):
+            if len(token) >= 3:
+                tokens.add(token)
+    return tokens
 
 
 def _persist_saved_detection(image: Any, detection) -> None:

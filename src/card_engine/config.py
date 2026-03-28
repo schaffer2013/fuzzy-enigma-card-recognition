@@ -36,6 +36,7 @@ class EngineConfig:
     layout_heuristics_enabled: bool = True
     lazy_group_basic_land_printings: bool = False
     lazy_default_printing_by_name: bool = False
+    recognition_deadline_seconds: float = 20.0
     max_visual_tiebreak_candidates: int = 6
     max_visual_tiebreak_seconds_per_card: float = 30.0
     reference_download_timeout_seconds: float = 10.0
