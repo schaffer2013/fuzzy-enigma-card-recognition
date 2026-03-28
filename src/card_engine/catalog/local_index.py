@@ -65,11 +65,16 @@ class LocalCatalogIndex:
         ]
         self._by_normalized_name: dict[str, list[CatalogRecord]] = {}
         self._by_normalized_alias: dict[str, list[CatalogRecord]] = {}
+        self._records_by_oracle_key: dict[str, list[CatalogRecord]] = {}
+        self._oracle_search_records: list[tuple[str, CatalogRecord]] = []
         for record in self.records:
             self._by_normalized_name.setdefault(record.normalized_name, []).append(record)
             for alias in record.aliases or []:
                 normalized_alias = normalize_text(alias)
                 self._by_normalized_alias.setdefault(normalized_alias, []).append(record)
+            oracle_key = record.oracle_id or f"name:{record.normalized_name}"
+            self._records_by_oracle_key.setdefault(oracle_key, []).append(record)
+        self._oracle_search_records = self._build_oracle_search_records()
 
     @classmethod
     def from_records(cls, records: list[CatalogRecord]) -> "LocalCatalogIndex":
@@ -199,8 +204,8 @@ class LocalCatalogIndex:
                 for record in exact_matches
             ]
 
-        ranked: list[CatalogMatch] = []
-        for record in self.records:
+        ranked: list[tuple[str, CatalogRecord, float]] = []
+        for oracle_key, record in self._oracle_search_records:
             candidates = [record.normalized_name]
             candidates.extend(normalize_text(alias) for alias in (record.aliases or []))
             usable_candidates = [candidate for candidate in candidates if candidate]
@@ -209,10 +214,13 @@ class LocalCatalogIndex:
             score = max(_fuzzy_score(normalized_query, candidate) for candidate in usable_candidates)
             if score < 0.55:
                 continue
-            ranked.append(CatalogMatch(record=record, score=score, match_type="fuzzy"))
+            ranked.append((oracle_key, record, score))
 
-        ranked.sort(key=lambda match: (-match.score, match.record.name))
-        return ranked[:limit]
+        ranked.sort(key=lambda entry: (-entry[2], entry[1].name))
+        return [
+            CatalogMatch(record=record, score=score, match_type="fuzzy")
+            for _oracle_key, record, score in ranked[:limit]
+        ]
 
     def find_record(
         self,
@@ -238,6 +246,44 @@ class LocalCatalogIndex:
                 continue
             return record
         return None
+
+    def _build_oracle_search_records(self) -> list[tuple[str, CatalogRecord]]:
+        search_records: list[tuple[str, CatalogRecord]] = []
+        for oracle_key, records in self._records_by_oracle_key.items():
+            representative = records[0]
+            alias_set = {
+                alias.strip()
+                for record in records
+                for alias in (record.aliases or [])
+                if alias and alias.strip()
+            }
+            search_records.append(
+                (
+                    oracle_key,
+                    CatalogRecord(
+                        name=representative.name,
+                        normalized_name=representative.normalized_name,
+                        scryfall_id=None,
+                        oracle_id=representative.oracle_id,
+                        mana_cost=representative.mana_cost,
+                        colors=representative.colors,
+                        color_identity=representative.color_identity,
+                        set_code=None,
+                        collector_number=None,
+                        rarity=None,
+                        layout=representative.layout,
+                        type_line=representative.type_line,
+                        oracle_text=representative.oracle_text,
+                        flavor_text=None,
+                        artist=None,
+                        released_at=None,
+                        games=(),
+                        image_uri=None,
+                        aliases=sorted(alias_set),
+                    ),
+                )
+            )
+        return search_records
 
 
 def _fuzzy_score(query: str, candidate: str) -> float:

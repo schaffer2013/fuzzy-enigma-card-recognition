@@ -380,11 +380,9 @@ def _expand_matches_for_printing_tiebreak(
     if len(exact_printings) <= 1:
         return matches, False
 
-    expanded = list(matches)
-    seen = {
-        (match.record.name, match.record.set_code, match.record.collector_number)
-        for match in matches
-    }
+    top_name = normalize_text(top_match.record.name)
+    expanded: list[CatalogMatch] = []
+    seen: set[tuple[str, str | None, str | None]] = set()
     for record in exact_printings:
         key = (record.name, record.set_code, record.collector_number)
         if key in seen:

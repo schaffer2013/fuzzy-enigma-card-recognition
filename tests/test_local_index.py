@@ -95,3 +95,37 @@ def test_search_name_skips_records_without_usable_search_strings():
 
     assert matches
     assert matches[0].record.name == "Lightning Bolt"
+
+
+def test_search_name_fuzzy_scans_oracle_groups_before_printing_expansion():
+    index = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Elspeth, Storm Slayer",
+                normalized_name="",
+                oracle_id="oracle-elspeth",
+                set_code="TDM",
+                collector_number="11",
+            ),
+            CatalogRecord(
+                name="Elspeth, Storm Slayer",
+                normalized_name="",
+                oracle_id="oracle-elspeth",
+                set_code="PTDM",
+                collector_number="11p",
+            ),
+            CatalogRecord(
+                name="Elspeth Tirel",
+                normalized_name="",
+                oracle_id="oracle-tirel",
+                set_code="SOM",
+                collector_number="9",
+            ),
+        ]
+    )
+
+    matches = index.search_name("Elspeth Storm Siayer", limit=3)
+
+    assert matches
+    assert matches[0].record.name == "Elspeth, Storm Slayer"
+    assert len([match for match in matches if match.record.name == "Elspeth, Storm Slayer"]) == 1
