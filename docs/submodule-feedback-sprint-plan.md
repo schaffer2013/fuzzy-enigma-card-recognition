@@ -4,10 +4,10 @@ This checklist translates parent integration feedback into concrete implementati
 
 ## Sprint Objectives
 
-- [ ] Replace mode/precondition exceptions in normal recognition paths with structured failure results and stable codes.
-- [ ] Expose first-class mode metadata on `RecognitionResult` and adapter outputs (without requiring debug parsing).
+- [x] Replace mode/precondition exceptions in normal recognition paths with structured failure results and stable codes.
+- [x] Expose first-class mode metadata on `RecognitionResult` and adapter outputs (without requiring debug parsing).
 - [ ] Keep parent-facing expected-card and candidate-pool controls explicit and stable.
-- [ ] Add stable machine-readable failure/review reason codes for common failure clusters.
+- [x] Add stable machine-readable failure/review reason codes for common failure clusters.
 - [ ] Define a structured Python offline-catalog query surface suitable for embedding repos.
 - [ ] Design optional engine-side artifact export to reduce duplicate evidence packaging in parent repos.
 
@@ -16,18 +16,18 @@ This checklist translates parent integration feedback into concrete implementati
 - [x] Add structured result fields for `requested_mode`, `effective_mode`, `mode_flags`, `failure_code`, and `review_reason`.
 - [x] Return structured `missing_tracked_pool` from `RecognitionSession.recognize(...)` instead of raising.
 - [x] Wire structured mode metadata into adapter detailed output.
-- [ ] Expand API-level mode-precondition failures to standardized failure result payloads across all constrained paths.
-- [ ] Add/refresh tests for structured metadata and failure-code behavior.
+- [x] Expand API-level mode-precondition failures to standardized failure result payloads across all constrained paths.
+- [x] Add/refresh tests for structured metadata and failure-code behavior.
 
 ## Phase 2: Failure code normalization
 
-- [ ] Introduce stable codes for representative classes:
-  - [ ] `deadline_exceeded`
-  - [ ] `detection_failed`
-  - [ ] `ocr_weak`
-  - [ ] `candidate_tie_unresolved`
-  - [ ] `expected_card_contradicted`
-- [ ] Document mapping from internal conditions to external failure/review codes.
+- [x] Introduce stable codes for representative classes:
+  - [x] `deadline_exceeded`
+  - [x] `detection_failed`
+  - [x] `ocr_weak`
+  - [x] `candidate_tie_unresolved`
+  - [x] `expected_card_contradicted`
+- [x] Document mapping from internal conditions to external failure/review codes.
 
 ## Phase 3: Parent-facing control hardening
 

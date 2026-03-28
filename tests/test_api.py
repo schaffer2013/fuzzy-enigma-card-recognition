@@ -1244,6 +1244,98 @@ def test_recognize_card_returns_detection_failed_when_detector_raises(monkeypatc
     assert result.debug["detection"]["error"] == "boom"
 
 
+def test_recognize_card_sets_ocr_weak_when_no_signal(monkeypatch):
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Island", normalized_name="", set_code="M21", collector_number="264", layout="normal"),
+        ]
+    )
+
+    monkeypatch.setattr(
+        "card_engine.api.run_ocr",
+        lambda image, roi_label=None, *, crop_region=None: OCRResult(
+            lines=[],
+            confidence=0.0,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "empty"},
+        ),
+    )
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr("card_engine.api.match_candidates", lambda *args, **kwargs: [])
+
+    result = recognize_card(DummyImage())
+
+    assert result.best_name is None
+    assert result.failure_code == "ocr_weak"
+    assert result.review_reason == "ocr_weak"
+
+
+def test_recognize_card_sets_candidate_tie_unresolved_for_close_distinct_printings(monkeypatch):
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Island", normalized_name="", set_code="M21", collector_number="264", layout="normal"),
+            CatalogRecord(name="Island", normalized_name="", set_code="ELD", collector_number="254", layout="normal"),
+        ]
+    )
+
+    monkeypatch.setattr(
+        "card_engine.api.run_ocr",
+        lambda image, roi_label=None, *, crop_region=None: OCRResult(
+            lines=["Island"] if roi_label == "standard" else [],
+            confidence=0.95,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        ),
+    )
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr(
+        "card_engine.api.match_candidates",
+        lambda *args, **kwargs: [
+            Candidate(name="Island", score=0.900, set_code="M21", collector_number="264", notes=["exact"]),
+            Candidate(name="Island", score=0.895, set_code="ELD", collector_number="254", notes=["exact"]),
+        ],
+    )
+    monkeypatch.setattr(
+        "card_engine.api.rerank_candidates_by_set_symbol",
+        lambda candidates, **kwargs: type("Result", (), {"candidates": list(candidates), "debug": {"used": False}})(),
+    )
+    monkeypatch.setattr(
+        "card_engine.api.rerank_candidates_by_art",
+        lambda candidates, **kwargs: type("Result", (), {"candidates": list(candidates), "debug": {"used": False}})(),
+    )
+
+    result = recognize_card(DummyImage())
+
+    assert result.failure_code == "candidate_tie_unresolved"
+    assert result.review_reason == "candidate_tie_unresolved"
+
+
+def test_recognize_card_sets_deadline_exceeded_reason_when_deadline_has_passed(monkeypatch):
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Island", normalized_name="", set_code="M21", collector_number="264", layout="normal"),
+        ]
+    )
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr(
+        "card_engine.api.run_ocr",
+        lambda image, roi_label=None, *, crop_region=None: OCRResult(
+            lines=["Island"] if roi_label == "standard" else [],
+            confidence=0.95,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        ),
+    )
+    monkeypatch.setattr(
+        "card_engine.api.match_candidates",
+        lambda *args, **kwargs: [Candidate(name="Island", score=0.9, set_code="M21", collector_number="264", notes=["exact"])],
+    )
+
+    result = recognize_card(DummyImage(), deadline=time.monotonic() - 0.001)
+
+    assert result.best_name is None
+    assert result.confidence == 0.0
+    assert result.failure_code == "deadline_exceeded"
+    assert result.review_reason == "deadline_exceeded"
+
+
 def test_recognize_card_keeps_wider_candidate_pool_before_final_top_k(monkeypatch):
     def fake_run_ocr(image, roi_label=None, *, crop_region=None):
         lines_by_roi = {
