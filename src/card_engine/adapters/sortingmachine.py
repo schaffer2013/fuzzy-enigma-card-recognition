@@ -3,7 +3,7 @@ from typing import Any
 
 from card_engine.config import EngineConfig
 from card_engine.models import Candidate, RecognitionResult
-from card_engine.operational_modes import ExpectedCard
+from card_engine.operational_modes import CandidatePool, ExpectedCard
 from card_engine.session import RecognitionSession, TrackedPoolEntry
 
 
@@ -22,6 +22,11 @@ class SortingMachineDetailedOutput(SortingMachineOutput):
     top_k_candidates: list[Candidate]
     active_roi: str | None
     tried_rois: list[str]
+    requested_mode: str | None
+    effective_mode: str | None
+    mode_flags: dict[str, bool]
+    failure_code: str | None
+    review_reason: str | None
     debug: dict[str, Any]
     raw_result: RecognitionResult
 
@@ -40,8 +45,10 @@ class SortingMachineRecognizer:
         *,
         mode: str | None = None,
         expected_card: ExpectedCard | None = None,
+        candidate_pool: CandidatePool | None = None,
         use_tracked_pool: bool | None = None,
         prefer_visual_small_pool: bool = False,
+        artifact_export_dir: str | None = None,
         track_result: bool | None = None,
         detailed: bool = False,
     ) -> SortingMachineOutput | SortingMachineDetailedOutput:
@@ -49,8 +56,10 @@ class SortingMachineRecognizer:
             frame,
             mode=mode,
             expected_card=expected_card,
+            candidate_pool=candidate_pool,
             use_tracked_pool=use_tracked_pool,
             prefer_visual_small_pool=prefer_visual_small_pool,
+            artifact_export_dir=artifact_export_dir,
             track_result=track_result,
         )
         if not detailed:
@@ -66,6 +75,11 @@ class SortingMachineRecognizer:
             top_k_candidates=list(result.top_k_candidates),
             active_roi=result.active_roi,
             tried_rois=list(result.tried_rois),
+            requested_mode=result.requested_mode,
+            effective_mode=result.effective_mode,
+            mode_flags=dict(result.mode_flags),
+            failure_code=result.failure_code,
+            review_reason=result.review_reason,
             debug=dict(result.debug),
             raw_result=result,
         )

@@ -45,6 +45,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
     printed_search.add_argument("--collector-number", default=None)
     printed_search.add_argument("--limit", type=int, default=50)
 
+    identity = subparsers.add_parser("card-identity", help="Resolve card identity by name, oracle_id, or scryfall_id.")
+    identity.add_argument("--name", default=None)
+    identity.add_argument("--oracle-id", default=None)
+    identity.add_argument("--scryfall-id", default=None)
+    identity.add_argument("--set-code", default=None)
+    identity.add_argument("--collector-number", default=None)
+
+    printing_candidates = subparsers.add_parser(
+        "printing-candidates",
+        help="Find printing candidates for a card name with optional set/collector refinement.",
+    )
+    printing_candidates.add_argument("query")
+    printing_candidates.add_argument("--set-code", default=None)
+    printing_candidates.add_argument("--collector-number", default=None)
+    printing_candidates.add_argument("--limit", type=int, default=50)
+
     return parser
 
 
@@ -71,6 +87,33 @@ def main(argv: list[str] | None = None) -> int:
             for row in query.find_printed_cards(
                 name_query=args.name,
                 oracle_id=args.oracle_id,
+                set_code=args.set_code,
+                collector_number=args.collector_number,
+                limit=args.limit,
+            )
+        ]
+    elif args.command == "card-identity":
+        identity = query.resolve_card_identity(
+            name_query=args.name,
+            oracle_id=args.oracle_id,
+            scryfall_id=args.scryfall_id,
+            set_code=args.set_code,
+            collector_number=args.collector_number,
+        )
+        if identity is None:
+            payload = None
+        else:
+            payload = {
+                key: (asdict(value) if value is not None else None)
+                if key != "printings"
+                else [asdict(row) for row in value]
+                for key, value in identity.items()
+            }
+    elif args.command == "printing-candidates":
+        payload = [
+            asdict(row)
+            for row in query.find_printing_candidates(
+                name_query=args.query,
                 set_code=args.set_code,
                 collector_number=args.collector_number,
                 limit=args.limit,

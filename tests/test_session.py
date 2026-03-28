@@ -84,6 +84,8 @@ def test_session_small_pool_uses_tracked_pool_by_default(monkeypatch):
     session.recognize(DummyImage(), mode="small_pool")
 
     assert seen_candidate_count == 1
+    result = session.recognize(DummyImage(), mode="small_pool")
+    assert result.mode_flags["used_tracked_pool"] is True
 
 
 def test_session_small_pool_can_pass_visual_pool_candidates(monkeypatch):
@@ -117,6 +119,33 @@ def test_session_small_pool_can_pass_visual_pool_candidates(monkeypatch):
     session.recognize(DummyImage(), mode="small_pool", prefer_visual_small_pool=True)
 
     assert seen_visual_pool_count == 1
+
+
+def test_session_small_pool_can_disable_tracked_pool_requirement(monkeypatch):
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Island", normalized_name="", set_code="M21", collector_number="264", layout="normal"),
+        ]
+    )
+    seen_pool = {"candidate_pool": "unset"}
+
+    def fake_recognize_card(image, **kwargs):
+        seen_pool["candidate_pool"] = kwargs.get("candidate_pool")
+        return RecognitionResult(
+            bbox=(0, 0, 80, 100),
+            best_name="Island",
+            confidence=0.9,
+            top_k_candidates=[Candidate(name="Island", score=0.9, set_code="M21", collector_number="264")],
+        )
+
+    monkeypatch.setattr("card_engine.session.recognize_card", fake_recognize_card)
+    session = RecognitionSession(catalog=catalog)
+
+    result = session.recognize(DummyImage(), mode="small_pool", use_tracked_pool=False)
+
+    assert result.failure_code is None
+    assert seen_pool["candidate_pool"] is None
+    assert result.mode_flags["used_tracked_pool"] is False
 
 
 def test_session_tracks_observed_art_fingerprint_from_greenfield_result(monkeypatch):
@@ -188,9 +217,9 @@ def test_session_small_pool_requires_available_pool(monkeypatch):
     monkeypatch.setattr("card_engine.session.recognize_card", lambda image, **kwargs: None)
     session = RecognitionSession(catalog=catalog)
 
-    try:
-        session.recognize(DummyImage(), mode="small_pool")
-    except ValueError as exc:
-        assert "No tracked pool" in str(exc)
-    else:
-        raise AssertionError("Expected small_pool session call without tracked pool to fail")
+    result = session.recognize(DummyImage(), mode="small_pool")
+
+    assert result.best_name is None
+    assert result.confidence == 0.0
+    assert result.failure_code == "missing_tracked_pool"
+    assert result.review_reason == "missing_tracked_pool"

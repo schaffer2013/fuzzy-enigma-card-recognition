@@ -1,7 +1,7 @@
 from card_engine.config import EngineConfig
 from card_engine.adapters.sortingmachine import SortingMachineRecognizer
 from card_engine.models import Candidate, RecognitionResult
-from card_engine.operational_modes import ExpectedCard
+from card_engine.operational_modes import CandidatePool, ExpectedCard
 
 
 class DummyImage:
@@ -46,7 +46,9 @@ def test_adapter_passes_config_through_to_engine(monkeypatch):
         DummyImage(),
         mode="small_pool",
         expected_card=ExpectedCard(name="Opt", set_code="XLN", collector_number="65"),
+        candidate_pool=CandidatePool.from_records([]),
         use_tracked_pool=True,
+        artifact_export_dir="tmp/artifacts",
         track_result=False,
     )
 
@@ -56,7 +58,9 @@ def test_adapter_passes_config_through_to_engine(monkeypatch):
     assert seen["config"] is config
     assert seen["auto_track_results"] is True
     assert seen["kwargs"]["mode"] == "small_pool"
+    assert seen["kwargs"]["candidate_pool"] is not None
     assert seen["kwargs"]["use_tracked_pool"] is True
+    assert seen["kwargs"]["artifact_export_dir"] == "tmp/artifacts"
     assert seen["kwargs"]["track_result"] is False
 
     assert recognizer.add_expected_card(ExpectedCard(name="Island")) is True
@@ -134,3 +138,6 @@ def test_adapter_can_return_detailed_output(monkeypatch):
     assert output.top_k_candidates[0].oracle_id == "oracle-opt"
     assert output.debug["mode"]["effective"] == "greenfield"
     assert output.raw_result.best_name == "Opt"
+    assert output.requested_mode is None
+    assert output.effective_mode is None
+    assert output.mode_flags == {}

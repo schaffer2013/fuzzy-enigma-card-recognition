@@ -198,6 +198,7 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
     payload = summary_to_json(summary)
 
     assert "Average runtime (s):" in rendered
+    assert "tested against" in rendered
     assert "Median runtime (s):" in rendered
     assert "Runtime stddev (s):" in rendered
     assert "Runtime p95 (s):" in rendered
@@ -206,6 +207,7 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
     assert "Calibration error (ECE): 0.230" in rendered
     assert "0.6-0.8: count=1, avg_confidence=0.630, accuracy=1.000, gap=0.370" in rendered
     assert payload["average_runtime_seconds"] >= 0.0
+    assert payload["average_candidate_count"] >= 0.0
     assert payload["median_runtime_seconds"] >= 0.0
     assert payload["runtime_stddev_seconds"] >= 0.0
     assert payload["runtime_p95_seconds"] >= 0.0
@@ -1130,6 +1132,7 @@ def test_benchmark_report_renders_and_serializes_mode_accuracy():
     assert "Mode: default" in rendered
     assert "Top-1 accuracy: 0.900" in rendered
     assert "Runtime p95 (s): 0.160" in rendered
+    assert "tested against 0.0 candidates" in rendered
     assert payload["mode_results"][0]["mode_name"] == "default"
     assert payload["mode_results"][0]["summary"]["set_accuracy"] == 0.8
     assert payload["mode_results"][0]["summary"]["runtime_stddev_seconds"] == 0.02
@@ -1177,6 +1180,7 @@ def test_operational_mode_report_renders_and_serializes_mode_accuracy():
     assert "Mode: greenfield" in rendered
     assert "Note: Biases the expected card while still allowing disagreement recovery." in rendered
     assert "Runtime stddev (s): 0.010" in rendered
+    assert "tested against 0.0 candidates" in rendered
     assert payload["mode_results"][0]["mode_name"] == "greenfield"
     assert payload["mode_results"][0]["implementation_note"] is not None
     assert payload["mode_results"][0]["summary"]["max_runtime_seconds"] == 0.16
