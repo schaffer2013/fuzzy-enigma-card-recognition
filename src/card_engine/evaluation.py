@@ -76,6 +76,7 @@ class FixtureEvaluation:
     candidate_names: list[str]
     error_class: str
     runtime_seconds: float = 0.0
+    candidate_count: int = 0
     stage_timings: dict[str, float] = field(default_factory=dict)
     expected_games: list[str] = field(default_factory=list)
     expected_is_paper: bool | None = None
@@ -95,6 +96,7 @@ class EvaluationSummary:
     average_confidence: float
     average_scored_confidence: float
     average_runtime_seconds: float
+    average_candidate_count: float
     median_runtime_seconds: float
     runtime_stddev_seconds: float
     runtime_p95_seconds: float
@@ -488,6 +490,7 @@ def _summarize_evaluations(evaluations: list[FixtureEvaluation]) -> EvaluationSu
         average_confidence=_safe_ratio(total_confidence, fixture_count),
         average_scored_confidence=_safe_ratio(scored_confidence, scored_count),
         average_runtime_seconds=_safe_ratio(total_runtime, fixture_count),
+        average_candidate_count=_average_candidate_count(evaluations),
         median_runtime_seconds=_median(runtimes),
         runtime_stddev_seconds=_population_stddev(runtimes),
         runtime_p95_seconds=_percentile(runtimes, 0.95),
@@ -707,11 +710,20 @@ def _build_fixture_evaluation(
             deadline_exceeded=deadline_exceeded,
         ),
         runtime_seconds=stage_timings.get("total", runtime_seconds),
+        candidate_count=_resolve_candidate_count(result),
         stage_timings=stage_timings,
         expected_games=list(expected.games),
         expected_is_paper=is_paper_expectation(expected),
         deadline_exceeded=deadline_exceeded,
     )
+
+
+def _resolve_candidate_count(result: Any) -> int:
+    mode_debug = result.debug.get("mode", {}) if isinstance(result.debug, dict) else {}
+    candidate_count = mode_debug.get("candidate_count") if isinstance(mode_debug, dict) else None
+    if isinstance(candidate_count, int) and candidate_count >= 0:
+        return candidate_count
+    return len(getattr(result, "top_k_candidates", []) or [])
 
 
 def infer_expected_name(image: LoadedImage) -> str | None:
@@ -880,11 +892,11 @@ def render_summary(summary: EvaluationSummary) -> str:
         f"Art accuracy: {summary.art_accuracy:.3f}",
         f"Average confidence: {summary.average_confidence:.3f}",
         f"Average scored confidence: {summary.average_scored_confidence:.3f}",
-        f"Average runtime (s): {summary.average_runtime_seconds:.3f}",
-        f"Median runtime (s): {summary.median_runtime_seconds:.3f}",
+        f"Average runtime (s): {summary.average_runtime_seconds:.3f} (tested against {summary.average_candidate_count:.1f} candidates)",
+        f"Median runtime (s): {summary.median_runtime_seconds:.3f} (tested against {summary.average_candidate_count:.1f} candidates)",
         f"Runtime stddev (s): {summary.runtime_stddev_seconds:.3f}",
-        f"Runtime p95 (s): {summary.runtime_p95_seconds:.3f}",
-        f"Max runtime (s): {summary.max_runtime_seconds:.3f}",
+        f"Runtime p95 (s): {summary.runtime_p95_seconds:.3f} (tested against {summary.average_candidate_count:.1f} candidates)",
+        f"Max runtime (s): {summary.max_runtime_seconds:.3f} (tested against {summary.average_candidate_count:.1f} candidates)",
         f"Calibration error (ECE): {summary.calibration_error:.3f}",
         "",
         "Confidence calibration:",
@@ -964,6 +976,7 @@ def summary_to_json(summary: EvaluationSummary) -> dict:
         "average_confidence": summary.average_confidence,
         "average_scored_confidence": summary.average_scored_confidence,
         "average_runtime_seconds": summary.average_runtime_seconds,
+        "average_candidate_count": summary.average_candidate_count,
         "median_runtime_seconds": summary.median_runtime_seconds,
         "runtime_stddev_seconds": summary.runtime_stddev_seconds,
         "runtime_p95_seconds": summary.runtime_p95_seconds,
@@ -1000,6 +1013,7 @@ def summary_from_json(payload: dict[str, Any]) -> EvaluationSummary:
         average_confidence=float(payload.get("average_confidence", 0.0) or 0.0),
         average_scored_confidence=float(payload.get("average_scored_confidence", 0.0) or 0.0),
         average_runtime_seconds=float(payload.get("average_runtime_seconds", 0.0) or 0.0),
+        average_candidate_count=float(payload.get("average_candidate_count", 0.0) or 0.0),
         median_runtime_seconds=float(payload.get("median_runtime_seconds", 0.0) or 0.0),
         runtime_stddev_seconds=float(payload.get("runtime_stddev_seconds", 0.0) or 0.0),
         runtime_p95_seconds=float(payload.get("runtime_p95_seconds", 0.0) or 0.0),
@@ -1117,11 +1131,11 @@ def render_benchmark_report(report: BenchmarkReport) -> str:
                 f"  Set accuracy: {summary.set_accuracy:.3f}",
                 f"  Art accuracy: {summary.art_accuracy:.3f}",
                 f"  Average confidence: {summary.average_confidence:.3f}",
-                f"  Average runtime (s): {summary.average_runtime_seconds:.3f}",
-                f"  Median runtime (s): {summary.median_runtime_seconds:.3f}",
+                f"  Average runtime (s): {summary.average_runtime_seconds:.3f} (tested against {summary.average_candidate_count:.1f} candidates)",
+                f"  Median runtime (s): {summary.median_runtime_seconds:.3f} (tested against {summary.average_candidate_count:.1f} candidates)",
                 f"  Runtime stddev (s): {summary.runtime_stddev_seconds:.3f}",
-                f"  Runtime p95 (s): {summary.runtime_p95_seconds:.3f}",
-                f"  Max runtime (s): {summary.max_runtime_seconds:.3f}",
+                f"  Runtime p95 (s): {summary.runtime_p95_seconds:.3f} (tested against {summary.average_candidate_count:.1f} candidates)",
+                f"  Max runtime (s): {summary.max_runtime_seconds:.3f} (tested against {summary.average_candidate_count:.1f} candidates)",
                 f"  Calibration error (ECE): {summary.calibration_error:.3f}",
             ]
         )
@@ -1693,11 +1707,11 @@ def render_operational_mode_report(report: OperationalModeReport) -> str:
                 f"  Set accuracy: {summary.set_accuracy:.3f}",
                 f"  Art accuracy: {summary.art_accuracy:.3f}",
                 f"  Average confidence: {summary.average_confidence:.3f}",
-                f"  Average runtime (s): {summary.average_runtime_seconds:.3f}",
-                f"  Median runtime (s): {summary.median_runtime_seconds:.3f}",
+                f"  Average runtime (s): {summary.average_runtime_seconds:.3f} (tested against {summary.average_candidate_count:.1f} candidates)",
+                f"  Median runtime (s): {summary.median_runtime_seconds:.3f} (tested against {summary.average_candidate_count:.1f} candidates)",
                 f"  Runtime stddev (s): {summary.runtime_stddev_seconds:.3f}",
-                f"  Runtime p95 (s): {summary.runtime_p95_seconds:.3f}",
-                f"  Max runtime (s): {summary.max_runtime_seconds:.3f}",
+                f"  Runtime p95 (s): {summary.runtime_p95_seconds:.3f} (tested against {summary.average_candidate_count:.1f} candidates)",
+                f"  Max runtime (s): {summary.max_runtime_seconds:.3f} (tested against {summary.average_candidate_count:.1f} candidates)",
                 f"  Calibration error (ECE): {summary.calibration_error:.3f}",
             ]
         )
@@ -1785,6 +1799,12 @@ def _average_stage_timings(evaluations: list[FixtureEvaluation]) -> dict[str, fl
         for stage_name in sorted(totals)
         if counts[stage_name] > 0
     }
+
+
+def _average_candidate_count(evaluations: list[FixtureEvaluation]) -> float:
+    if not evaluations:
+        return 0.0
+    return round(sum(evaluation.candidate_count for evaluation in evaluations) / len(evaluations), 1)
 
 
 def _median(values: list[float]) -> float:
