@@ -98,6 +98,57 @@ class OfflineCatalogQuery:
             row = conn.execute(_PRINTED_CARD_SELECT + " WHERE printed_cards.scryfall_id = ?", (scryfall_id,)).fetchone()
         return _printed_row(row) if row else None
 
+    def resolve_card_identity(
+        self,
+        *,
+        name_query: str | None = None,
+        oracle_id: str | None = None,
+        scryfall_id: str | None = None,
+        set_code: str | None = None,
+        collector_number: str | None = None,
+    ) -> dict[str, object] | None:
+        if scryfall_id:
+            printed = self.get_printed_card(scryfall_id)
+            if printed is None:
+                return None
+            oracle = self.get_oracle_card(printed.oracle_id)
+            return {"oracle": oracle, "printing": printed}
+
+        resolved_oracle_id = oracle_id
+        if resolved_oracle_id is None and name_query:
+            oracle_rows = self.find_oracle_cards(name_query=name_query, limit=1)
+            if not oracle_rows:
+                return None
+            resolved_oracle_id = oracle_rows[0].oracle_id
+        if resolved_oracle_id is None:
+            return None
+
+        oracle = self.get_oracle_card(resolved_oracle_id)
+        if oracle is None:
+            return None
+        printings = self.find_printed_cards(
+            oracle_id=resolved_oracle_id,
+            set_code=set_code,
+            collector_number=collector_number,
+            limit=50,
+        )
+        return {"oracle": oracle, "printings": printings}
+
+    def find_printing_candidates(
+        self,
+        *,
+        name_query: str,
+        set_code: str | None = None,
+        collector_number: str | None = None,
+        limit: int = 50,
+    ) -> list[PrintedCardRow]:
+        return self.find_printed_cards(
+            name_query=name_query,
+            set_code=set_code,
+            collector_number=collector_number,
+            limit=limit,
+        )
+
     def printings_for_oracle(self, oracle_id: str, *, limit: int | None = None) -> list[PrintedCardRow]:
         query = _PRINTED_CARD_SELECT + " WHERE printed_cards.oracle_id = ? ORDER BY printed_cards.released_at DESC, printed_cards.set_code, printed_cards.collector_number"
         params: list[object] = [oracle_id]

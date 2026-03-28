@@ -117,3 +117,49 @@ def test_offline_catalog_query_finds_oracle_cards_by_name(tmp_path):
     rows = query.find_oracle_cards("Fire // Ice")
     assert len(rows) == 1
     assert rows[0].oracle_id == "oracle-fireice"
+
+
+def test_offline_catalog_query_resolves_identity_and_printing_candidates(tmp_path):
+    db_path = tmp_path / "cards.sqlite3"
+    source_path = tmp_path / "default-cards.json"
+    source_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "printing-opt-xln",
+                    "oracle_id": "oracle-opt",
+                    "name": "Opt",
+                    "set": "xln",
+                    "collector_number": "65",
+                    "lang": "en",
+                    "layout": "normal",
+                    "games": ["paper"],
+                    "image_uris": {"png": "https://img.example/opt-xln.png"},
+                },
+                {
+                    "id": "printing-opt-inv",
+                    "oracle_id": "oracle-opt",
+                    "name": "Opt",
+                    "set": "inv",
+                    "collector_number": "64",
+                    "lang": "en",
+                    "layout": "normal",
+                    "games": ["paper"],
+                    "image_uris": {"png": "https://img.example/opt-inv.png"},
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    build_catalog(str(db_path), str(source_path))
+    query = OfflineCatalogQuery.from_sqlite(db_path)
+
+    identity = query.resolve_card_identity(name_query="Opt", set_code="inv")
+    assert identity is not None
+    assert identity["oracle"].oracle_id == "oracle-opt"
+    assert len(identity["printings"]) == 1
+    assert identity["printings"][0].set_code == "inv"
+
+    candidates = query.find_printing_candidates(name_query="Opt", set_code="xln", limit=10)
+    assert len(candidates) == 1
+    assert candidates[0].collector_number == "65"
