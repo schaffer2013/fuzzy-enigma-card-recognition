@@ -90,6 +90,20 @@ def recognize_card(
                 "used_tracked_pool": False,
                 "used_visual_small_pool": False,
             },
+            pipeline_summary={
+                "resolution_path": "precondition_failed",
+                "active_title_roi": None,
+                "title_rois_with_text": [],
+                "secondary_rois_with_text": [],
+                "used_secondary_ocr": False,
+                "used_set_symbol_compare": False,
+                "used_art_match_compare": False,
+                "used_expected_bias": False,
+                "used_confirmation_scoring": False,
+                "used_visual_small_pool": False,
+                "used_split_full_fallback": False,
+                "branches_fired": [],
+            },
             failure_code=exc.code,
             review_reason=exc.code,
             debug={"mode": {"requested": mode or "default", "effective": "default"}, "timings": stage_timings},
@@ -115,6 +129,20 @@ def recognize_card(
                 used_tracked_pool=False,
                 used_visual_small_pool=False,
             ),
+            pipeline_summary={
+                "resolution_path": "detection_failed",
+                "active_title_roi": None,
+                "title_rois_with_text": [],
+                "secondary_rois_with_text": [],
+                "used_secondary_ocr": False,
+                "used_set_symbol_compare": False,
+                "used_art_match_compare": False,
+                "used_expected_bias": False,
+                "used_confirmation_scoring": False,
+                "used_visual_small_pool": False,
+                "used_split_full_fallback": False,
+                "branches_fired": [],
+            },
             failure_code="detection_failed",
             review_reason="detection_failed",
             debug={
@@ -618,6 +646,7 @@ def _maybe_export_artifacts(
         "requested_mode": result.requested_mode,
         "effective_mode": result.effective_mode,
         "mode_flags": dict(result.mode_flags),
+        "pipeline_summary": dict(result.pipeline_summary),
         "failure_code": result.failure_code,
         "review_reason": result.review_reason,
         "timings": result.debug.get("timings", {}),
@@ -634,6 +663,73 @@ def _safe_write_png(path: Path, image_array: Any) -> bool:
         return bool(cv2.imwrite(str(path), image_array))
     except Exception:
         return False
+
+
+def _build_pipeline_summary(result: RecognitionResult, *, stage_timings: dict[str, float]) -> dict[str, Any]:
+    ocr_debug = result.debug.get("ocr", {})
+    results_by_roi = ocr_debug.get("results_by_roi", {}) if isinstance(ocr_debug, dict) else {}
+    title_rois_with_text = [
+        roi_name
+        for roi_name, payload in results_by_roi.items()
+        if roi_name in TITLE_FIRST_ROIS and (payload.get("lines") or [])
+    ]
+    secondary_rois_with_text = [
+        roi_name
+        for roi_name, payload in results_by_roi.items()
+        if roi_name not in TITLE_FIRST_ROIS and roi_name not in VISUAL_ONLY_ROIS and (payload.get("lines") or [])
+    ]
+    used_secondary_ocr = stage_timings.get("secondary_ocr", 0.0) > 0
+    used_set_symbol_compare = result.debug.get("set_symbol", {}).get("used") is True
+    used_art_match_compare = result.debug.get("art_match", {}).get("used") is True
+    used_expected_bias = result.debug.get("expectation", {}).get("used") is True
+    used_confirmation_scoring = result.debug.get("confirmation", {}).get("used") is True
+    used_visual_small_pool = result.debug.get("small_pool_visual", {}).get("used") is True
+    used_split_full_fallback = "split_full" in secondary_rois_with_text
+
+    branches_fired: list[str] = []
+    if title_rois_with_text:
+        branches_fired.append("title_ocr")
+    if used_set_symbol_compare:
+        branches_fired.append("set_symbol_compare")
+    if used_art_match_compare:
+        branches_fired.append("art_match_compare")
+    if used_expected_bias:
+        branches_fired.append("expected_card_bias")
+    if used_confirmation_scoring:
+        branches_fired.append("confirmation_scoring")
+    if used_visual_small_pool:
+        branches_fired.append("visual_small_pool")
+    if used_secondary_ocr:
+        branches_fired.append("secondary_ocr")
+    if used_split_full_fallback:
+        branches_fired.append("split_full_fallback")
+    if result.failure_code == "deadline_exceeded":
+        branches_fired.append("deadline_exceeded")
+
+    resolution_path = "unknown"
+    if used_visual_small_pool:
+        resolution_path = "visual_small_pool"
+    elif used_secondary_ocr:
+        resolution_path = "secondary_ocr"
+    elif used_set_symbol_compare or used_art_match_compare:
+        resolution_path = "title_plus_visual"
+    elif title_rois_with_text:
+        resolution_path = "title_only"
+
+    return {
+        "resolution_path": resolution_path,
+        "active_title_roi": result.active_roi,
+        "title_rois_with_text": title_rois_with_text,
+        "secondary_rois_with_text": secondary_rois_with_text,
+        "used_secondary_ocr": used_secondary_ocr,
+        "used_set_symbol_compare": used_set_symbol_compare,
+        "used_art_match_compare": used_art_match_compare,
+        "used_expected_bias": used_expected_bias,
+        "used_confirmation_scoring": used_confirmation_scoring,
+        "used_visual_small_pool": used_visual_small_pool,
+        "used_split_full_fallback": used_split_full_fallback,
+        "branches_fired": branches_fired,
+    }
 
 
 def _derive_review_reason(
@@ -882,6 +978,7 @@ def _finalize_recognition_result(
         "deadline_used": deadline is not None,
         "exceeded": exceeded,
     }
+    result.pipeline_summary = _build_pipeline_summary(result, stage_timings=stage_timings)
     if not exceeded:
         return result
 
@@ -902,6 +999,7 @@ def _finalize_recognition_result(
     result.top_k_candidates = []
     result.failure_code = "deadline_exceeded"
     result.review_reason = "deadline_exceeded"
+    result.pipeline_summary = _build_pipeline_summary(result, stage_timings=stage_timings)
     return result
 
 

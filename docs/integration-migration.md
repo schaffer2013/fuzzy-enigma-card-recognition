@@ -11,6 +11,7 @@ Now, use first-class fields:
 - `result.requested_mode`
 - `result.effective_mode`
 - `result.mode_flags`
+- `result.pipeline_summary`
 - `result.failure_code`
 - `result.review_reason`
 
@@ -29,6 +30,7 @@ These fields are stable machine-readable contracts intended for routing, metrics
 
 - Read `result.requested_mode` and `result.effective_mode` directly
 - Use `result.mode_flags` for pool/expected-card/tracked-pool context
+- Use `result.pipeline_summary` for a concise branch summary of what actually fired
 - Route by `result.failure_code` / `result.review_reason`
 - Treat unknown codes as `review_required` and retain debug payload for diagnostics
 

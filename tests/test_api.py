@@ -1057,6 +1057,44 @@ def test_recognize_card_reevaluation_requires_expected_card(monkeypatch):
     assert result.confidence == 0.0
     assert result.failure_code == "missing_expected_card"
     assert result.review_reason == "missing_expected_card"
+    assert result.pipeline_summary["resolution_path"] == "precondition_failed"
+
+
+def test_recognize_card_populates_pipeline_summary(monkeypatch):
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Island", normalized_name="", set_code="M21", collector_number="264", layout="normal"),
+        ]
+    )
+
+    monkeypatch.setattr(
+        "card_engine.api.run_ocr",
+        lambda image, roi_label=None, *, crop_region=None: OCRResult(
+            lines=["Island"] if roi_label == "standard" else [],
+            confidence=0.95,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        ),
+    )
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr(
+        "card_engine.api.match_candidates",
+        lambda *args, **kwargs: [Candidate(name="Island", score=0.9, set_code="M21", collector_number="264", notes=["exact"])],
+    )
+    monkeypatch.setattr(
+        "card_engine.api.rerank_candidates_by_set_symbol",
+        lambda candidates, **kwargs: type("Result", (), {"candidates": list(candidates), "debug": {"used": False}})(),
+    )
+    monkeypatch.setattr(
+        "card_engine.api.rerank_candidates_by_art",
+        lambda candidates, **kwargs: type("Result", (), {"candidates": list(candidates), "debug": {"used": False}})(),
+    )
+
+    result = recognize_card(DummyImage())
+
+    assert result.pipeline_summary["resolution_path"] == "title_only"
+    assert result.pipeline_summary["used_secondary_ocr"] is False
+    assert result.pipeline_summary["title_rois_with_text"] == ["standard"]
+    assert result.pipeline_summary["branches_fired"] == ["title_ocr"]
 
 
 def test_recognize_card_reevaluation_can_promote_close_expected_card(monkeypatch):
@@ -1182,6 +1220,50 @@ def test_recognize_card_confirmation_scores_expected_printing_directly(monkeypat
     assert result.debug["confirmation"]["matches_expected"] is True
     assert result.debug["confirmation"]["expected_rank"] == 1
     assert result.confidence > 0.9
+
+
+def test_recognize_card_confirmation_accepts_expected_scryfall_id(monkeypatch):
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        return OCRResult(
+            lines=["Island"] if roi_label == "standard" else [],
+            confidence=0.95,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    full_catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Island", normalized_name="", scryfall_id="island-m21", oracle_id="oracle-island", set_code="M21", collector_number="264", layout="normal"),
+            CatalogRecord(name="Island", normalized_name="", scryfall_id="island-eld", oracle_id="oracle-island", set_code="ELD", collector_number="254", layout="normal"),
+        ]
+    )
+
+    def fake_match_candidates(*args, **kwargs):
+        return [
+            Candidate(name="Island", score=0.89, scryfall_id="island-m21", oracle_id="oracle-island", set_code="M21", collector_number="264", notes=["exact", "set_symbol_match"]),
+            Candidate(name="Island", score=0.85, scryfall_id="island-eld", oracle_id="oracle-island", set_code="ELD", collector_number="254", notes=["exact"]),
+        ]
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: full_catalog)
+    monkeypatch.setattr("card_engine.api.match_candidates", fake_match_candidates)
+    monkeypatch.setattr(
+        "card_engine.api.rerank_candidates_by_set_symbol",
+        lambda candidates, **kwargs: type("Result", (), {"candidates": list(candidates), "debug": {"used": False}})(),
+    )
+    monkeypatch.setattr(
+        "card_engine.api.rerank_candidates_by_art",
+        lambda candidates, **kwargs: type("Result", (), {"candidates": list(candidates), "debug": {"used": False}})(),
+    )
+
+    result = recognize_card(
+        DummyImage(),
+        mode="confirmation",
+        expected_card=ExpectedCard(scryfall_id="ISLAND-M21"),
+    )
+
+    assert result.best_name == "Island"
+    assert result.debug["confirmation"]["matches_expected"] is True
+    assert result.debug["confirmation"]["expected_scryfall_id"] == "ISLAND-M21"
 
 
 def test_recognize_card_sets_expected_card_contradicted_review_reason(monkeypatch):

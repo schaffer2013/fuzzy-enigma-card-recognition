@@ -204,7 +204,7 @@ Tracked-pool/session hooks are also available:
 from card_engine.operational_modes import ExpectedCard
 
 recognizer.add_expected_card(
-    ExpectedCard(name="Island", set_code="M21", collector_number="264")
+    ExpectedCard(scryfall_id="example-printing-id", name="Island")
 )
 output = recognizer.recognize_top_card(frame, mode="small_pool")
 pool_entries = recognizer.get_tracked_pool_entries()
@@ -218,6 +218,15 @@ Each tracked-pool entry now includes:
 - `oracle_id`
 - `set_code`
 - `collector_number`
+
+Preferred expected-card contract:
+
+- `scryfall_id` for exact-printing expectations
+- `oracle_id` for grouped same-card expectations
+- `name` only when the parent does not yet have identifiers
+
+Detailed adapter output also includes `pipeline_summary` so parent repos can
+see which major branches fired without scraping `debug`.
 
 Use these modes as a starting point:
 

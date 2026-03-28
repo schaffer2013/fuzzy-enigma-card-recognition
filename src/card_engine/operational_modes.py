@@ -18,9 +18,22 @@ VALID_RECOGNITION_MODES: tuple[RecognitionMode, ...] = (
 
 @dataclass(frozen=True)
 class ExpectedCard:
-    name: str
+    scryfall_id: str | None = None
+    oracle_id: str | None = None
+    name: str | None = None
     set_code: str | None = None
     collector_number: str | None = None
+
+    def __post_init__(self) -> None:
+        if not any(
+            value
+            for value in (
+                self.scryfall_id,
+                self.oracle_id,
+                self.name,
+            )
+        ):
+            raise ValueError("ExpectedCard requires at least one of scryfall_id, oracle_id, or name.")
 
 
 @dataclass(frozen=True)
@@ -130,13 +143,17 @@ def normalize_recognition_mode(mode: str | None) -> RecognitionMode:
 
 def expected_card_from_values(
     *,
-    name: str | None,
+    scryfall_id: str | None = None,
+    oracle_id: str | None = None,
+    name: str | None = None,
     set_code: str | None = None,
     collector_number: str | None = None,
 ) -> ExpectedCard | None:
-    if not name:
+    if not any((scryfall_id, oracle_id, name)):
         return None
     return ExpectedCard(
+        scryfall_id=scryfall_id,
+        oracle_id=oracle_id,
         name=name,
         set_code=set_code,
         collector_number=collector_number,
@@ -153,17 +170,17 @@ def _resolve_constrained_catalog(
         return candidate_pool
     if isinstance(candidate_pool, CandidatePool):
         return candidate_pool.to_catalog()
-    if expected_card is None or not expected_card.name:
+    if expected_card is None:
         raise ModePreconditionError(
             "missing_candidate_pool_or_expected_card",
             "Constrained modes require candidate_pool or expected_card.",
         )
 
-    same_name_records = full_catalog.exact_lookup(expected_card.name)
-    if not same_name_records:
+    expected_records = _resolve_expected_records(full_catalog, expected_card)
+    if not expected_records:
         raise ModePreconditionError(
             "expected_card_not_found",
-            f"No catalog records found for expected card: {expected_card.name}",
+            f"No catalog records found for expected card: {_expected_card_label(expected_card)}",
         )
     return LocalCatalogIndex.from_records(
         [
@@ -181,7 +198,7 @@ def _resolve_constrained_catalog(
                 image_uri=record.image_uri,
                 aliases=list(record.aliases or []),
             )
-            for record in same_name_records
+            for record in expected_records
         ]
     )
 
@@ -204,7 +221,7 @@ def apply_expected_mode_bias(
         return ranked, {
             "used": False,
             "reason": "expected_not_in_candidates",
-            "expected_name": expected_card.name,
+            **_expected_card_payload(expected_card),
         }
 
     expected_candidate = ranked[expected_index]
@@ -229,9 +246,7 @@ def apply_expected_mode_bias(
 
     return ranked, {
         "used": True,
-        "expected_name": expected_card.name,
-        "expected_set_code": expected_card.set_code,
-        "expected_collector_number": expected_card.collector_number,
+        **_expected_card_payload(expected_card),
         "expected_rank": next(
             index + 1
             for index, candidate in enumerate(ranked)
@@ -266,9 +281,7 @@ def score_confirmation_against_expected(
             "used": True,
             "matches_expected": False,
             "expected_present": False,
-            "expected_name": expected_card.name,
-            "expected_set_code": expected_card.set_code,
-            "expected_collector_number": expected_card.collector_number,
+            **_expected_card_payload(expected_card),
             "strongest_contradiction": _candidate_payload(contradiction) if contradiction else None,
         }
 
@@ -305,9 +318,7 @@ def score_confirmation_against_expected(
         "used": True,
         "matches_expected": expected_index == 0,
         "expected_present": True,
-        "expected_name": expected_card.name,
-        "expected_set_code": expected_card.set_code,
-        "expected_collector_number": expected_card.collector_number,
+        **_expected_card_payload(expected_card),
         "expected_rank": expected_index + 1,
         "expected_score": expected_candidate.score,
         "best_other_score": best_other_score,
@@ -318,7 +329,11 @@ def score_confirmation_against_expected(
 
 
 def _candidate_matches_expected(candidate: Candidate, expected_card: ExpectedCard) -> bool:
-    if candidate.name != expected_card.name:
+    if expected_card.scryfall_id is not None:
+        return (candidate.scryfall_id or "").lower() == expected_card.scryfall_id.lower()
+    if expected_card.oracle_id is not None and (candidate.oracle_id or "").lower() != expected_card.oracle_id.lower():
+        return False
+    if expected_card.name is not None and candidate.name != expected_card.name:
         return False
     if expected_card.set_code is not None and (candidate.set_code or "").lower() != expected_card.set_code.lower():
         return False
@@ -384,3 +399,58 @@ def _is_distinct_printing(left: Candidate, right: Candidate) -> bool:
         left.set_code != right.set_code
         or left.collector_number != right.collector_number
     )
+
+
+def _resolve_expected_records(
+    full_catalog: LocalCatalogIndex,
+    expected_card: ExpectedCard,
+) -> list[CatalogRecord]:
+    if expected_card.scryfall_id:
+        record = full_catalog.find_record_by_scryfall_id(expected_card.scryfall_id)
+        return [record] if record is not None else []
+
+    if expected_card.oracle_id:
+        records = full_catalog.records_for_oracle_id(expected_card.oracle_id)
+    elif expected_card.name:
+        records = full_catalog.exact_lookup(expected_card.name)
+    else:
+        records = []
+
+    if not records:
+        return []
+
+    filtered = records
+    if expected_card.set_code is not None:
+        filtered = [
+            record
+            for record in filtered
+            if (record.set_code or "").lower() == expected_card.set_code.lower()
+        ]
+    if expected_card.collector_number is not None:
+        normalized_collector = str(expected_card.collector_number).lower()
+        filtered = [
+            record
+            for record in filtered
+            if str(record.collector_number or "").lower() == normalized_collector
+        ]
+    return filtered
+
+
+def _expected_card_payload(expected_card: ExpectedCard) -> dict:
+    return {
+        "expected_name": expected_card.name,
+        "expected_scryfall_id": expected_card.scryfall_id,
+        "expected_oracle_id": expected_card.oracle_id,
+        "expected_set_code": expected_card.set_code,
+        "expected_collector_number": expected_card.collector_number,
+    }
+
+
+def _expected_card_label(expected_card: ExpectedCard) -> str:
+    if expected_card.scryfall_id:
+        return expected_card.scryfall_id
+    if expected_card.oracle_id:
+        return expected_card.oracle_id
+    if expected_card.name:
+        return expected_card.name
+    return "<unknown>"

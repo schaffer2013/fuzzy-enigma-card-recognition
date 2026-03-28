@@ -58,3 +58,40 @@ def test_resolve_operational_mode_configures_real_reevaluation_mode():
     assert resolved.requested_mode == "reevaluation"
     assert resolved.effective_mode == "reevaluation"
     assert "disagreement recovery" in resolved.implementation_note
+
+
+def test_resolve_operational_mode_builds_small_pool_from_expected_scryfall_id():
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Island", normalized_name="", scryfall_id="island-m21", oracle_id="oracle-island", set_code="M21", collector_number="264", layout="normal"),
+            CatalogRecord(name="Island", normalized_name="", scryfall_id="island-eld", oracle_id="oracle-island", set_code="ELD", collector_number="254", layout="normal"),
+        ]
+    )
+
+    resolved = resolve_operational_mode(
+        catalog,
+        mode="small_pool",
+        expected_card=ExpectedCard(scryfall_id="ISLAND-M21"),
+    )
+
+    assert len(resolved.catalog.records) == 1
+    assert resolved.catalog.records[0].scryfall_id == "island-m21"
+
+
+def test_resolve_operational_mode_builds_small_pool_from_expected_oracle_id():
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Island", normalized_name="", scryfall_id="island-m21", oracle_id="oracle-island", set_code="M21", collector_number="264", layout="normal"),
+            CatalogRecord(name="Island", normalized_name="", scryfall_id="island-eld", oracle_id="oracle-island", set_code="ELD", collector_number="254", layout="normal"),
+            CatalogRecord(name="Forest", normalized_name="", scryfall_id="forest-m21", oracle_id="oracle-forest", set_code="M21", collector_number="274", layout="normal"),
+        ]
+    )
+
+    resolved = resolve_operational_mode(
+        catalog,
+        mode="small_pool",
+        expected_card=ExpectedCard(oracle_id="ORACLE-ISLAND"),
+    )
+
+    assert len(resolved.catalog.records) == 2
+    assert {record.name for record in resolved.catalog.records} == {"Island"}

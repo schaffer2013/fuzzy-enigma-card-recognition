@@ -130,6 +130,20 @@ class RecognitionSession:
                         "used_tracked_pool": False,
                         "used_visual_small_pool": False,
                     },
+                    pipeline_summary={
+                        "resolution_path": "missing_tracked_pool",
+                        "active_title_roi": None,
+                        "title_rois_with_text": [],
+                        "secondary_rois_with_text": [],
+                        "used_secondary_ocr": False,
+                        "used_set_symbol_compare": False,
+                        "used_art_match_compare": False,
+                        "used_expected_bias": False,
+                        "used_confirmation_scoring": False,
+                        "used_visual_small_pool": False,
+                        "used_split_full_fallback": False,
+                        "branches_fired": [],
+                    },
                     failure_code="missing_tracked_pool",
                     review_reason="missing_tracked_pool",
                     debug={
@@ -187,11 +201,28 @@ class RecognitionSession:
         return True
 
     def add_expected_card(self, expected_card: ExpectedCard) -> bool:
-        record = self._load_catalog().find_record(
-            name=expected_card.name,
-            set_code=expected_card.set_code,
-            collector_number=expected_card.collector_number,
-        )
+        catalog = self._load_catalog()
+        record = None
+        if expected_card.scryfall_id:
+            record = catalog.find_record_by_scryfall_id(expected_card.scryfall_id)
+        elif expected_card.oracle_id:
+            oracle_records = catalog.records_for_oracle_id(expected_card.oracle_id)
+            if len(oracle_records) == 1:
+                record = oracle_records[0]
+            else:
+                for candidate_record in oracle_records:
+                    if expected_card.set_code is not None and (candidate_record.set_code or "").lower() != expected_card.set_code.lower():
+                        continue
+                    if expected_card.collector_number is not None and str(candidate_record.collector_number or "").lower() != str(expected_card.collector_number).lower():
+                        continue
+                    record = candidate_record
+                    break
+        elif expected_card.name:
+            record = catalog.find_record(
+                name=expected_card.name,
+                set_code=expected_card.set_code,
+                collector_number=expected_card.collector_number,
+            )
         if record is None:
             return False
         self._tracked_pool.add_record(record)

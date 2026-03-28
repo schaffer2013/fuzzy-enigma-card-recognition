@@ -129,3 +129,33 @@ def test_search_name_fuzzy_scans_oracle_groups_before_printing_expansion():
     assert matches
     assert matches[0].record.name == "Elspeth, Storm Slayer"
     assert len([match for match in matches if match.record.name == "Elspeth, Storm Slayer"]) == 1
+
+
+def test_find_record_by_scryfall_id_and_oracle_group():
+    index = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(
+                name="Opt",
+                normalized_name="",
+                scryfall_id="opt-1",
+                oracle_id="oracle-opt",
+                set_code="XLN",
+                collector_number="65",
+            ),
+            CatalogRecord(
+                name="Opt",
+                normalized_name="",
+                scryfall_id="opt-2",
+                oracle_id="oracle-opt",
+                set_code="M11",
+                collector_number="73",
+            ),
+        ]
+    )
+
+    record = index.find_record_by_scryfall_id("OPT-1")
+    oracle_records = index.records_for_oracle_id("ORACLE-OPT")
+
+    assert record is not None
+    assert record.set_code == "XLN"
+    assert len(oracle_records) == 2

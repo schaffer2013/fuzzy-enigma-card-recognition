@@ -65,10 +65,16 @@ class LocalCatalogIndex:
         ]
         self._by_normalized_name: dict[str, list[CatalogRecord]] = {}
         self._by_normalized_alias: dict[str, list[CatalogRecord]] = {}
+        self._by_scryfall_id: dict[str, CatalogRecord] = {}
+        self._by_oracle_id: dict[str, list[CatalogRecord]] = {}
         self._records_by_oracle_key: dict[str, list[CatalogRecord]] = {}
         self._oracle_search_records: list[tuple[str, CatalogRecord]] = []
         for record in self.records:
             self._by_normalized_name.setdefault(record.normalized_name, []).append(record)
+            if record.scryfall_id:
+                self._by_scryfall_id.setdefault(record.scryfall_id.lower(), record)
+            if record.oracle_id:
+                self._by_oracle_id.setdefault(record.oracle_id.lower(), []).append(record)
             for alias in record.aliases or []:
                 normalized_alias = normalize_text(alias)
                 self._by_normalized_alias.setdefault(normalized_alias, []).append(record)
@@ -246,6 +252,18 @@ class LocalCatalogIndex:
                 continue
             return record
         return None
+
+    def find_record_by_scryfall_id(self, scryfall_id: str) -> CatalogRecord | None:
+        normalized_id = str(scryfall_id or "").strip().lower()
+        if not normalized_id:
+            return None
+        return self._by_scryfall_id.get(normalized_id)
+
+    def records_for_oracle_id(self, oracle_id: str) -> list[CatalogRecord]:
+        normalized_id = str(oracle_id or "").strip().lower()
+        if not normalized_id:
+            return []
+        return list(self._by_oracle_id.get(normalized_id, []))
 
     def _build_oracle_search_records(self) -> list[tuple[str, CatalogRecord]]:
         search_records: list[tuple[str, CatalogRecord]] = []

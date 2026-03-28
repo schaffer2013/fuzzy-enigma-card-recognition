@@ -8,9 +8,20 @@ This document defines stable parent-facing controls for operational-mode recogni
 
 `recognize_card(...)`, `RecognitionSession.recognize(...)`, and `SortingMachineRecognizer.recognize_top_card(...)` support passing `expected_card` with:
 
-- `name` (required for expected-card semantics)
+- `scryfall_id` (preferred exact-printing identifier)
+- `oracle_id` (preferred grouped same-card identifier across printings)
+- `name` (optional fallback when parent only has a human-readable card name)
 - `set_code` (optional printing refinement)
 - `collector_number` (optional printing refinement)
+
+Parent-facing recommendation:
+
+- pass `scryfall_id` when the parent already knows the exact printing
+- pass `oracle_id` when the parent wants same-card grouping across printings
+- only rely on `name` when identifiers are not yet available
+
+Identifier resolution is now preferred ahead of name matching. When both IDs and
+name are provided, the identifier path wins and the name acts as extra context.
 
 Mode expectations:
 
@@ -31,6 +42,29 @@ Mode flags expose these decisions via:
 - `mode_flags.has_candidate_pool`
 - `mode_flags.used_tracked_pool`
 - `mode_flags.used_visual_small_pool`
+
+## Pipeline summary
+
+Recognition results now also expose a concise top-level `pipeline_summary`
+alongside `mode_flags` and `debug`.
+
+Stable fields include:
+
+- `resolution_path`
+- `active_title_roi`
+- `title_rois_with_text`
+- `secondary_rois_with_text`
+- `used_secondary_ocr`
+- `used_set_symbol_compare`
+- `used_art_match_compare`
+- `used_expected_bias`
+- `used_confirmation_scoring`
+- `used_visual_small_pool`
+- `used_split_full_fallback`
+- `branches_fired`
+
+Use `pipeline_summary` for parent-side routing and metrics first, then retain
+`debug` as the deeper diagnostic payload.
 
 ## Offline catalog query API
 

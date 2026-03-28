@@ -25,6 +25,7 @@ class SortingMachineDetailedOutput(SortingMachineOutput):
     requested_mode: str | None
     effective_mode: str | None
     mode_flags: dict[str, bool]
+    pipeline_summary: dict[str, Any]
     failure_code: str | None
     review_reason: str | None
     debug: dict[str, Any]
@@ -78,6 +79,7 @@ class SortingMachineRecognizer:
             requested_mode=result.requested_mode,
             effective_mode=result.effective_mode,
             mode_flags=dict(result.mode_flags),
+            pipeline_summary=dict(result.pipeline_summary),
             failure_code=result.failure_code,
             review_reason=result.review_reason,
             debug=dict(result.debug),

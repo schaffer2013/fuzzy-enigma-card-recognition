@@ -35,6 +35,7 @@ class RecognitionResult:
     requested_mode: str | None = None
     effective_mode: str | None = None
     mode_flags: dict[str, bool] = field(default_factory=dict)
+    pipeline_summary: dict[str, Any] = field(default_factory=dict)
     failure_code: str | None = None
     review_reason: str | None = None
     debug: dict[str, Any] = field(default_factory=dict)

@@ -260,7 +260,7 @@ from card_engine.operational_modes import CandidatePool, ExpectedCard
 
 result = recognize_card(frame, mode="greenfield")
 
-expected = ExpectedCard(name="Lightning Bolt", set_code="M11", collector_number="146")
+expected = ExpectedCard(scryfall_id="example-printing-id", name="Lightning Bolt")
 result = recognize_card(frame, mode="reevaluation", expected_card=expected)
 
 pool = CandidatePool.from_records(catalog.exact_lookup("Island"))
@@ -290,7 +290,7 @@ result = session.recognize(frame, mode="greenfield")
 pool = session.get_tracked_pool()
 
 result = session.recognize(frame, mode="small_pool")
-session.add_expected_card(ExpectedCard(name="Island", set_code="M21", collector_number="264"))
+session.add_expected_card(ExpectedCard(scryfall_id="example-printing-id", name="Island"))
 session.clear_tracked_pool()
 ```
 
@@ -313,7 +313,7 @@ output = recognizer.recognize_top_card(frame)
 print(output.card_name, output.confidence)
 
 recognizer.add_expected_card(
-    ExpectedCard(name="Island", set_code="M21", collector_number="264")
+    ExpectedCard(scryfall_id="example-printing-id", name="Island")
 )
 pool_entries = recognizer.get_tracked_pool_entries()
 output = recognizer.recognize_top_card(frame, mode="small_pool")
@@ -332,7 +332,7 @@ output = recognizer.recognize_top_card(frame, mode="greenfield")
 print(output.card_name, output.confidence)
 
 recognizer.add_expected_card(
-    ExpectedCard(name="Island", set_code="M21", collector_number="264")
+    ExpectedCard(scryfall_id="example-printing-id", name="Island")
 )
 pool_entries = recognizer.get_tracked_pool_entries()
 output = recognizer.recognize_top_card(frame, mode="small_pool")
@@ -364,6 +364,8 @@ When the parent can consume both Scryfall identifiers:
 
 - use `scryfall_id` for exact printing identity
 - use `oracle_id` for grouping same-card printings across sets
+- pass `ExpectedCard` identifiers in that same order of preference:
+  `scryfall_id` first, then `oracle_id`, then `name`
 
 Tracked-pool entries now also preserve those identifiers, so parent-side pool
 inspection can work with exact-printing IDs or Oracle-group IDs directly.

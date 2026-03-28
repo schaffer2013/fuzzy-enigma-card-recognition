@@ -117,6 +117,7 @@ def test_adapter_can_return_detailed_output(monkeypatch):
                 ],
                 active_roi="standard",
                 tried_rois=["standard", "split_left"],
+                pipeline_summary={"resolution_path": "title_only", "branches_fired": ["title_ocr"]},
                 debug={"mode": {"effective": "greenfield"}},
             )
 
@@ -141,3 +142,4 @@ def test_adapter_can_return_detailed_output(monkeypatch):
     assert output.requested_mode is None
     assert output.effective_mode is None
     assert output.mode_flags == {}
+    assert output.pipeline_summary["resolution_path"] == "title_only"

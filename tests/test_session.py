@@ -208,6 +208,30 @@ def test_session_clear_tracked_pool_resets_entries():
     assert session.get_tracked_pool_entries() == []
 
 
+def test_session_add_expected_card_accepts_scryfall_id():
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Island", normalized_name="", scryfall_id="island-m21", oracle_id="oracle-island", set_code="M21", collector_number="264", layout="normal"),
+        ]
+    )
+    session = RecognitionSession(catalog=catalog)
+
+    assert session.add_expected_card(ExpectedCard(scryfall_id="ISLAND-M21")) is True
+    assert session.get_tracked_pool_entries()[0].scryfall_id == "island-m21"
+
+
+def test_session_add_expected_card_accepts_oracle_id():
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Island", normalized_name="", scryfall_id="island-m21", oracle_id="oracle-island", set_code="M21", collector_number="264", layout="normal"),
+        ]
+    )
+    session = RecognitionSession(catalog=catalog)
+
+    assert session.add_expected_card(ExpectedCard(oracle_id="ORACLE-ISLAND")) is True
+    assert session.get_tracked_pool_entries()[0].oracle_id == "oracle-island"
+
+
 def test_session_small_pool_requires_available_pool(monkeypatch):
     catalog = LocalCatalogIndex.from_records(
         [
@@ -223,3 +247,4 @@ def test_session_small_pool_requires_available_pool(monkeypatch):
     assert result.confidence == 0.0
     assert result.failure_code == "missing_tracked_pool"
     assert result.review_reason == "missing_tracked_pool"
+    assert result.pipeline_summary["resolution_path"] == "missing_tracked_pool"

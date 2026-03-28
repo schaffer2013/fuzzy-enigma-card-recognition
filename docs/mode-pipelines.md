@@ -11,6 +11,10 @@ It is intentionally higher level than the implementation, but it follows the
 current engine behavior closely enough to be useful for parent-repo design and
 benchmark interpretation.
 
+For parent-side routing, the compact machine-readable counterpart to this
+document is `result.pipeline_summary`. That top-level field reports which major
+branches fired without requiring the parent to scrape nested `debug` payloads.
+
 ## Shared Pipeline
 
 Every mode starts with the same broad stages:
