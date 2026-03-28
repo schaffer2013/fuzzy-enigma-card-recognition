@@ -3,7 +3,7 @@ import time
 
 import numpy
 
-from card_engine.api import recognize_card
+from card_engine.api import _should_use_split_full_fallback, recognize_card
 from card_engine.catalog.local_index import CatalogRecord, LocalCatalogIndex
 from card_engine.config import EngineConfig
 from card_engine.image_types import EditableLoadedImage
@@ -381,6 +381,25 @@ def test_recognize_card_skips_split_full_when_primary_split_title_is_exact(monke
     assert result.best_name == "Wear // Tear"
     assert "split_full" not in seen_roi_labels
     assert seen_roi_labels[:2] == ["planar_title", "planar_title"]
+
+
+def test_split_full_fallback_is_kept_when_primary_exact_split_title_disagrees():
+    should_retry = _should_use_split_full_fallback(
+        layout_hint="split",
+        results_by_roi={
+            "planar_title": {
+                "lines": ["Assure", "Assemblo"],
+                "confidence": 0.98,
+            }
+        },
+        candidates=[
+            Candidate(name="Bind // Liberate", score=0.95, set_code="CMB1", notes=["exact"]),
+            Candidate(name="Assure // Assemble", score=0.91, set_code="GRN", notes=["exact"]),
+        ],
+        confidence=0.95,
+    )
+
+    assert should_retry is True
 
 
 def test_recognize_card_keeps_split_full_when_primary_split_title_is_weak(monkeypatch):

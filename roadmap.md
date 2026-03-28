@@ -632,9 +632,9 @@ What is effectively done today:
 
 Recommended next step:
 
-- Continue the immediate split-family hardening work by treating split layouts
-  as multiple operational families instead of one global path, with latency
-  work now taking priority over raw correctness for the `room` family.
+- Treat the broad split-family hardening pass as mostly complete and focus the
+  next split work on long-tail promotional/nonstandard printings plus latency
+  cleanup, rather than on baseline family correctness.
 
 ### Implementation Sequencing Adjustment
 

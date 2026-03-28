@@ -106,3 +106,19 @@
 - Next focus:
   1. benchmark the `classic_split` family on the current branch with the corrected benchmark budget
   2. use that result to choose the next split-family latency/correctness target
+## 2026-03-27 12:18 PDT
+- Started a new branch: `feature/classic-split-recovery`.
+- Benchmarked the `classic_split` family (`134` fixtures) under the corrected benchmark deadline policy.
+- First pass showed only two remaining open-ended name misses, both narrow `Assure // Assemble` / `Bind // Liberate` style failures caused by split-title query ordering and an over-eager split-full skip gate.
+- Fixes added:
+  - split-title query generation now tries both face orders for split-title fragments
+  - the split-full skip gate now requires the primary split-title tokens to actually agree with the candidate before suppressing the whole-card rescue path
+- Validation:
+  - direct spot checks fixed `Assure // Assemble` and `Bind // Liberate`
+  - `pytest tests/test_api.py tests/test_matcher.py -q`
+- Current focused split-family results on this branch:
+  - `classic_split` open-ended rerun (`greenfield`, `reevaluation`): `1.000` top-1 in both modes
+  - `fuse` family full rerun (`32` fixtures): `1.000` top-1 across all four modes
+  - `multi_split` family full rerun (`5` fixtures): `1.000` top-1 across all four modes
+- Combined with the earlier room and aftermath work, the major split families are now in good shape on current code.
+- Remaining split work should be treated as long-tail cleanup and latency tuning, not broad family-level correctness repair.

@@ -50,8 +50,17 @@ Milestone 9 closeout status:
 
 Still ahead:
 
-- split-card and nonstandard-title fallback OCR
+- split-family long-tail polish for odd promotional and nonstandard printings
 - deeper mode/output polish for parent workflows
+
+Recent split-layout validation highlights:
+
+- `room`: `1.000` top-1 across all four modes, under the 20-second live budget
+- `classic_split`: `1.000` top-1 in `greenfield` and `reevaluation` on the
+  current focused rerun, with `small_pool` and `confirmation` already at
+  `1.000`
+- `fuse`: `1.000` top-1 across all four modes
+- `multi_split`: `1.000` top-1 across all four modes
 
 See [roadmap.md](roadmap.md) for the planned milestones and
 [docs/milestone9-closeout.md](docs/milestone9-closeout.md) for the measured

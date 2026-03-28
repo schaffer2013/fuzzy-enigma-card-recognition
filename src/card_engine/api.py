@@ -791,8 +791,6 @@ def _should_use_split_full_fallback(
         return False
     if "exact" in top_notes and confidence >= 0.88 and score_gap >= 0.08:
         return False
-    if title_quality >= (0.82, 6.0, -2.0) and "exact" in top_notes:
-        return False
     if confidence >= 0.94 and score_gap >= 0.12:
         return False
     return True

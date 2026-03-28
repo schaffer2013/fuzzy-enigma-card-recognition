@@ -100,6 +100,11 @@ and it can stop the title-first pass early when `planar_title` is already
 strong enough that running the horizontal `standard` title crop would just add
 latency.
 
+For split layouts specifically, the title-query builder also tries both face
+orders when OCR captures the two split names in reversed reading order. That
+helps open-ended recognition recover cards such as `Assure // Assemble` and
+`Bind // Liberate` without needing layout-specific hardcoded card lists.
+
 ## Greenfield
 
 `greenfield` is the open-ended recognition path.
@@ -120,7 +125,8 @@ Decision shape:
    If yes, score and stop.
 2. For split layouts, if the narrow title strip is weak, try rotated whole-card
    fallback OCR before generic support ROIs. If the first split-title read is
-   already a clean exact hit, skip that whole-card rescue path.
+   already a clean exact hit and its token coverage actually agrees with the
+   candidate, skip that whole-card rescue path.
 3. If not, can the set symbol or art ROI break the tie?
    If yes, score and stop.
 4. If not, run the slower supporting ROIs and rerank.
