@@ -48,6 +48,12 @@ class ResolvedOperationalMode:
     implementation_note: str | None = None
 
 
+class ModePreconditionError(ValueError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
 REEVALUATION_PROMOTION_WINDOW = 0.08
 REEVALUATION_SUPPORT_PROMOTION_WINDOW = 0.16
 CONFIRMATION_MAX_MARGIN_BONUS = 0.12
@@ -85,7 +91,10 @@ def resolve_operational_mode(
         )
 
     if expected_card is None:
-        raise ValueError(f"Mode '{resolved_mode}' requires an expected_card.")
+        raise ModePreconditionError(
+            "missing_expected_card",
+            f"Mode '{resolved_mode}' requires an expected_card.",
+        )
 
     if resolved_mode == "reevaluation":
         return ResolvedOperationalMode(
@@ -145,11 +154,17 @@ def _resolve_constrained_catalog(
     if isinstance(candidate_pool, CandidatePool):
         return candidate_pool.to_catalog()
     if expected_card is None or not expected_card.name:
-        raise ValueError("Constrained modes require candidate_pool or expected_card.")
+        raise ModePreconditionError(
+            "missing_candidate_pool_or_expected_card",
+            "Constrained modes require candidate_pool or expected_card.",
+        )
 
     same_name_records = full_catalog.exact_lookup(expected_card.name)
     if not same_name_records:
-        raise ValueError(f"No catalog records found for expected card: {expected_card.name}")
+        raise ModePreconditionError(
+            "expected_card_not_found",
+            f"No catalog records found for expected card: {expected_card.name}",
+        )
     return LocalCatalogIndex.from_records(
         [
             CatalogRecord(

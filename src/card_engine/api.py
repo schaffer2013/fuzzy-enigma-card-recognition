@@ -22,6 +22,7 @@ from .ocr import run_ocr
 from .operational_modes import (
     CandidatePool,
     ExpectedCard,
+    ModePreconditionError,
     apply_expected_mode_bias,
     resolve_operational_mode,
     score_confirmation_against_expected,
@@ -64,16 +65,61 @@ def recognize_card(
     else:
         full_catalog = catalog
         stage_timings["load_catalog"] = 0.0
-    resolved_mode = resolve_operational_mode(
-        full_catalog,
-        mode=mode,
-        candidate_pool=candidate_pool,
-        expected_card=expected_card,
-    )
+    try:
+        resolved_mode = resolve_operational_mode(
+            full_catalog,
+            mode=mode,
+            candidate_pool=candidate_pool,
+            expected_card=expected_card,
+        )
+    except ModePreconditionError as exc:
+        stage_timings["total"] = round(time.monotonic() - start_time, 4)
+        return RecognitionResult(
+            bbox=None,
+            best_name=None,
+            confidence=0.0,
+            requested_mode=mode or "default",
+            effective_mode="default",
+            mode_flags={
+                "has_expected_card": expected_card is not None,
+                "has_candidate_pool": candidate_pool is not None,
+                "used_tracked_pool": False,
+                "used_visual_small_pool": False,
+            },
+            failure_code=exc.code,
+            review_reason=exc.code,
+            debug={"mode": {"requested": mode or "default", "effective": "default"}, "timings": stage_timings},
+        )
     catalog = resolved_mode.catalog
     skip_secondary_ocr = skip_secondary_ocr or resolved_mode.skip_secondary_ocr
     _notify(progress_callback, "Detecting card bounds...")
-    detection = _timed_call(stage_timings, "detect_card", detect_card, prepared_image)
+    try:
+        detection = _timed_call(stage_timings, "detect_card", detect_card, prepared_image)
+    except Exception as exc:
+        stage_timings["total"] = round(time.monotonic() - start_time, 4)
+        return RecognitionResult(
+            bbox=None,
+            best_name=None,
+            confidence=0.0,
+            requested_mode=resolved_mode.requested_mode,
+            effective_mode=resolved_mode.effective_mode,
+            mode_flags=_mode_flags(
+                expected_card=expected_card,
+                candidate_pool=candidate_pool,
+                used_tracked_pool=False,
+                used_visual_small_pool=False,
+            ),
+            failure_code="detection_failed",
+            review_reason="detection_failed",
+            debug={
+                "mode": {
+                    "requested": resolved_mode.requested_mode,
+                    "effective": resolved_mode.effective_mode,
+                },
+                "detection": {"error": str(exc)},
+                "timings": stage_timings,
+            },
+        )
     _persist_saved_detection(prepared_image, detection)
     layout_hint = getattr(prepared_image, "layout_hint", getattr(prepared_image, "layout", "normal"))
     tried_rois = resolve_roi_groups_for_layout(
@@ -128,6 +174,14 @@ def recognize_card(
                     top_k_candidates=visual_small_pool_result["candidates"][: config.candidate_count],
                     active_roi="art_match",
                     tried_rois=tried_rois,
+                    requested_mode=resolved_mode.requested_mode,
+                    effective_mode=resolved_mode.effective_mode,
+                    mode_flags=_mode_flags(
+                        expected_card=expected_card,
+                        candidate_pool=candidate_pool,
+                        used_tracked_pool=False,
+                        used_visual_small_pool=True,
+                    ),
                     debug={
                         "image": {
                             "source": str(getattr(prepared_image, "path", "")) or type(prepared_image).__name__,
@@ -395,6 +449,16 @@ def recognize_card(
             _notify(progress_callback, "Skipping secondary OCR after confident title and visual tie-break match...")
     _notify(progress_callback, f"Recognition complete: {best_name or 'no match'}")
     stage_timings["total"] = round(time.monotonic() - start_time, 4)
+    review_reason = _derive_review_reason(
+        best_name=best_name,
+        confidence=confidence,
+        ocr_lines=ocr.lines,
+        ocr_confidence=ocr.confidence,
+        candidates=candidates,
+        requested_mode=resolved_mode.requested_mode,
+        expected_card=expected_card,
+        confirmation_debug=confirmation_debug,
+    )
 
     return _finalize_recognition_result(
         RecognitionResult(
@@ -405,6 +469,16 @@ def recognize_card(
             top_k_candidates=candidates[: config.candidate_count],
             active_roi=active_roi,
             tried_rois=tried_rois,
+            requested_mode=resolved_mode.requested_mode,
+            effective_mode=resolved_mode.effective_mode,
+            mode_flags=_mode_flags(
+                expected_card=expected_card,
+                candidate_pool=candidate_pool,
+                used_tracked_pool=False,
+                used_visual_small_pool=visual_small_pool_debug.get("used") is True,
+            ),
+            failure_code=review_reason,
+            review_reason=review_reason,
             debug={
                 "image": {
                     "source": str(getattr(prepared_image, "path", "")) or type(prepared_image).__name__,
@@ -447,6 +521,58 @@ def _prepare_image_input(image: Any) -> Any:
         return load_image(image)
 
     return image
+
+
+def _mode_flags(
+    *,
+    expected_card: ExpectedCard | None,
+    candidate_pool: CandidatePool | LocalCatalogIndex | None,
+    used_tracked_pool: bool,
+    used_visual_small_pool: bool,
+) -> dict[str, bool]:
+    return {
+        "has_expected_card": expected_card is not None,
+        "has_candidate_pool": candidate_pool is not None,
+        "used_tracked_pool": used_tracked_pool,
+        "used_visual_small_pool": used_visual_small_pool,
+    }
+
+
+def _derive_review_reason(
+    *,
+    best_name: str | None,
+    confidence: float,
+    ocr_lines: list[str],
+    ocr_confidence: float,
+    candidates: list[Candidate],
+    requested_mode: str,
+    expected_card: ExpectedCard | None,
+    confirmation_debug: dict[str, Any],
+) -> str | None:
+    if requested_mode == "confirmation" and expected_card is not None and confirmation_debug.get("used"):
+        if confirmation_debug.get("matches_expected") is False:
+            return "expected_card_contradicted"
+
+    if best_name is None:
+        if not ocr_lines and ocr_confidence < 0.5:
+            return "ocr_weak"
+        return "detection_failed"
+
+    if confidence < 0.35 and (not ocr_lines or ocr_confidence < 0.5):
+        return "ocr_weak"
+
+    if len(candidates) >= 2:
+        top = candidates[0]
+        runner_up = candidates[1]
+        score_gap = abs(float(top.score) - float(runner_up.score))
+        if score_gap <= 0.01:
+            if (
+                top.name != runner_up.name
+                or (top.set_code, top.collector_number) != (runner_up.set_code, runner_up.collector_number)
+            ):
+                return "candidate_tie_unresolved"
+
+    return None
 
 
 def _catalog_records_for_candidates(
@@ -676,6 +802,8 @@ def _finalize_recognition_result(
     result.best_name = None
     result.confidence = 0.0
     result.top_k_candidates = []
+    result.failure_code = "deadline_exceeded"
+    result.review_reason = "deadline_exceeded"
     return result
 
 

@@ -84,6 +84,8 @@ def test_session_small_pool_uses_tracked_pool_by_default(monkeypatch):
     session.recognize(DummyImage(), mode="small_pool")
 
     assert seen_candidate_count == 1
+    result = session.recognize(DummyImage(), mode="small_pool")
+    assert result.mode_flags["used_tracked_pool"] is True
 
 
 def test_session_small_pool_can_pass_visual_pool_candidates(monkeypatch):
@@ -188,9 +190,9 @@ def test_session_small_pool_requires_available_pool(monkeypatch):
     monkeypatch.setattr("card_engine.session.recognize_card", lambda image, **kwargs: None)
     session = RecognitionSession(catalog=catalog)
 
-    try:
-        session.recognize(DummyImage(), mode="small_pool")
-    except ValueError as exc:
-        assert "No tracked pool" in str(exc)
-    else:
-        raise AssertionError("Expected small_pool session call without tracked pool to fail")
+    result = session.recognize(DummyImage(), mode="small_pool")
+
+    assert result.best_name is None
+    assert result.confidence == 0.0
+    assert result.failure_code == "missing_tracked_pool"
+    assert result.review_reason == "missing_tracked_pool"

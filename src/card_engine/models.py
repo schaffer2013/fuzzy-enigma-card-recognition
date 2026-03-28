@@ -32,4 +32,9 @@ class RecognitionResult:
     top_k_candidates: list[Candidate] = field(default_factory=list)
     active_roi: str | None = None
     tried_rois: list[str] = field(default_factory=list)
+    requested_mode: str | None = None
+    effective_mode: str | None = None
+    mode_flags: dict[str, bool] = field(default_factory=dict)
+    failure_code: str | None = None
+    review_reason: str | None = None
     debug: dict[str, Any] = field(default_factory=dict)

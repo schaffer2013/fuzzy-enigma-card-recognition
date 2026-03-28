@@ -117,7 +117,30 @@ class RecognitionSession:
         visual_pool_candidates: list[VisualPoolCandidate] | None = None
         if resolved_pool is None and self._should_use_tracked_pool(resolved_mode, use_tracked_pool):
             if len(self._tracked_pool) == 0:
-                raise ValueError("No tracked pool is available for constrained recognition.")
+                return RecognitionResult(
+                    bbox=None,
+                    best_name=None,
+                    confidence=0.0,
+                    requested_mode=resolved_mode,
+                    effective_mode="default",
+                    mode_flags={
+                        "has_expected_card": expected_card is not None,
+                        "has_candidate_pool": candidate_pool is not None,
+                        "used_tracked_pool": False,
+                        "used_visual_small_pool": False,
+                    },
+                    failure_code="missing_tracked_pool",
+                    review_reason="missing_tracked_pool",
+                    debug={
+                        "mode": {
+                            "requested": resolved_mode,
+                            "effective": "default",
+                            "has_expected_card": expected_card is not None,
+                            "has_candidate_pool": candidate_pool is not None,
+                            "used_tracked_pool": False,
+                        }
+                    },
+                )
             resolved_pool = self._tracked_pool.snapshot()
             if prefer_visual_small_pool and resolved_mode == "small_pool":
                 visual_pool_candidates = self._tracked_pool.visual_candidates()
@@ -133,6 +156,13 @@ class RecognitionSession:
             config=self.config,
             catalog=self._load_catalog(),
         )
+        if not result.mode_flags:
+            result.mode_flags = {}
+        result.mode_flags["used_tracked_pool"] = resolved_pool is not None and candidate_pool is None and self._should_use_tracked_pool(
+            resolved_mode, use_tracked_pool
+        )
+        if result.requested_mode is None:
+            result.requested_mode = resolved_mode
 
         if self._should_track_result(resolved_mode, track_result):
             self.track_recognition_result(result)

@@ -134,3 +134,6 @@ def test_adapter_can_return_detailed_output(monkeypatch):
     assert output.top_k_candidates[0].oracle_id == "oracle-opt"
     assert output.debug["mode"]["effective"] == "greenfield"
     assert output.raw_result.best_name == "Opt"
+    assert output.requested_mode is None
+    assert output.effective_mode is None
+    assert output.mode_flags == {}
