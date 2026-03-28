@@ -1032,6 +1032,9 @@ def test_recognize_card_small_pool_uses_candidate_pool_and_skips_secondary_ocr(m
 
     assert seen_roi_labels == ["standard"]
     assert result.best_name == "Island"
+    assert result.requested_mode == "small_pool"
+    assert result.effective_mode == "small_pool"
+    assert result.mode_flags["has_candidate_pool"] is True
     assert result.debug["mode"]["requested"] == "small_pool"
     assert result.debug["mode"]["effective"] == "small_pool"
     assert result.debug["mode"]["candidate_count"] == 2
@@ -1047,12 +1050,12 @@ def test_recognize_card_reevaluation_requires_expected_card(monkeypatch):
 
     monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
 
-    try:
-        recognize_card(DummyImage(), mode="reevaluation")
-    except ValueError as exc:
-        assert "expected_card" in str(exc)
-    else:
-        raise AssertionError("Expected reevaluation mode to require expected_card")
+    result = recognize_card(DummyImage(), mode="reevaluation")
+
+    assert result.best_name is None
+    assert result.confidence == 0.0
+    assert result.failure_code == "missing_expected_card"
+    assert result.review_reason == "missing_expected_card"
 
 
 def test_recognize_card_reevaluation_can_promote_close_expected_card(monkeypatch):
@@ -1170,12 +1173,75 @@ def test_recognize_card_confirmation_scores_expected_printing_directly(monkeypat
     )
 
     assert result.best_name == "Island"
+    assert result.requested_mode == "confirmation"
+    assert result.effective_mode == "confirmation"
     assert result.debug["mode"]["requested"] == "confirmation"
     assert result.debug["mode"]["effective"] == "confirmation"
     assert result.debug["confirmation"]["used"] is True
     assert result.debug["confirmation"]["matches_expected"] is True
     assert result.debug["confirmation"]["expected_rank"] == 1
     assert result.confidence > 0.9
+
+
+def test_recognize_card_sets_expected_card_contradicted_review_reason(monkeypatch):
+    def fake_run_ocr(image, roi_label=None, *, crop_region=None):
+        return OCRResult(
+            lines=["Island"] if roi_label == "standard" else [],
+            confidence=0.95,
+            debug={"backend": "fake", "roi_label": roi_label, "attempts": [], "outcome": "success"},
+        )
+
+    full_catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Island", normalized_name="", set_code="M21", collector_number="264", layout="normal"),
+            CatalogRecord(name="Island", normalized_name="", set_code="ELD", collector_number="254", layout="normal"),
+        ]
+    )
+
+    def fake_match_candidates(*args, **kwargs):
+        return [
+            Candidate(name="Island", score=0.92, set_code="ELD", collector_number="254", notes=["exact", "set_symbol_match"]),
+            Candidate(name="Island", score=0.7, set_code="M21", collector_number="264", notes=["exact"]),
+        ]
+
+    monkeypatch.setattr("card_engine.api.run_ocr", fake_run_ocr)
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: full_catalog)
+    monkeypatch.setattr("card_engine.api.match_candidates", fake_match_candidates)
+    monkeypatch.setattr(
+        "card_engine.api.rerank_candidates_by_set_symbol",
+        lambda candidates, **kwargs: type("Result", (), {"candidates": list(candidates), "debug": {"used": False}})(),
+    )
+    monkeypatch.setattr(
+        "card_engine.api.rerank_candidates_by_art",
+        lambda candidates, **kwargs: type("Result", (), {"candidates": list(candidates), "debug": {"used": False}})(),
+    )
+
+    result = recognize_card(
+        DummyImage(),
+        mode="confirmation",
+        expected_card=ExpectedCard(name="Island", set_code="M21", collector_number="264"),
+    )
+
+    assert result.failure_code == "expected_card_contradicted"
+    assert result.review_reason == "expected_card_contradicted"
+
+
+def test_recognize_card_returns_detection_failed_when_detector_raises(monkeypatch):
+    catalog = LocalCatalogIndex.from_records(
+        [
+            CatalogRecord(name="Island", normalized_name="", set_code="M21", collector_number="264", layout="normal"),
+        ]
+    )
+    monkeypatch.setattr("card_engine.api._load_catalog", lambda _db_path: catalog)
+    monkeypatch.setattr("card_engine.api.detect_card", lambda image: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    result = recognize_card(DummyImage())
+
+    assert result.best_name is None
+    assert result.confidence == 0.0
+    assert result.failure_code == "detection_failed"
+    assert result.review_reason == "detection_failed"
+    assert result.debug["detection"]["error"] == "boom"
 
 
 def test_recognize_card_keeps_wider_candidate_pool_before_final_top_k(monkeypatch):

@@ -22,6 +22,11 @@ class SortingMachineDetailedOutput(SortingMachineOutput):
     top_k_candidates: list[Candidate]
     active_roi: str | None
     tried_rois: list[str]
+    requested_mode: str | None
+    effective_mode: str | None
+    mode_flags: dict[str, bool]
+    failure_code: str | None
+    review_reason: str | None
     debug: dict[str, Any]
     raw_result: RecognitionResult
 
@@ -66,6 +71,11 @@ class SortingMachineRecognizer:
             top_k_candidates=list(result.top_k_candidates),
             active_roi=result.active_roi,
             tried_rois=list(result.tried_rois),
+            requested_mode=result.requested_mode,
+            effective_mode=result.effective_mode,
+            mode_flags=dict(result.mode_flags),
+            failure_code=result.failure_code,
+            review_reason=result.review_reason,
             debug=dict(result.debug),
             raw_result=result,
         )
