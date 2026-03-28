@@ -1178,6 +1178,9 @@ Recommended early implementation order:
   editable image fixtures.
 - Install and test docs now distinguish engine-only and UI/debug workflows for
   parent repos.
+- If the repo ever needs a harder packaging boundary, the next step would be a
+  true `core` / `ui` distribution split, with the UI package depending on the
+  engine package rather than parent repos depending on the UI layer directly.
 
 ---
 

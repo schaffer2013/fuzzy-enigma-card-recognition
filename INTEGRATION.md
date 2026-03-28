@@ -247,3 +247,12 @@ they explicitly opt in.
 One important nuance: this is an engine/UI boundary in dependency usage, import
 surface, and test collection. It is not yet a split into two separately
 published Python packages.
+
+If that harder split happens later, the intended direction is:
+
+- a core engine distribution for parent repos
+- a separate optional UI/debug distribution that depends on the core package
+
+That future split should not change the parent-facing adapter contract. It
+would mainly change packaging and install surfaces, not the expected embedding
+workflow.

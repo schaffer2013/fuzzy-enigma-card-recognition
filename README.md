@@ -141,6 +141,14 @@ In other words:
 - local developers who want the desktop tooling can additionally install
   `.[ui]`
 
+If the project later moves to a true package split, the intended shape would
+be:
+
+- a core engine package containing recognition, catalog, adapter, and
+  benchmark/query workflows
+- an optional UI package that depends on the core engine package and owns the
+  desktop debug tooling
+
 ## Parent Quickstart
 
 Recommended parent-repo locations:
