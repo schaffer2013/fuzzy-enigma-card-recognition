@@ -52,6 +52,19 @@ $env:CARD_ENGINE_BACKEND = "moss_machine"
 
 The default remains `fuzzy_enigma`. Unsupported Moss requests currently fall back to the native backend unless `recognition_backend_fallback` is disabled in `EngineConfig`.
 
+## Staying Current
+
+The Moss lane is designed to stay current without bespoke manual steps:
+
+- rerunning the repo setup script updates the editable install and nested
+  submodules
+- the wrapper auto-stages cached Moss DB assets from `data/cache/moss-machine/`
+  into the upstream runtime layout only when needed
+- updating those cached DB files is therefore enough to refresh the local Moss
+  runtime data
+- parent repos can advance the submodule pointer, rerun the setup script in
+  update mode, and keep the same `recognize_card(...)` interface in place
+
 ## Next useful steps
 
 - add fixture-batch comparison output to `src/card_engine/evaluation.py`

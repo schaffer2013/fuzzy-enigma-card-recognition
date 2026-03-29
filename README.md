@@ -108,6 +108,23 @@ this submodule, rerun the same script with the update flag:
 ./scripts/setup_dev_env.sh --update
 ```
 
+How this stays up-to-date:
+
+- the setup scripts rerun safely, so the same command works for first install
+  and later updates
+- each update run syncs and refreshes git submodules before reinstalling the
+  editable package
+- editable install mode means Python imports the current checked-out source
+  instead of a stale copied wheel
+- `-Update` or `--update` also refreshes packaging tools and rebuilds the local
+  catalog when needed
+- the optional Moss integration stages runtime assets from
+  `data/cache/moss-machine/` at execution time, so new cached DB assets are
+  picked up without hand-editing the submodule
+- when a parent repo advances this submodule pointer, the normal flow is:
+  pull the parent repo, enter the submodule directory, rerun the setup script
+  in update mode, then rerun tests
+
 Manual install options:
 
 - base recognition:

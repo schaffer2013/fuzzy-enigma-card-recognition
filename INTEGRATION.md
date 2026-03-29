@@ -24,6 +24,28 @@ Fresh setup and updates can also use the repo-provided scripts:
 Rerun the same script with `-Update` or `--update` after the parent repo bumps
 the submodule pointer.
 
+## Keeping It Current
+
+The maintenance story is intentionally simple:
+
+- the same setup script handles both first-time setup and later refreshes
+- update mode syncs nested submodules, upgrades packaging tools, and reinstalls
+  the repo in editable mode
+- editable mode keeps the parent environment pointed at the live checked-out
+  submodule source, so parent-repo updates do not require rebuilding a wheel by
+  hand
+- the local catalog can be rebuilt during update runs, which keeps offline card
+  data aligned with the current code
+- the optional Moss lane stages its DB assets from `data/cache/moss-machine/`
+  when it runs, so replacing cached DB files is enough to refresh that backend
+
+Recommended parent-repo update flow:
+
+1. Pull the parent repo revision that updates the submodule pointer.
+2. Enter `third_party/fuzzy-enigma-card-recognition`.
+3. Run `.\scripts\setup_dev_env.ps1 -Update` on Windows or `./scripts/setup_dev_env.sh --update` on macOS/Linux.
+4. Run the engine validation command you care about, usually `python -m pytest --engine-only`.
+
 Use the `ocr` extra whenever you expect OCR backends to be available. The `ui`
 extra is only needed for the Scryfall-backed random-card UI action and catalog
 helpers.
