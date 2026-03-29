@@ -82,7 +82,33 @@ summarized by family instead of treated as one bucket.
 
 ## Install
 
-Install options:
+Fresh setup scripts:
+
+- Windows PowerShell: `scripts/setup_dev_env.ps1`
+- macOS / Linux: `scripts/setup_dev_env.sh`
+
+Recommended full local setup:
+
+```powershell
+.\scripts\setup_dev_env.ps1
+```
+
+```bash
+./scripts/setup_dev_env.sh
+```
+
+To refresh the environment after pulling changes or after a parent repo updates
+this submodule, rerun the same script with the update flag:
+
+```powershell
+.\scripts\setup_dev_env.ps1 -Update
+```
+
+```bash
+./scripts/setup_dev_env.sh --update
+```
+
+Manual install options:
 
 - base recognition:
 
@@ -107,7 +133,7 @@ python -m pip install -e .[ui]
 - local development:
 
 ```powershell
-python -m pip install -e .[ocr,ui,dev]
+python -m pip install -e .[ocr,ui,moss,dev]
 ```
 
 Run tests:
@@ -128,11 +154,13 @@ Run only the UI/debug tests:
 python -m pytest --ui-only
 ```
 
-The base package now includes the image stack used by recognition. The `ocr`
-extra adds OCR backends, and the `ui` extra adds `scrython` for the debug UI's
-random-card and Scryfall-backed helper flows. Parent repos that only embed the
-engine can stay on base or `[ocr]` installs and use `--engine-only` test runs
-to avoid pulling the UI suite into their normal validation loop.
+The base package includes the image stack used by recognition. The `ocr` extra
+adds OCR backends, the `ui` extra adds `scrython` for the debug UI's
+random-card helper flows, and the `moss` extra installs the upstream Moss
+runtime dependencies used by the optional swappable backend and comparison
+tools. Parent repos that only embed the engine can stay on base or `[ocr]`
+installs and use `--engine-only` test runs to avoid pulling the UI suite into
+their normal validation loop.
 
 This is a dependency-and-test boundary, not a separate published package split.
 In other words:
@@ -171,6 +199,14 @@ cd your-parent-app
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e .\third_party\fuzzy-enigma-card-recognition[ocr]
+```
+
+If the parent repo updates this submodule later, refresh the engine repo in
+place by rerunning the setup script from inside the submodule:
+
+```powershell
+cd .\third_party\fuzzy-enigma-card-recognition
+.\scripts\setup_dev_env.ps1 -Update -SkipCatalog
 ```
 
 Create a parent-owned config file such as `config/card-engine/engine.json`:

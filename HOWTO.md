@@ -22,6 +22,18 @@ Launch it with:
 .\.venv\Scripts\python.exe -m card_engine.ui --fixtures-dir data\fixtures
 ```
 
+Fresh setup and later updates can use the repo scripts directly:
+
+```powershell
+.\scripts\setup_dev_env.ps1
+.\scripts\setup_dev_env.ps1 -Update
+```
+
+```bash
+./scripts/setup_dev_env.sh
+./scripts/setup_dev_env.sh --update
+```
+
 If you want the random-card button to work, install the UI extra first:
 
 ```powershell
@@ -31,7 +43,7 @@ If you want the random-card button to work, install the UI extra first:
 For full local development with OCR backends and tests:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -e .[ocr,ui,dev]
+.\.venv\Scripts\python.exe -m pip install -e .[ocr,ui,moss,dev]
 ```
 
 If you only want the engine suite during local work, use:

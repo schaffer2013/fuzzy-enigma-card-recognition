@@ -36,10 +36,18 @@ class EngineConfig:
     layout_heuristics_enabled: bool = True
     lazy_group_basic_land_printings: bool = False
     lazy_default_printing_by_name: bool = False
+    recognition_backend: str = "fuzzy_enigma"
+    recognition_backend_fallback: bool = True
     recognition_deadline_seconds: float = 20.0
     max_visual_tiebreak_candidates: int = 6
     max_visual_tiebreak_seconds_per_card: float = 30.0
     reference_download_timeout_seconds: float = 10.0
+    moss_repo_path: str | None = None
+    moss_db_path: str | None = None
+    moss_threshold: float = 10.0
+    moss_top_n: int = 5
+    moss_cache_enabled: bool = False
+    moss_active_games: list[str] = field(default_factory=lambda: ["Magic: The Gathering"])
 
     @classmethod
     def from_file(cls, path: str | os.PathLike[str]) -> "EngineConfig":

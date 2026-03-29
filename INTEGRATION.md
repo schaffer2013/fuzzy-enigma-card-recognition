@@ -12,9 +12,17 @@ The base package now includes the image stack required for recognition:
 - base recognition: `pip install -e ./third_party/fuzzy-enigma-card-recognition`
 - OCR-enabled: `pip install -e ./third_party/fuzzy-enigma-card-recognition[ocr]`
 - UI-enabled: `pip install -e ./third_party/fuzzy-enigma-card-recognition[ui]`
-- local development: `pip install -e ./third_party/fuzzy-enigma-card-recognition[ocr,ui,dev]`
+- local development: `pip install -e ./third_party/fuzzy-enigma-card-recognition[ocr,ui,moss,dev]`
 - engine-only tests: `python -m pytest --engine-only`
 - UI-only tests: `python -m pytest --ui-only`
+
+Fresh setup and updates can also use the repo-provided scripts:
+
+- Windows PowerShell: `.\scripts\setup_dev_env.ps1`
+- macOS / Linux: `./scripts/setup_dev_env.sh`
+
+Rerun the same script with `-Update` or `--update` after the parent repo bumps
+the submodule pointer.
 
 Use the `ocr` extra whenever you expect OCR backends to be available. The `ui`
 extra is only needed for the Scryfall-backed random-card UI action and catalog
@@ -39,6 +47,13 @@ cd your-parent-app
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e .\third_party\fuzzy-enigma-card-recognition[ocr]
+```
+
+To refresh this submodule after a parent-repo update:
+
+```powershell
+cd .\third_party\fuzzy-enigma-card-recognition
+.\scripts\setup_dev_env.ps1 -Update -SkipCatalog
 ```
 
 Create a parent-owned config file such as

@@ -30,6 +30,7 @@ from .operational_modes import (
     resolve_operational_mode,
     score_confirmation_against_expected,
 )
+from .recognition_router import choose_effective_backend, resolve_requested_backend, run_moss_backend
 from .roi import resolve_roi_groups_for_layout
 from .scorer import score_candidates
 from .set_symbol import rerank_candidates_by_set_symbol, should_skip_secondary_ocr
@@ -44,6 +45,67 @@ ROTATED_TITLE_ROIS = {
 
 
 def recognize_card(
+    image: Any,
+    *,
+    mode: str | None = None,
+    candidate_pool: CandidatePool | LocalCatalogIndex | None = None,
+    visual_pool_candidates: list[VisualPoolCandidate] | None = None,
+    expected_card: ExpectedCard | None = None,
+    progress_callback=None,
+    deadline: float | None = None,
+    config: EngineConfig | None = None,
+    catalog: LocalCatalogIndex | None = None,
+    skip_secondary_ocr: bool = False,
+    artifact_export_dir: str | Path | None = None,
+) -> RecognitionResult:
+    config = config or load_engine_config()
+    requested_backend = resolve_requested_backend(config=config)
+    effective_backend, fallback_reason = choose_effective_backend(
+        requested_backend=requested_backend,
+        image=image,
+        mode=mode,
+        candidate_pool=candidate_pool,
+        visual_pool_candidates=visual_pool_candidates,
+        expected_card=expected_card,
+        skip_secondary_ocr=skip_secondary_ocr,
+        catalog=catalog,
+        config=config,
+    )
+
+    if effective_backend == "moss_machine":
+        result = run_moss_backend(
+            image,
+            mode=mode,
+            progress_callback=progress_callback,
+            config=config,
+        )
+        if fallback_reason is not None:
+            result.debug.setdefault("backend", {})["fallback_reason"] = fallback_reason
+        _maybe_export_artifacts(artifact_export_dir=artifact_export_dir, result=result)
+        return result
+
+    result = _recognize_card_with_fuzzy_enigma(
+        image,
+        mode=mode,
+        candidate_pool=candidate_pool,
+        visual_pool_candidates=visual_pool_candidates,
+        expected_card=expected_card,
+        progress_callback=progress_callback,
+        deadline=deadline,
+        config=config,
+        catalog=catalog,
+        skip_secondary_ocr=skip_secondary_ocr,
+        artifact_export_dir=artifact_export_dir,
+    )
+    result.debug.setdefault("backend", {})
+    result.debug["backend"]["requested"] = requested_backend
+    result.debug["backend"]["effective"] = "fuzzy_enigma"
+    if fallback_reason is not None:
+        result.debug["backend"]["fallback_reason"] = fallback_reason
+    return result
+
+
+def _recognize_card_with_fuzzy_enigma(
     image: Any,
     *,
     mode: str | None = None,
