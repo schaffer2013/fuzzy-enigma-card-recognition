@@ -25,6 +25,8 @@ Running it in a child process keeps those behaviors out of the main engine proce
 - Moss comparisons currently require a real on-disk image path
 - Moss comparisons require both `unified_card_database.db` and the game-specific `phash_cards_*.db` files
 - the wrapper now auto-stages those cached assets from `data/cache/moss-machine/` into the upstream submodule when they are missing
+- true Moss-backed mode support currently exists only for `default` and `greenfield`
+- requests that depend on `reevaluation`, `small_pool`, `confirmation`, `expected_card`, or candidate-pool semantics currently fall back to the native backend unless fallback is explicitly disabled
 - the wrapper still intentionally refuses to auto-download the database during comparisons
 - this is an experiment lane, not a replacement for the main recognizer
 
