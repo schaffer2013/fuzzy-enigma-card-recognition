@@ -21,6 +21,10 @@ ocr = [
   "paddleocr>=2.7",
   "rapidocr-onnxruntime>=1.4",
 ]
+moss = [
+  "Pillow>=10.1",
+  "imagehash>=4.3",
+]
 ui = [
   "scrython>=2.0",
 ]

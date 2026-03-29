@@ -385,6 +385,22 @@ is to keep one shared recognition core and expose:
 - an expectation-aware reranker for re-evaluation mode
 - a direct comparison / confirmation wrapper for expected-printing mode
 
+### Swappable Backend Parity
+
+The parent-facing API should remain stable even when the underlying
+recognition backend is swapped.
+
+- `recognize_card(...)` should remain the single parent-facing entry point.
+- Alternative backends such as Moss Machine may initially support only
+  stateless full-catalog flows like `default` and `greenfield`.
+- Constrained or expectation-aware modes such as `reevaluation`,
+  `small_pool`, and `confirmation` should eventually gain backend-specific
+  implementations instead of depending on fallback behavior.
+- Until that parity exists, the engine should surface whether a request was
+  handled by the requested backend or by a compatibility fallback.
+- Benchmarks and docs should make backend-effective behavior obvious so parent
+  repos do not mistake fallback results for real mode parity.
+
 ### Core Engine API
 
 Target API shape:
@@ -629,6 +645,7 @@ What is effectively done today:
 - [x] Milestone 11 is complete.
 - [x] Milestone 12 is complete.
 - [x] Milestone 13 is complete.
+- [ ] Milestone 18 is partially complete.
 
 Recommended next step:
 
@@ -1285,6 +1302,41 @@ Recommended early implementation order:
 - Parent repos can make better workflow decisions without reading deep engine
   debug payloads.
 - Timeout and ambiguity behavior are easier to consume operationally.
+
+### Milestone 18: Swappable Backend Mode Parity
+
+**Status**
+
+- [x] Keep `recognize_card(...)` stable while allowing backend selection under
+  the API boundary.
+- [x] Add an initial Moss Machine backend path with normalized
+  `RecognitionResult` output.
+- [x] Fall back safely when a request depends on unsupported Moss-mode
+  semantics.
+- [ ] Implement true Moss-aware `reevaluation` behavior.
+- [ ] Implement true Moss-aware `small_pool` behavior.
+- [ ] Implement true Moss-aware `confirmation` behavior.
+- [ ] Make effective backend choice explicit in evaluation summaries and
+  benchmark reports.
+- [ ] Add hard-fail or warning policy for forced unsupported backend/mode
+  combinations.
+
+**Deliverables**
+
+- A backend-swappable recognition entry point that preserves the parent-facing
+  interface.
+- Documented and benchmarked backend behavior for each supported mode.
+- Backend-aware reporting so operational runs distinguish native versus
+  fallback execution.
+- A clear policy for unsupported mode/backend combinations.
+
+**Exit Criteria**
+
+- Parent repos can switch between supported backends without changing their
+  `recognize_card(...)` integration.
+- Backend-specific mode behavior is either truly implemented or explicitly
+  rejected, rather than silently approximated.
+- Evaluation output makes backend-effective execution obvious for every mode.
 
 ## Operational Quality Gates
 

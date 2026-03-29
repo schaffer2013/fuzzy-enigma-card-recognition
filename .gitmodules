@@ -1,0 +1,3 @@
+[submodule "third_party/moss-machine"]
+	path = third_party/moss-machine
+	url = https://github.com/KairiCollections/Moss-Machines-Magic-the-Gathering-sorting.git

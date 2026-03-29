@@ -1606,6 +1606,91 @@ def test_recognize_card_fails_when_runtime_budget_is_exceeded(monkeypatch):
     assert result.debug["deadline"]["partial_best_name"] == "Opt"
 
 
+def test_recognize_card_can_route_to_moss_backend(monkeypatch, tmp_path):
+    image_path = tmp_path / "fixture.png"
+    image_path.write_bytes(b"fixture")
+    seen = {}
+
+    def fake_run_moss_backend(image, *, mode=None, progress_callback=None, config=None):
+        seen["image"] = image
+        seen["mode"] = mode
+        seen["config"] = config
+        return type(
+            "MossResult",
+            (),
+            {
+                "bbox": None,
+                "best_name": "Opt",
+                "confidence": 0.98,
+                "ocr_lines": [],
+                "top_k_candidates": [Candidate(name="Opt", score=0.98, set_code="INV", collector_number="64")],
+                "active_roi": "moss_machine",
+                "tried_rois": ["moss_machine"],
+                "requested_mode": "default",
+                "effective_mode": "default",
+                "mode_flags": {},
+                "pipeline_summary": {"resolution_path": "moss_machine"},
+                "failure_code": None,
+                "review_reason": None,
+                "debug": {"backend": {"requested": "moss_machine", "effective": "moss_machine"}},
+            },
+        )()
+
+    monkeypatch.setattr("card_engine.api.run_moss_backend", fake_run_moss_backend)
+    monkeypatch.setattr(
+        "card_engine.api._recognize_card_with_fuzzy_enigma",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fuzzy backend should not be used")),
+    )
+
+    config = EngineConfig(recognition_backend="moss_machine")
+    result = recognize_card(image_path, config=config)
+
+    assert result.best_name == "Opt"
+    assert seen["image"] == image_path
+    assert seen["config"] is config
+
+
+def test_recognize_card_falls_back_from_moss_for_unsupported_requests(monkeypatch):
+    seen = {}
+
+    def fake_fuzzy_backend(*args, **kwargs):
+        seen["called"] = True
+        return type(
+            "FuzzyResult",
+            (),
+            {
+                "bbox": (0, 0, 1, 1),
+                "best_name": "Island",
+                "confidence": 0.9,
+                "ocr_lines": [],
+                "top_k_candidates": [],
+                "active_roi": "standard",
+                "tried_rois": ["standard"],
+                "requested_mode": "default",
+                "effective_mode": "default",
+                "mode_flags": {},
+                "pipeline_summary": {"resolution_path": "title_only"},
+                "failure_code": None,
+                "review_reason": None,
+                "debug": {},
+            },
+        )()
+
+    monkeypatch.setattr("card_engine.api._recognize_card_with_fuzzy_enigma", fake_fuzzy_backend)
+    monkeypatch.setattr(
+        "card_engine.api.run_moss_backend",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("moss backend should not be used")),
+    )
+
+    result = recognize_card(DummyImage(), config=EngineConfig(recognition_backend="moss_machine"))
+
+    assert seen["called"] is True
+    assert result.best_name == "Island"
+    assert result.debug["backend"]["requested"] == "moss_machine"
+    assert result.debug["backend"]["effective"] == "fuzzy_enigma"
+    assert result.debug["backend"]["fallback_reason"] == "moss_backend_unsupported_for_request"
+
+
 def _minimal_png(*, width: int, height: int) -> bytes:
     return (
         b"\x89PNG\r\n\x1a\n"
