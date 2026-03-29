@@ -9,6 +9,7 @@ from .catalog.maintenance import ensure_catalog_ready
 from .config import EngineConfig, load_engine_config
 from .models import Candidate, RecognitionResult, VisualPoolCandidate
 from .operational_modes import CandidatePool, ExpectedCard, normalize_recognition_mode
+from .recognition_router import resolve_requested_backend
 
 DEFAULT_TRACK_CONFIDENCE_THRESHOLD = 0.85
 
@@ -160,6 +161,7 @@ class RecognitionSession:
             if prefer_visual_small_pool and resolved_mode == "small_pool":
                 visual_pool_candidates = self._tracked_pool.visual_candidates()
 
+        requested_backend = resolve_requested_backend(config=self.config)
         result = recognize_card(
             image,
             mode=resolved_mode,
@@ -169,7 +171,7 @@ class RecognitionSession:
             progress_callback=progress_callback,
             deadline=deadline,
             config=self.config,
-            catalog=self._load_catalog(),
+            catalog=None if requested_backend == "moss_machine" else self._load_catalog(),
             artifact_export_dir=artifact_export_dir,
         )
         if not result.mode_flags:
