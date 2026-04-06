@@ -99,6 +99,9 @@ def run_moss_backend(
     if moss_result.failure_code == "no_matches":
         review_reason = "ocr_weak"
 
+    moss_debug = dict(moss_result.debug)
+    moss_timings = dict(moss_debug.get("timings") or {})
+    wall_total = float(moss_timings.get("wall_total") or moss_result.runtime_seconds)
     debug = {
         "backend": {
             "requested": MOSS_BACKEND,
@@ -108,10 +111,10 @@ def run_moss_backend(
             "requested": requested_mode,
             "effective": requested_mode,
         },
-        "moss_machine": dict(moss_result.debug),
+        "moss_machine": moss_debug,
         "timings": {
-            "total": moss_result.runtime_seconds,
-            "moss_machine": moss_result.runtime_seconds,
+            "total": wall_total,
+            "moss_machine": wall_total,
         },
     }
     if moss_result.notes:

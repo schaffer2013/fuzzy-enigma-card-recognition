@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -14,6 +16,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_MOSS_MACHINE_REPO = REPO_ROOT / "third_party" / "moss-machine"
 DEFAULT_MOSS_MACHINE_RUNNER = REPO_ROOT / "scripts" / "run_moss_machine_once.py"
 DEFAULT_MOSS_MACHINE_ASSET_CACHE = REPO_ROOT / "data" / "cache" / "moss-machine"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -58,6 +62,7 @@ def run_moss_machine_recognition(
     *,
     settings: MossMachineSettings | None = None,
 ) -> MossMachineRunResult:
+    overall_started_at = time.monotonic()
     resolved_settings = settings or MossMachineSettings()
     image_file = Path(image_path)
     if not image_file.exists():
@@ -88,9 +93,12 @@ def run_moss_machine_recognition(
             notes=[f"Runner script not found at {resolved_settings.runner_path}"],
         )
 
+    stage_started_at = time.monotonic()
     staged_db_path, staged_paths, staged_directories, stage_notes = _prepare_moss_runtime_assets(
         resolved_settings
     )
+    stage_elapsed = round(time.monotonic() - stage_started_at, 4)
+    staged_asset_details = _snapshot_staged_assets(staged_paths)
     command = [
         resolved_settings.python_executable,
         str(resolved_settings.runner_path),
@@ -110,8 +118,12 @@ def run_moss_machine_recognition(
     for game_name in resolved_settings.active_games:
         command.extend(["--game", game_name])
 
+    completed = None
+    subprocess_elapsed = 0.0
+    cleanup_elapsed = 0.0
     try:
         try:
+            subprocess_started_at = time.monotonic()
             completed = subprocess.run(
                 command,
                 capture_output=True,
@@ -119,56 +131,136 @@ def run_moss_machine_recognition(
                 check=False,
                 timeout=max(1.0, resolved_settings.timeout_seconds),
             )
+            subprocess_elapsed = round(time.monotonic() - subprocess_started_at, 4)
         finally:
+            cleanup_started_at = time.monotonic()
             _cleanup_staged_moss_runtime_assets(staged_paths, staged_directories)
+            cleanup_elapsed = round(time.monotonic() - cleanup_started_at, 4)
     except subprocess.TimeoutExpired:
+        total_wall_elapsed = round(time.monotonic() - overall_started_at, 4)
+        debug = _build_wrapper_debug(
+            settings=resolved_settings,
+            image_file=image_file,
+            staged_db_path=staged_db_path,
+            staged_assets=staged_asset_details,
+            stage_elapsed=stage_elapsed,
+            subprocess_elapsed=subprocess_elapsed,
+            cleanup_elapsed=cleanup_elapsed,
+            total_wall_elapsed=total_wall_elapsed,
+        )
+        _log_moss_run(
+            image_file=image_file,
+            failure_code="timeout",
+            confidence=0.0,
+            debug=debug,
+        )
         return MossMachineRunResult(
             available=False,
             best_name=None,
             confidence=0.0,
-            runtime_seconds=resolved_settings.timeout_seconds,
+            runtime_seconds=total_wall_elapsed,
             failure_code="timeout",
             notes=[
                 *stage_notes,
                 f"Moss Machine subprocess exceeded {resolved_settings.timeout_seconds:.1f}s timeout.",
             ],
+            debug=debug,
         )
 
     if completed.returncode != 0:
-        return MossMachineRunResult(
-            available=False,
-            best_name=None,
-            confidence=0.0,
-            runtime_seconds=0.0,
-            failure_code="subprocess_failed",
-            notes=[
-                *stage_notes,
-                completed.stderr.strip() or completed.stdout.strip() or "Moss Machine subprocess failed.",
-            ],
-            debug={
+        total_wall_elapsed = round(time.monotonic() - overall_started_at, 4)
+        debug = _build_wrapper_debug(
+            settings=resolved_settings,
+            image_file=image_file,
+            staged_db_path=staged_db_path,
+            staged_assets=staged_asset_details,
+            stage_elapsed=stage_elapsed,
+            subprocess_elapsed=subprocess_elapsed,
+            cleanup_elapsed=cleanup_elapsed,
+            total_wall_elapsed=total_wall_elapsed,
+            extra={
                 "returncode": completed.returncode,
                 "stdout": completed.stdout,
                 "stderr": completed.stderr,
             },
         )
-
-    try:
-        payload = json.loads(completed.stdout)
-    except json.JSONDecodeError:
+        _log_moss_run(
+            image_file=image_file,
+            failure_code="subprocess_failed",
+            confidence=0.0,
+            debug=debug,
+        )
         return MossMachineRunResult(
             available=False,
             best_name=None,
             confidence=0.0,
-            runtime_seconds=0.0,
-            failure_code="invalid_json",
-            notes=[*stage_notes, "Moss Machine runner did not return valid JSON."],
-            debug={
+            runtime_seconds=total_wall_elapsed,
+            failure_code="subprocess_failed",
+            notes=[
+                *stage_notes,
+                completed.stderr.strip() or completed.stdout.strip() or "Moss Machine subprocess failed.",
+            ],
+            debug=debug,
+        )
+
+    parse_started_at = time.monotonic()
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        total_wall_elapsed = round(time.monotonic() - overall_started_at, 4)
+        debug = _build_wrapper_debug(
+            settings=resolved_settings,
+            image_file=image_file,
+            staged_db_path=staged_db_path,
+            staged_assets=staged_asset_details,
+            stage_elapsed=stage_elapsed,
+            subprocess_elapsed=subprocess_elapsed,
+            cleanup_elapsed=cleanup_elapsed,
+            total_wall_elapsed=total_wall_elapsed,
+            extra={
                 "stdout": completed.stdout,
                 "stderr": completed.stderr,
             },
         )
+        _log_moss_run(
+            image_file=image_file,
+            failure_code="invalid_json",
+            confidence=0.0,
+            debug=debug,
+        )
+        return MossMachineRunResult(
+            available=False,
+            best_name=None,
+            confidence=0.0,
+            runtime_seconds=total_wall_elapsed,
+            failure_code="invalid_json",
+            notes=[*stage_notes, "Moss Machine runner did not return valid JSON."],
+            debug=debug,
+        )
+    parse_elapsed = round(time.monotonic() - parse_started_at, 4)
 
     result = _result_from_payload(payload)
+    total_wall_elapsed = round(time.monotonic() - overall_started_at, 4)
+    wrapper_debug = _build_wrapper_debug(
+        settings=resolved_settings,
+        image_file=image_file,
+        staged_db_path=staged_db_path,
+        staged_assets=staged_asset_details,
+        stage_elapsed=stage_elapsed,
+        subprocess_elapsed=subprocess_elapsed,
+        cleanup_elapsed=cleanup_elapsed,
+        parse_elapsed=parse_elapsed,
+        total_wall_elapsed=total_wall_elapsed,
+        scanner_runtime_seconds=result.runtime_seconds,
+        extra=result.debug,
+    )
+    result = replace(result, runtime_seconds=total_wall_elapsed, debug=wrapper_debug)
+    _log_moss_run(
+        image_file=image_file,
+        failure_code=result.failure_code,
+        confidence=result.confidence,
+        debug=result.debug,
+    )
     if stage_notes:
         return replace(result, notes=[*stage_notes, *result.notes])
     return result
@@ -296,3 +388,93 @@ def _cleanup_staged_moss_runtime_assets(staged_paths: list[Path], cleanup_direct
         with contextlib.suppress(OSError):
             if directory.exists() and not any(directory.iterdir()):
                 directory.rmdir()
+
+
+def _build_wrapper_debug(
+    *,
+    settings: MossMachineSettings,
+    image_file: Path,
+    staged_db_path: Path | None,
+    staged_assets: list[dict[str, Any]],
+    stage_elapsed: float,
+    subprocess_elapsed: float,
+    cleanup_elapsed: float,
+    total_wall_elapsed: float,
+    parse_elapsed: float = 0.0,
+    scanner_runtime_seconds: float | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    debug = dict(extra or {})
+    debug["image_path"] = str(image_file)
+    debug["requested_games"] = list(settings.active_games)
+    debug["threshold"] = float(settings.threshold)
+    debug["top_n"] = int(settings.top_n)
+    debug["cache_enabled"] = bool(settings.cache_enabled)
+    debug["auto_stage_assets"] = bool(settings.auto_stage_assets)
+    debug["repo_path"] = str(settings.repo_path)
+    debug["runner_path"] = str(settings.runner_path)
+    debug["asset_cache_dir"] = str(settings.asset_cache_dir)
+    debug["db_path"] = str(staged_db_path) if staged_db_path is not None else None
+    debug["staged_assets"] = list(staged_assets)
+    debug["timings"] = {
+        "prepare_assets": stage_elapsed,
+        "subprocess_wall": subprocess_elapsed,
+        "parse_payload": parse_elapsed,
+        "cleanup_assets": cleanup_elapsed,
+        "wrapper_overhead": _round_nonnegative(total_wall_elapsed - subprocess_elapsed),
+        "wall_total": total_wall_elapsed,
+    }
+    if scanner_runtime_seconds is not None:
+        debug["scanner_runtime_seconds"] = round(float(scanner_runtime_seconds), 4)
+        debug["timings"]["scanner_runtime"] = round(float(scanner_runtime_seconds), 4)
+        debug["timings"]["subprocess_overhead"] = _round_nonnegative(subprocess_elapsed - float(scanner_runtime_seconds))
+        debug["timings"]["unaccounted_vs_scanner"] = _round_nonnegative(total_wall_elapsed - float(scanner_runtime_seconds))
+    return debug
+
+
+def _log_moss_run(*, image_file: Path, failure_code: str | None, confidence: float, debug: dict[str, Any]) -> None:
+    timings = debug.get("timings") if isinstance(debug, dict) else None
+    if not isinstance(timings, dict):
+        return
+    wall_total = float(timings.get("wall_total") or 0.0)
+    scanner_runtime = float(timings.get("scanner_runtime") or 0.0)
+    overhead = float(timings.get("unaccounted_vs_scanner") or timings.get("wrapper_overhead") or 0.0)
+    log_method = logger.warning if overhead > max(1.0, scanner_runtime * 2.0) else logger.info
+    log_method(
+        (
+            "moss-machine run: image=%s failure=%s confidence=%.3f wall=%.4fs scanner=%.4fs "
+            "prepare=%.4fs subprocess=%.4fs cleanup=%.4fs overhead=%.4fs staged_assets=%s cache=%s games=%s"
+        ),
+        image_file.name,
+        failure_code or "ok",
+        confidence,
+        wall_total,
+        scanner_runtime,
+        float(timings.get("prepare_assets") or 0.0),
+        float(timings.get("subprocess_wall") or 0.0),
+        float(timings.get("cleanup_assets") or 0.0),
+        overhead,
+        len(debug.get("staged_assets") or []),
+        bool(debug.get("cache_enabled")),
+        ",".join(debug.get("requested_games") or []),
+    )
+
+
+def _safe_file_size(path: Path) -> int:
+    with contextlib.suppress(OSError):
+        return path.stat().st_size
+    return 0
+
+
+def _snapshot_staged_assets(staged_paths: list[Path]) -> list[dict[str, Any]]:
+    return [
+        {
+            "path": str(path),
+            "size_bytes": _safe_file_size(path),
+        }
+        for path in staged_paths
+    ]
+
+
+def _round_nonnegative(value: float) -> float:
+    return round(max(0.0, float(value)), 4)

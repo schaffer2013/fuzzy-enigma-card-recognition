@@ -105,7 +105,10 @@ def test_run_moss_machine_recognition_parses_subprocess_json(monkeypatch, tmp_pa
 
         return Completed()
 
+    monotonic_values = iter([100.0, 100.0, 100.2, 100.2, 100.9, 100.9, 101.0, 101.0, 101.05, 101.1])
+
     monkeypatch.setattr("card_engine.adapters.mossmachine.subprocess.run", fake_run)
+    monkeypatch.setattr("card_engine.adapters.mossmachine.time.monotonic", lambda: next(monotonic_values))
 
     settings = MossMachineSettings(
         repo_path=repo_path,
@@ -118,6 +121,16 @@ def test_run_moss_machine_recognition_parses_subprocess_json(monkeypatch, tmp_pa
     assert result.candidates[0].set_code == "XLN"
     assert result.candidates[0].distance == 4.0
     assert result.debug["source"] == "stub"
+    assert result.runtime_seconds == 1.1
+    assert result.debug["scanner_runtime_seconds"] == 0.55
+    assert result.debug["timings"]["wall_total"] == 1.1
+    assert result.debug["timings"]["scanner_runtime"] == 0.55
+    assert result.debug["timings"]["subprocess_wall"] == 0.7
+    assert result.debug["timings"]["prepare_assets"] == 0.2
+    assert result.debug["timings"]["cleanup_assets"] == 0.1
+    assert result.debug["timings"]["parse_payload"] == 0.05
+    assert result.debug["timings"]["subprocess_overhead"] == 0.15
+    assert result.debug["timings"]["unaccounted_vs_scanner"] == 0.55
 
 
 def test_run_moss_machine_recognition_auto_stages_cached_assets(monkeypatch, tmp_path):
@@ -165,7 +178,10 @@ def test_run_moss_machine_recognition_auto_stages_cached_assets(monkeypatch, tmp
 
         return Completed()
 
+    monotonic_values = iter([10.0, 10.0, 10.3, 10.3, 10.8, 10.8, 10.9, 10.9, 10.95, 11.0])
+
     monkeypatch.setattr("card_engine.adapters.mossmachine.subprocess.run", fake_run)
+    monkeypatch.setattr("card_engine.adapters.mossmachine.time.monotonic", lambda: next(monotonic_values))
 
     settings = MossMachineSettings(
         repo_path=repo_path,
@@ -178,3 +194,7 @@ def test_run_moss_machine_recognition_auto_stages_cached_assets(monkeypatch, tmp
     assert "auto_staged_assets=unified_card_database.db,phash_cards_1.db" in result.notes
     assert staged_db.exists() is False
     assert staged_phash.exists() is False
+    assert result.debug["staged_assets"] == [
+        {"path": str(staged_db), "size_bytes": 2},
+        {"path": str(staged_phash), "size_bytes": 5},
+    ]

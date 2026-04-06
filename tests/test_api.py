@@ -11,6 +11,7 @@ from card_engine.image_types import EditableLoadedImage
 from card_engine.models import Candidate, VisualPoolCandidate
 from card_engine.ocr import OCRResult
 from card_engine.operational_modes import CandidatePool, ExpectedCard
+from card_engine.recognition_router import run_moss_backend
 
 
 class DummyImage:
@@ -1689,6 +1690,48 @@ def test_recognize_card_falls_back_from_moss_for_unsupported_requests(monkeypatc
     assert result.debug["backend"]["requested"] == "moss_machine"
     assert result.debug["backend"]["effective"] == "fuzzy_enigma"
     assert result.debug["backend"]["fallback_reason"] == "moss_backend_unsupported_for_request"
+
+
+def test_run_moss_backend_reports_wall_clock_timings(monkeypatch, tmp_path):
+    image_path = tmp_path / "fixture.png"
+    image_path.write_bytes(b"fixture")
+
+    monkeypatch.setattr(
+        "card_engine.recognition_router.run_moss_machine_recognition",
+        lambda image_path, settings=None: type(
+            "StubMossResult",
+            (),
+            {
+                "available": True,
+                "best_name": "Opt",
+                "confidence": 0.98,
+                "runtime_seconds": 8.4,
+                "failure_code": None,
+                "candidates": [],
+                "notes": [],
+                "debug": {
+                    "scanner_runtime_seconds": 0.7,
+                    "timings": {
+                        "wall_total": 8.4,
+                        "scanner_runtime": 0.7,
+                        "prepare_assets": 3.1,
+                        "subprocess_wall": 4.9,
+                        "cleanup_assets": 0.2,
+                    },
+                },
+            },
+        )(),
+    )
+
+    result = run_moss_backend(
+        image_path,
+        mode="default",
+        config=EngineConfig(recognition_backend="moss_machine"),
+    )
+
+    assert result.debug["timings"]["total"] == 8.4
+    assert result.debug["timings"]["moss_machine"] == 8.4
+    assert result.debug["moss_machine"]["timings"]["scanner_runtime"] == 0.7
 
 
 def _minimal_png(*, width: int, height: int) -> bytes:
