@@ -34,6 +34,11 @@ Fresh setup and later updates can use the repo scripts directly:
 ./scripts/setup_dev_env.sh --update
 ```
 
+That script flow should be treated as the required setup path for end-user or
+tester machines. If you want the shipped UI, OCR, and optional Moss tooling to
+match the repo's supported runtime, use the setup script and rerun it in update
+mode after pulls.
+
 If you want the random-card button to work, install the UI extra first:
 
 ```powershell

@@ -97,6 +97,14 @@ Recommended full local setup:
 ./scripts/setup_dev_env.sh
 ```
 
+This setup script is the supported install path.
+
+If you expect OCR, Moss, or the debug UI to work for an end-user machine, treat
+running the repo setup script as required, not optional. In particular, do not
+ship or validate a runtime from a partial manual install unless you have
+deliberately reproduced the same extras, submodule sync, editable reinstall,
+and catalog build steps yourself.
+
 To refresh the environment after pulling changes or after a parent repo updates
 this submodule, rerun the same script with the update flag:
 
@@ -125,7 +133,19 @@ How this stays up-to-date:
   pull the parent repo, enter the submodule directory, rerun the setup script
   in update mode, then rerun tests
 
+Practical rule:
+
+- first-time setup: run `.\scripts\setup_dev_env.ps1` or
+  `./scripts/setup_dev_env.sh`
+- after every pull or submodule update: run `-Update` or `--update` before
+  assuming the runtime is still valid
+- before shipping to an end user: validate the environment built by that script,
+  not a hand-assembled one
+
 Manual install options:
+
+These are advanced or fallback workflows. They are not the preferred end-user
+setup path, and they are easier to get wrong for optional backends.
 
 - base recognition:
 

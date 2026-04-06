@@ -24,6 +24,12 @@ Fresh setup and updates can also use the repo-provided scripts:
 Rerun the same script with `-Update` or `--update` after the parent repo bumps
 the submodule pointer.
 
+For parent repos, this script-based flow is the supported install and refresh
+path. If the parent expects optional lanes such as OCR or Moss to be present,
+do not treat a one-off `pip install -e ...` as sufficient unless you are also
+reproducing the same extras, submodule sync, editable reinstall, and catalog
+maintenance steps.
+
 ## Keeping It Current
 
 The maintenance story is intentionally simple:
@@ -45,6 +51,9 @@ Recommended parent-repo update flow:
 2. Enter `third_party/fuzzy-enigma-card-recognition`.
 3. Run `.\scripts\setup_dev_env.ps1 -Update` on Windows or `./scripts/setup_dev_env.sh --update` on macOS/Linux.
 4. Run the engine validation command you care about, usually `python -m pytest --engine-only`.
+
+That update step is not just convenience. It should be treated as mandatory
+before shipping or validating an updated parent build.
 
 Use the `ocr` extra whenever you expect OCR backends to be available. The `ui`
 extra is only needed for the Scryfall-backed random-card UI action and catalog
@@ -68,14 +77,16 @@ cd your-parent-app
 
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -e .\third_party\fuzzy-enigma-card-recognition[ocr]
+cd .\third_party\fuzzy-enigma-card-recognition
+.\scripts\setup_dev_env.ps1
+cd ..\..
 ```
 
 To refresh this submodule after a parent-repo update:
 
 ```powershell
 cd .\third_party\fuzzy-enigma-card-recognition
-.\scripts\setup_dev_env.ps1 -Update -SkipCatalog
+.\scripts\setup_dev_env.ps1 -Update
 ```
 
 Create a parent-owned config file such as
