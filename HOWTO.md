@@ -69,6 +69,21 @@ For fixture-level accuracy checks outside the UI, run:
 .\.venv\Scripts\python.exe scripts\eval_fixture_set.py --fixtures-dir data\cache\random_cards
 ```
 
+For a one-card Moss-versus-native comparison, include the Moss game filter so
+the script matches the parent runtime default instead of scanning every
+upstream game database:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\compare_with_moss_machine.py `
+  data\cache\random_cards\worn-powerstone-ace686ad.png `
+  --moss-game "Magic: The Gathering" `
+  --json
+```
+
+In the JSON output, compare `moss.debug.timings.scanner_runtime` with
+`moss.debug.timings.wall_total`. The gap is mostly subprocess isolation plus
+any database staging fallback.
+
 For split-card investigations, you can build the offline split fixture pool and
 then summarize an operational benchmark by split family:
 

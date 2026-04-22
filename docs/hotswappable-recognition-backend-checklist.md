@@ -10,6 +10,7 @@ Goal: keep the parent-facing `recognize_card(...)` interface unchanged while all
 - [x] Normalize Moss output into the existing `RecognitionResult` contract
 - [x] Preserve caller compatibility for the parent repo by swapping under the API boundary instead of above it
 - [x] Auto-stage cached Moss database assets from `data/cache/moss-machine/`
+- [x] Prefer hard-link staging for Moss DB assets and fall back to copy when links are unavailable
 - [x] Add targeted tests for Moss routing and fallback behavior
 
 ## Backend Selection
@@ -49,7 +50,7 @@ Goal: keep the parent-facing `recognize_card(...)` interface unchanged while all
 - [ ] Add backend selection to benchmark and evaluation outputs so reports are self-describing
 - [ ] Add smoke tests that run the real Moss subprocess when assets are present locally
 - [ ] Cache and reuse Moss runtime setup across repeated runs where safe
-- [ ] Measure whether `phash_cards_*.db` staging should remain copy-based or move to a read-only link strategy
+- [x] Measure and switch `phash_cards_*.db` staging from copy-first to hard-link-first
 
 ## Rollout Sequence
 

@@ -4,7 +4,13 @@
   "max_visual_tiebreak_candidates": 4,
   "max_visual_tiebreak_seconds_per_card": 10.0,
   "reference_download_timeout_seconds": 5.0,
+  "recognition_backend": "fuzzy_enigma",
+  "recognition_backend_fallback": true,
   "recognition_deadline_seconds": 20.0,
+  "moss_threshold": 10.0,
+  "moss_top_n": 5,
+  "moss_cache_enabled": false,
+  "moss_active_games": ["Magic: The Gathering"],
   "roi_expand_long_factor": 1.0,
   "roi_expand_short_factor": 1.0
 }

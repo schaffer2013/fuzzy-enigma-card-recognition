@@ -127,8 +127,9 @@ How this stays up-to-date:
 - `-Update` or `--update` also refreshes packaging tools and rebuilds the local
   catalog when needed
 - the optional Moss integration stages runtime assets from
-  `data/cache/moss-machine/` at execution time, so new cached DB assets are
-  picked up without hand-editing the submodule
+  `data/cache/moss-machine/` at execution time, using hard links when possible
+  so new cached DB assets are picked up without hand-editing the submodule or
+  recopied on every run
 - when a parent repo advances this submodule pointer, the normal flow is:
   pull the parent repo, enter the submodule directory, rerun the setup script
   in update mode, then rerun tests
@@ -198,6 +199,58 @@ runtime dependencies used by the optional swappable backend and comparison
 tools. Parent repos that only embed the engine can stay on base or `[ocr]`
 installs and use `--engine-only` test runs to avoid pulling the UI suite into
 their normal validation loop.
+
+### Optional Moss backend
+
+The Moss lane is available for controlled parent-project experiments, but it is
+not the default recognizer:
+
+```powershell
+$env:CARD_ENGINE_BACKEND = "moss_machine"
+```
+
+or in `EngineConfig`:
+
+```json
+{
+  "recognition_backend": "moss_machine",
+  "recognition_backend_fallback": true,
+  "moss_active_games": ["Magic: The Gathering"]
+}
+```
+
+Use `moss_active_games` or `--moss-game "Magic: The Gathering"` when comparing
+Magic cards. Omitting the game filter makes the upstream scanner search every
+game database it knows about, which is useful for diagnostics but slower than
+the parent runtime default.
+
+Moss currently runs only for on-disk images in `default`/`greenfield` style
+requests. Requests that need expected-card, small-pool, reevaluation,
+confirmation, injected catalog, or visual-pool semantics fall back to
+`fuzzy_enigma` unless `recognition_backend_fallback` is disabled. In parent
+logs, check `result.debug["backend"]["effective"]` first; if it says
+`fuzzy_enigma`, Moss was requested but not actually used for that call.
+
+The Moss wrapper isolates the upstream scanner in a subprocess. That keeps its
+import-time side effects away from the engine, but it also means there is a
+per-card process startup cost. The cached Moss databases live under
+`data/cache/moss-machine/`; at runtime the wrapper stages them into the upstream
+layout with hard links when the filesystem supports it, falling back to copying
+only when hard links are unavailable.
+
+Quick comparison:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\compare_with_moss_machine.py `
+  data\cache\random_cards\worn-powerstone-ace686ad.png `
+  --moss-game "Magic: The Gathering" `
+  --json
+```
+
+Inspect `moss.debug.timings`: `scanner_runtime` is the upstream scan itself,
+while `subprocess_overhead` and `prepare_assets` explain wrapper/runtime cost.
+On April 22, 2026, this checkout measured about `0.73s` scanner time and
+`1.3-1.5s` wall time for the sample card after hard-link staging.
 
 This is a dependency-and-test boundary, not a separate published package split.
 In other words:

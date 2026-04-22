@@ -4,6 +4,7 @@ from card_engine.comparison import compare_recognition_pipelines
 from card_engine.adapters.mossmachine import (
     MossMachineRunResult,
     MossMachineSettings,
+    _stage_file_if_missing,
     run_moss_machine_recognition,
 )
 
@@ -198,3 +199,38 @@ def test_run_moss_machine_recognition_auto_stages_cached_assets(monkeypatch, tmp
         {"path": str(staged_db), "size_bytes": 2},
         {"path": str(staged_phash), "size_bytes": 5},
     ]
+
+
+def test_stage_file_prefers_hardlink(monkeypatch, tmp_path):
+    source = tmp_path / "source.db"
+    target = tmp_path / "runtime" / "source.db"
+    source.write_text("db", encoding="utf-8")
+    seen = {}
+
+    def fake_link(link_source, link_target):
+        seen["link"] = (link_source, link_target)
+        link_target.write_text(link_source.read_text(encoding="utf-8"), encoding="utf-8")
+
+    def fail_copy(*args, **kwargs):
+        raise AssertionError("copy fallback should not run when hardlink succeeds")
+
+    monkeypatch.setattr("card_engine.adapters.mossmachine.os.link", fake_link)
+    monkeypatch.setattr("card_engine.adapters.mossmachine.shutil.copy2", fail_copy)
+
+    assert _stage_file_if_missing(source, target) is True
+    assert seen["link"] == (source, target)
+    assert target.read_text(encoding="utf-8") == "db"
+
+
+def test_stage_file_falls_back_to_copy(monkeypatch, tmp_path):
+    source = tmp_path / "source.db"
+    target = tmp_path / "runtime" / "source.db"
+    source.write_text("db", encoding="utf-8")
+
+    def fail_link(*args, **kwargs):
+        raise OSError("hardlinks unavailable")
+
+    monkeypatch.setattr("card_engine.adapters.mossmachine.os.link", fail_link)
+
+    assert _stage_file_if_missing(source, target) is True
+    assert target.read_text(encoding="utf-8") == "db"

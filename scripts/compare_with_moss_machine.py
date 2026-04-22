@@ -21,7 +21,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--moss-repo-path", default=None, help="Path to the Moss Machine submodule root.")
     parser.add_argument("--moss-threshold", type=float, default=10.0, help="Moss Machine pHash threshold.")
     parser.add_argument("--moss-top-n", type=int, default=5, help="Number of Moss Machine candidates to retain.")
-    parser.add_argument("--moss-game", action="append", default=[], help="Optional Moss Machine game filter.")
+    parser.add_argument(
+        "--moss-game",
+        action="append",
+        default=[],
+        help='Optional Moss Machine game filter. Repeat as needed; omit to scan every game. Use "Magic: The Gathering" to match the parent default.',
+    )
     parser.add_argument("--moss-cache", action="store_true", help="Enable Moss Machine hash caching.")
     parser.add_argument("--json", action="store_true", help="Print JSON instead of the text summary.")
     return parser

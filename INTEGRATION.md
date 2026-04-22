@@ -43,7 +43,8 @@ The maintenance story is intentionally simple:
 - the local catalog can be rebuilt during update runs, which keeps offline card
   data aligned with the current code
 - the optional Moss lane stages its DB assets from `data/cache/moss-machine/`
-  when it runs, so replacing cached DB files is enough to refresh that backend
+  when it runs, using hard links when possible so replacing cached DB files is
+  enough to refresh that backend without recopies on every card
 
 Recommended parent-repo update flow:
 
@@ -66,6 +67,69 @@ For parent repos, the intended default is:
 - run `pytest --engine-only`
 
 The UI remains optional local tooling and is not required for embedding.
+
+## Optional Moss Backend
+
+The Moss backend is intended for measured experiments behind the same
+`recognize_card(...)` and `SortingMachineRecognizer` boundary. Keep
+`fuzzy_enigma` as the production default until your parent workflow has
+validated accuracy, failure handling, and latency on its own fixture mix.
+
+To enable Moss for a local parent run:
+
+```json
+{
+  "recognition_backend": "moss_machine",
+  "recognition_backend_fallback": true,
+  "moss_active_games": ["Magic: The Gathering"],
+  "moss_threshold": 10.0,
+  "moss_top_n": 5
+}
+```
+
+You can also override temporarily:
+
+```powershell
+$env:CARD_ENGINE_BACKEND = "moss_machine"
+```
+
+Moss currently supports only real on-disk image paths for `default` and
+`greenfield` style requests. Requests that use `expected_card`, `candidate_pool`,
+`visual_pool_candidates`, explicit catalog injection, `small_pool`,
+`reevaluation`, or `confirmation` fall back to the native backend when
+`recognition_backend_fallback` is true. Always check
+`result.debug["backend"]["effective"]` before reading timings; if the effective
+backend is `fuzzy_enigma`, the parent request never reached Moss.
+
+Performance notes from the April 22, 2026 Windows checkout:
+
+- before hard-link staging, each Moss call copied
+  `unified_card_database.db` plus `phash_cards_1.db` from
+  `data/cache/moss-machine/`, adding about `1.4-3.8s` per card on the measured
+  machine
+- after hard-link staging, the same sample card measured about `1.3-1.5s` Moss
+  wall time, with about `0.73s` in the upstream scanner and about `0.6-0.75s`
+  in subprocess/import overhead
+- a warmed native fuzzy run on the same sample measured about `7.8s`, while a
+  cold standalone comparison script was much slower because it paid one-time
+  catalog and OCR warmup costs
+
+When Moss does not look much faster from the parent project, inspect
+`result.debug["moss_machine"]["timings"]`. `scanner_runtime` is the actual Moss
+scan. `prepare_assets` means database staging is still costing time, usually
+because hard links are unavailable and the wrapper had to copy. The difference
+between `subprocess_wall` and `scanner_runtime` is the isolation cost of
+launching the upstream scanner for one card.
+
+For manual comparisons, include the game filter unless you deliberately want to
+scan every upstream game database:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\compare_with_moss_machine.py `
+  data\cache\random_cards\worn-powerstone-ace686ad.png `
+  --moss-game "Magic: The Gathering" `
+  --json
+```
 
 ## Parent Quickstart
 

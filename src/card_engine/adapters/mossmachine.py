@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -377,7 +378,10 @@ def _stage_file_if_missing(source_path: Path, target_path: Path) -> bool:
     if target_path.exists():
         return False
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_path, target_path)
+    try:
+        os.link(source_path, target_path)
+    except OSError:
+        shutil.copy2(source_path, target_path)
     return True
 
 
