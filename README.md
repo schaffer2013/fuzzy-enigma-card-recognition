@@ -215,6 +215,7 @@ or in `EngineConfig`:
 {
   "recognition_backend": "moss_machine",
   "recognition_backend_fallback": true,
+  "moss_keep_staged_assets": false,
   "moss_active_games": ["Magic: The Gathering"]
 }
 ```
@@ -224,10 +225,12 @@ Magic cards. Omitting the game filter makes the upstream scanner search every
 game database it knows about, which is useful for diagnostics but slower than
 the parent runtime default.
 
-Moss currently runs only for on-disk images in `default`/`greenfield` style
-requests. Requests that need expected-card, small-pool, reevaluation,
-confirmation, injected catalog, or visual-pool semantics fall back to
-`fuzzy_enigma` unless `recognition_backend_fallback` is disabled. In parent
+Moss currently requires real on-disk images. It supports `default` and
+`greenfield` directly, filters Moss candidates for `small_pool` when a
+candidate pool or expected card is supplied, applies expected-card bias for
+`reevaluation`, and runs confirmation scoring for `confirmation`. Requests
+with in-memory images, visual-pool candidates, or an injected catalog fall back
+to `fuzzy_enigma` unless `recognition_backend_fallback` is disabled. In parent
 logs, check `result.debug["backend"]["effective"]` first; if it says
 `fuzzy_enigma`, Moss was requested but not actually used for that call.
 
@@ -236,7 +239,9 @@ import-time side effects away from the engine, but it also means there is a
 per-card process startup cost. The cached Moss databases live under
 `data/cache/moss-machine/`; at runtime the wrapper stages them into the upstream
 layout with hard links when the filesystem supports it, falling back to copying
-only when hard links are unavailable.
+only when hard links are unavailable. Set `moss_keep_staged_assets` to `true`
+for repeated local benchmark runs where leaving the staged runtime DB files in
+place is acceptable.
 
 Quick comparison:
 
@@ -588,6 +593,12 @@ Meaning:
 - `--roi-expand 1.1 1.3`: expand the long axis by `1.1` and the short axis by
   `1.3`
 
+For backend experiments, evaluation also accepts `--backend fuzzy_enigma` or
+`--backend moss_machine`. By default, unsupported Moss requests can still fall
+back according to `recognition_backend_fallback`; add `--force-backend` when a
+fallback should be reported as a Moss failure instead of silently timing the
+native backend.
+
 The config surface is still growing. As new mode-aware and integration-facing
 features land, this section should be kept in sync with `EngineConfig` so the
 README remains the parent-project-facing source of truth.
@@ -659,6 +670,19 @@ Evaluate a fixture folder:
 ```powershell
 python scripts\eval_fixture_set.py --fixtures-dir data\cache\random_cards
 ```
+
+Evaluate the same fixture folder through Moss and record backend usage in the
+summary:
+
+```powershell
+python scripts\eval_fixture_set.py `
+  --fixtures-dir data\cache\random_cards `
+  --backend moss_machine `
+  --json-out data\sample_outputs\random-eval-moss-summary.json
+```
+
+Add `--force-backend` when you want unsupported Moss requests to fail as Moss
+results instead of falling back to `fuzzy_enigma`.
 
 Run a fresh timed random evaluation:
 

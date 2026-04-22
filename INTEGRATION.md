@@ -81,6 +81,7 @@ To enable Moss for a local parent run:
 {
   "recognition_backend": "moss_machine",
   "recognition_backend_fallback": true,
+  "moss_keep_staged_assets": false,
   "moss_active_games": ["Magic: The Gathering"],
   "moss_threshold": 10.0,
   "moss_top_n": 5
@@ -93,13 +94,20 @@ You can also override temporarily:
 $env:CARD_ENGINE_BACKEND = "moss_machine"
 ```
 
-Moss currently supports only real on-disk image paths for `default` and
-`greenfield` style requests. Requests that use `expected_card`, `candidate_pool`,
-`visual_pool_candidates`, explicit catalog injection, `small_pool`,
-`reevaluation`, or `confirmation` fall back to the native backend when
-`recognition_backend_fallback` is true. Always check
+Moss currently supports only real on-disk image paths. It handles `default` and
+`greenfield` directly, filters candidates for `small_pool` when a
+`candidate_pool` or `expected_card` is supplied, applies expected-card bias for
+`reevaluation`, and runs confirmation scoring for `confirmation`. Requests that
+use `visual_pool_candidates` or explicit catalog injection still fall back to
+the native backend when `recognition_backend_fallback` is true. Always check
 `result.debug["backend"]["effective"]` before reading timings; if the effective
 backend is `fuzzy_enigma`, the parent request never reached Moss.
+
+For one-off calls, `recognize_card(..., backend="moss_machine")` overrides the
+configured backend. For evaluation runs, pass `--backend moss_machine`; add
+`--force-backend` when a Moss-incompatible request should be reported as an
+unsupported Moss result instead of falling back. The debug UI also has a backend
+selector in the toolbar for local fixture review.
 
 Performance notes from the April 22, 2026 Windows checkout:
 
@@ -119,7 +127,9 @@ When Moss does not look much faster from the parent project, inspect
 scan. `prepare_assets` means database staging is still costing time, usually
 because hard links are unavailable and the wrapper had to copy. The difference
 between `subprocess_wall` and `scanner_runtime` is the isolation cost of
-launching the upstream scanner for one card.
+launching the upstream scanner for one card. For repeated local benchmark runs,
+set `moss_keep_staged_assets` to `true` to leave the staged runtime databases in
+place between calls.
 
 For manual comparisons, include the game filter unless you deliberately want to
 scan every upstream game database:

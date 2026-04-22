@@ -58,8 +58,8 @@ looks close to the native backend, inspect `debug.moss_machine.timings`:
 - Moss comparisons currently require a real on-disk image path
 - Moss comparisons require both `unified_card_database.db` and the game-specific `phash_cards_*.db` files
 - the wrapper auto-stages those cached assets from `data/cache/moss-machine/` into the upstream submodule when they are missing, using hard links when possible and copy fallback otherwise
-- true Moss-backed mode support currently exists only for `default` and `greenfield`
-- requests that depend on `reevaluation`, `small_pool`, `confirmation`, `expected_card`, or candidate-pool semantics currently fall back to the native backend unless fallback is explicitly disabled
+- Moss-backed mode support exists for `default`, `greenfield`, `small_pool`, `reevaluation`, and `confirmation`, but expected-card modes still require an `expected_card`, and `small_pool` needs a candidate pool or expected card to filter against
+- requests that depend on visual-pool candidates or an injected catalog currently fall back to the native backend unless fallback is explicitly disabled
 - the wrapper still intentionally refuses to auto-download the database during comparisons
 - this is an experiment lane, not a replacement for the main recognizer
 
@@ -95,6 +95,19 @@ $env:CARD_ENGINE_BACKEND = "moss_machine"
 
 The default remains `fuzzy_enigma`. Unsupported Moss requests currently fall back to the native backend unless `recognition_backend_fallback` is disabled in `EngineConfig`.
 
+Evaluation runs can select the backend directly:
+
+```powershell
+python scripts/eval_fixture_set.py `
+  --fixtures-dir data\cache\random_cards `
+  --backend moss_machine `
+  --json-out data\sample_outputs\moss-eval-summary.json
+```
+
+Use `--force-backend` for benchmarking when an unsupported Moss request should
+be counted as a Moss failure instead of falling back. The summary and JSON
+output include backend usage so fallback-heavy runs are obvious.
+
 ## Staying Current
 
 The Moss lane is designed to stay current without bespoke manual steps:
@@ -104,6 +117,8 @@ The Moss lane is designed to stay current without bespoke manual steps:
 - the wrapper auto-stages cached Moss DB assets from `data/cache/moss-machine/`
   into the upstream runtime layout only when needed, preferring hard links so
   large DB assets are not recopied on filesystems that support links
+- set `moss_keep_staged_assets=true` for repeated local runs when it is useful
+  to keep those staged runtime files in place between calls
 - updating those cached DB files is therefore enough to refresh the local Moss
   runtime data
 - parent repos can advance the submodule pointer, rerun the setup script in

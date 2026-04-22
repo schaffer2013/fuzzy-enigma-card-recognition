@@ -69,6 +69,19 @@ For fixture-level accuracy checks outside the UI, run:
 .\.venv\Scripts\python.exe scripts\eval_fixture_set.py --fixtures-dir data\cache\random_cards
 ```
 
+To evaluate with a specific runtime backend:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\eval_fixture_set.py `
+  --fixtures-dir data\cache\random_cards `
+  --backend moss_machine `
+  --json-out data\sample_outputs\moss-eval-summary.json
+```
+
+Add `--force-backend` when unsupported Moss requests should stay Moss failures
+instead of falling back to the native backend. Evaluation summaries include a
+backend-usage section so mixed fallback runs are visible.
+
 For a one-card Moss-versus-native comparison, include the Moss game filter so
 the script matches the parent runtime default instead of scanning every
 upstream game database:
@@ -206,6 +219,10 @@ Clears the saved manual bbox/quad override for the selected fixture.
 
 `Reset ROI`
 Clears the saved global override for the currently active ROI group.
+
+`Backend`
+Selects `fuzzy_enigma` or `moss_machine` for the next recognition run in the
+debug UI.
 
 `Fixture Count`
 The label at the far right shows how many fixture images are currently loaded
@@ -397,6 +414,7 @@ The script currently reports:
 - expected calibration error (ECE)
 - confidence-bin calibration breakdown
 - average stage timings from the recognition debug payload
+- backend usage
 - ROI usage
 - error-class counts
 - a short list of top mismatches
