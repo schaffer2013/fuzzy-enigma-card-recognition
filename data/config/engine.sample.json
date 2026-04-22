@@ -10,6 +10,7 @@
   "moss_threshold": 10.0,
   "moss_top_n": 5,
   "moss_cache_enabled": false,
+  "moss_keep_staged_assets": false,
   "moss_active_games": ["Magic: The Gathering"],
   "roi_expand_long_factor": 1.0,
   "roi_expand_short_factor": 1.0

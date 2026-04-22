@@ -1,7 +1,10 @@
 from pathlib import Path
+import pytest
 
 from card_engine.comparison import compare_recognition_pipelines
 from card_engine.adapters.mossmachine import (
+    DEFAULT_MOSS_MACHINE_ASSET_CACHE,
+    DEFAULT_MOSS_MACHINE_REPO,
     MossMachineRunResult,
     MossMachineSettings,
     _stage_file_if_missing,
@@ -234,3 +237,70 @@ def test_stage_file_falls_back_to_copy(monkeypatch, tmp_path):
 
     assert _stage_file_if_missing(source, target) is True
     assert target.read_text(encoding="utf-8") == "db"
+
+
+def test_run_moss_machine_recognition_can_keep_staged_assets(monkeypatch, tmp_path):
+    image_path = tmp_path / "fixture.png"
+    image_path.write_bytes(b"fixture")
+    repo_path = tmp_path / "repo"
+    recognition_dir = repo_path / "Current version" / "recognition_data"
+    recognition_dir.mkdir(parents=True)
+    runner_path = tmp_path / "runner.py"
+    runner_path.write_text("print('stub')", encoding="utf-8")
+
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    cached_db = cache_dir / "unified_card_database.db"
+    cached_db.write_text("db", encoding="utf-8")
+
+    def fake_run(command, capture_output, text, check, timeout):
+        class Completed:
+            returncode = 0
+            stdout = """
+{
+  "available": true,
+  "best_name": "Opt",
+  "confidence": 0.91,
+  "runtime_seconds": 0.55,
+  "failure_code": null,
+  "candidates": [],
+  "debug": {},
+  "notes": []
+}
+""".strip()
+            stderr = ""
+
+        return Completed()
+
+    monkeypatch.setattr("card_engine.adapters.mossmachine.subprocess.run", fake_run)
+
+    settings = MossMachineSettings(
+        repo_path=repo_path,
+        runner_path=runner_path,
+        asset_cache_dir=cache_dir,
+        keep_staged_assets=True,
+    )
+    result = run_moss_machine_recognition(image_path, settings=settings)
+
+    assert result.available is True
+    assert (recognition_dir / "unified_card_database.db").exists() is True
+
+
+def test_real_moss_smoke_when_assets_are_available():
+    image_path = Path("data/cache/random_cards/worn-powerstone-ace686ad.png")
+    db_path = DEFAULT_MOSS_MACHINE_ASSET_CACHE / "unified_card_database.db"
+    phash_path = DEFAULT_MOSS_MACHINE_ASSET_CACHE / "phash_cards_1.db"
+    if not (image_path.exists() and DEFAULT_MOSS_MACHINE_REPO.exists() and db_path.exists() and phash_path.exists()):
+        pytest.skip("real Moss assets are not available locally")
+
+    result = run_moss_machine_recognition(
+        image_path,
+        settings=MossMachineSettings(
+            active_games=("Magic: The Gathering",),
+            timeout_seconds=30.0,
+        ),
+    )
+
+    assert result.available is True
+    assert result.best_name
+    assert result.debug["timings"]["wall_total"] > 0

@@ -142,6 +142,7 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
             ],
             active_roi="standard",
             tried_rois=["standard", "type_line", "lower_text"],
+            debug={"backend": {"requested": "fuzzy_enigma", "effective": "fuzzy_enigma"}},
         ),
         "jade-avenger-f81500be.png": RecognitionResult(
             bbox=(0, 0, 80, 100),
@@ -153,6 +154,7 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
             ],
             active_roi="lower_text",
             tried_rois=["standard", "type_line", "lower_text"],
+            debug={"backend": {"requested": "moss_machine", "effective": "fuzzy_enigma", "fallback_reason": "image_path_required"}},
         ),
     }
 
@@ -191,6 +193,9 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
     assert summary.calibration_bins[1].empirical_accuracy == 1.0
     assert summary.calibration_bins[1].calibration_gap == 0.09
     assert summary.roi_usage == {"lower_text": 1, "standard": 1}
+    assert summary.backend_usage == {"fuzzy_enigma": 2}
+    assert summary.fixtures[1].requested_backend == "moss_machine"
+    assert summary.fixtures[1].backend_fallback_reason == "image_path_required"
     assert summary.error_classes == {"correct_top1": 1, "wrong_art": 1}
     assert summary.average_stage_timings == {}
 
@@ -204,6 +209,7 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
     assert "Runtime p95 (s):" in rendered
     assert "Max runtime (s):" in rendered
     assert "Stage timings (avg seconds):" in rendered
+    assert "Backend usage:" in rendered
     assert "Calibration error (ECE): 0.230" in rendered
     assert "0.6-0.8: count=1, avg_confidence=0.630, accuracy=1.000, gap=0.370" in rendered
     assert payload["average_runtime_seconds"] >= 0.0
@@ -213,6 +219,7 @@ def test_evaluate_fixture_set_reports_name_set_and_art_accuracy(monkeypatch, tmp
     assert payload["runtime_p95_seconds"] >= 0.0
     assert payload["max_runtime_seconds"] >= 0.0
     assert payload["average_stage_timings"] == {}
+    assert payload["backend_usage"] == {"fuzzy_enigma": 2}
     assert payload["calibration_error"] == 0.23
     assert payload["calibration_bins"][0]["lower_bound"] == 0.6
     assert payload["calibration_bins"][1]["upper_bound"] == 1.0
@@ -928,6 +935,9 @@ def test_main_passes_base_config_to_operational_mode_runs(monkeypatch, tmp_path)
             "--roi-expand",
             "1.1",
             "1.3",
+            "--backend",
+            "moss_machine",
+            "--force-backend",
         ]
     )
 
@@ -938,6 +948,8 @@ def test_main_passes_base_config_to_operational_mode_runs(monkeypatch, tmp_path)
     assert isinstance(base_config, EngineConfig)
     assert base_config.roi_expand_long_factor == 1.1
     assert base_config.roi_expand_short_factor == 1.3
+    assert base_config.recognition_backend == "moss_machine"
+    assert base_config.recognition_backend_fallback is False
     assert captured["deadline_multiplier"] == 20.0
 
 

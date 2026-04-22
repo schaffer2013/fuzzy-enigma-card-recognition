@@ -11,6 +11,7 @@ from card_engine.image_types import EditableLoadedImage
 from card_engine.models import Candidate, VisualPoolCandidate
 from card_engine.ocr import OCRResult
 from card_engine.operational_modes import CandidatePool, ExpectedCard
+from card_engine.adapters.mossmachine import MossMachineCandidate, MossMachineRunResult
 from card_engine.recognition_router import run_moss_backend
 
 
@@ -1612,9 +1613,21 @@ def test_recognize_card_can_route_to_moss_backend(monkeypatch, tmp_path):
     image_path.write_bytes(b"fixture")
     seen = {}
 
-    def fake_run_moss_backend(image, *, mode=None, progress_callback=None, config=None):
+    def fake_run_moss_backend(
+        image,
+        *,
+        mode=None,
+        candidate_pool=None,
+        expected_card=None,
+        unsupported_reason=None,
+        progress_callback=None,
+        config=None,
+    ):
         seen["image"] = image
         seen["mode"] = mode
+        seen["candidate_pool"] = candidate_pool
+        seen["expected_card"] = expected_card
+        seen["unsupported_reason"] = unsupported_reason
         seen["config"] = config
         return type(
             "MossResult",
@@ -1689,7 +1702,24 @@ def test_recognize_card_falls_back_from_moss_for_unsupported_requests(monkeypatc
     assert result.best_name == "Island"
     assert result.debug["backend"]["requested"] == "moss_machine"
     assert result.debug["backend"]["effective"] == "fuzzy_enigma"
-    assert result.debug["backend"]["fallback_reason"] == "moss_backend_unsupported_for_request"
+    assert result.debug["backend"]["fallback_reason"] == "image_path_required"
+
+
+def test_recognize_card_force_moss_reports_unsupported_request_without_fallback(monkeypatch):
+    monkeypatch.setattr(
+        "card_engine.api._recognize_card_with_fuzzy_enigma",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fuzzy backend should not be used")),
+    )
+
+    result = recognize_card(
+        DummyImage(),
+        config=EngineConfig(recognition_backend="moss_machine", recognition_backend_fallback=False),
+    )
+
+    assert result.best_name is None
+    assert result.failure_code == "image_path_required"
+    assert result.debug["backend"]["requested"] == "moss_machine"
+    assert result.debug["backend"]["effective"] == "moss_machine"
 
 
 def test_run_moss_backend_reports_wall_clock_timings(monkeypatch, tmp_path):
@@ -1732,6 +1762,82 @@ def test_run_moss_backend_reports_wall_clock_timings(monkeypatch, tmp_path):
     assert result.debug["timings"]["total"] == 8.4
     assert result.debug["timings"]["moss_machine"] == 8.4
     assert result.debug["moss_machine"]["timings"]["scanner_runtime"] == 0.7
+
+
+def test_run_moss_backend_filters_small_pool_candidates(monkeypatch, tmp_path):
+    image_path = tmp_path / "fixture.png"
+    image_path.write_bytes(b"fixture")
+    pool = CandidatePool.from_records(
+        [
+            CatalogRecord(
+                name="Opt",
+                normalized_name="opt",
+                scryfall_id="opt-xln",
+                oracle_id="oracle-opt",
+                set_code="xln",
+                collector_number="65",
+                layout="normal",
+            )
+        ]
+    )
+
+    monkeypatch.setattr(
+        "card_engine.recognition_router.run_moss_machine_recognition",
+        lambda image_path, settings=None: MossMachineRunResult(
+            available=True,
+            best_name="Lightning Bolt",
+            confidence=0.99,
+            runtime_seconds=1.0,
+            candidates=[
+                MossMachineCandidate(name="Lightning Bolt", set_code="m11", collector_number="149", confidence=0.99),
+                MossMachineCandidate(name="Opt", set_code="XLN", collector_number="65", confidence=0.91),
+            ],
+            debug={"timings": {"wall_total": 1.0}},
+        ),
+    )
+
+    result = run_moss_backend(
+        image_path,
+        mode="small_pool",
+        candidate_pool=pool,
+        config=EngineConfig(recognition_backend="moss_machine"),
+    )
+
+    assert result.best_name == "Opt"
+    assert result.top_k_candidates[0].scryfall_id == "opt-xln"
+    assert result.top_k_candidates[0].set_code == "xln"
+    assert result.debug["mode"]["effective"] == "small_pool"
+
+
+def test_run_moss_backend_scores_confirmation_against_expected(monkeypatch, tmp_path):
+    image_path = tmp_path / "fixture.png"
+    image_path.write_bytes(b"fixture")
+
+    monkeypatch.setattr(
+        "card_engine.recognition_router.run_moss_machine_recognition",
+        lambda image_path, settings=None: MossMachineRunResult(
+            available=True,
+            best_name="Opt",
+            confidence=0.91,
+            runtime_seconds=1.0,
+            candidates=[
+                MossMachineCandidate(name="Opt", set_code="XLN", collector_number="65", confidence=0.91),
+            ],
+            debug={"timings": {"wall_total": 1.0}},
+        ),
+    )
+
+    result = run_moss_backend(
+        image_path,
+        mode="confirmation",
+        expected_card=ExpectedCard(name="Opt", set_code="xln", collector_number="65"),
+        config=EngineConfig(recognition_backend="moss_machine"),
+    )
+
+    assert result.best_name == "Opt"
+    assert result.failure_code is None
+    assert result.debug["confirmation"]["used"] is True
+    assert result.debug["confirmation"]["matches_expected"] is True
 
 
 def _minimal_png(*, width: int, height: int) -> bytes:

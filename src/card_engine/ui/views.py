@@ -57,6 +57,7 @@ def format_fixture_summary(state: UIState) -> str:
         f"Path: {fixture_path}",
         f"Index: {state.fixture_index + 1} / {len(state.fixture_paths)}",
         f"Active ROI: {state.active_roi}",
+        f"Backend: {state.active_backend}",
         f"Show bbox: {'yes' if state.show_bbox else 'no'}",
         f"Size: {size_bytes} bytes",
     ]
@@ -85,6 +86,7 @@ def format_status_summary(state: UIState) -> str:
             "",
             f"Selected fixture: {fixture_label}",
             f"ROI preset: {state.active_roi}",
+            f"Backend: {state.active_backend}",
             f"Bounding box overlay: {'enabled' if state.show_bbox else 'hidden'}",
             "",
             state.status_message,
@@ -103,6 +105,7 @@ def format_recognition_summary(result: RecognitionResult | None, *, error_messag
         f"Best name: {result.best_name or 'None'}",
         f"Best set: {best_candidate.set_code or 'Unknown'}" if best_candidate else "Best set: Unknown",
         f"Confidence: {result.confidence:.2f}",
+        f"Backend: {_format_backend_debug(result)}",
         f"Active ROI: {result.active_roi or 'None'}",
         f"Tried ROIs: {', '.join(result.tried_rois) if result.tried_rois else 'None'}",
         f"BBox: {result.bbox}",
@@ -140,6 +143,20 @@ def format_recognition_summary(result: RecognitionResult | None, *, error_messag
         lines.append("  - none")
 
     return "\n".join(lines)
+
+
+def _format_backend_debug(result: RecognitionResult) -> str:
+    backend_debug = result.debug.get("backend", {}) if isinstance(result.debug, dict) else {}
+    if not isinstance(backend_debug, dict):
+        return "unknown"
+    requested = backend_debug.get("requested") or "unknown"
+    effective = backend_debug.get("effective") or "unknown"
+    fallback_reason = backend_debug.get("fallback_reason")
+    if fallback_reason:
+        return f"{effective} (requested={requested}; fallback={fallback_reason})"
+    if requested != effective:
+        return f"{effective} (requested={requested})"
+    return str(effective)
 
 
 def format_candidate_line(candidate: Candidate) -> str:

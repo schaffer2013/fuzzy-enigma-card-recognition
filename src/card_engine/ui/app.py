@@ -128,6 +128,7 @@ class CardEngineDebugUI:
         self.config = config or load_engine_config()
         self._overrides_path = _default_overrides_path()
         self.state = UIState()
+        self.state.active_backend = self.config.recognition_backend
         self.state.fixture_paths = discover_fixture_paths(self.fixtures_dir)
         manual_quads, legacy_roi_overrides = load_ui_overrides(self._overrides_path)
         self.state.manual_quads = manual_quads
@@ -162,8 +163,8 @@ class CardEngineDebugUI:
 
         toolbar = ttk.Frame(self.root, padding=(12, 12, 12, 0))
         toolbar.grid(row=0, column=0, columnspan=3, sticky="ew")
-        for column in range(12):
-            toolbar.columnconfigure(column, weight=1 if column == 11 else 0)
+        for column in range(14):
+            toolbar.columnconfigure(column, weight=1 if column == 13 else 0)
 
         ttk.Button(toolbar, text="Prev", command=self._select_previous_fixture).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(toolbar, text="Next", command=self._select_next_fixture).grid(row=0, column=1, padx=(0, 8))
@@ -176,9 +177,20 @@ class CardEngineDebugUI:
         ttk.Button(toolbar, text="Reset ROI", command=self._reset_manual_roi).grid(row=0, column=8, padx=(0, 8))
         self.prehash_button = ttk.Button(toolbar, text="Prehash Arts", command=self._start_prehash_art_refs)
         self.prehash_button.grid(row=0, column=9, padx=(0, 8))
+        ttk.Label(toolbar, text="Backend").grid(row=0, column=10, padx=(0, 4))
+        self.backend_var = tk.StringVar(value=self.state.active_backend)
+        self.backend_selector = ttk.Combobox(
+            toolbar,
+            textvariable=self.backend_var,
+            values=("fuzzy_enigma", "moss_machine"),
+            state="readonly",
+            width=14,
+        )
+        self.backend_selector.grid(row=0, column=11, padx=(0, 8))
+        self.backend_selector.bind("<<ComboboxSelected>>", self._on_backend_selected)
 
         self.fixture_count_var = tk.StringVar(value="0 fixtures")
-        ttk.Label(toolbar, textvariable=self.fixture_count_var).grid(row=0, column=11, sticky="e")
+        ttk.Label(toolbar, textvariable=self.fixture_count_var).grid(row=0, column=13, sticky="e")
 
         fixture_panel = make_panel(self.root, "Fixtures")
         fixture_panel.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=12)
@@ -265,6 +277,13 @@ class CardEngineDebugUI:
             "Bounding box overlay enabled." if self.state.show_bbox else "Bounding box overlay hidden."
         )
         self._refresh(run_recognition=False)
+
+    def _on_backend_selected(self, _event=None) -> None:
+        selected_backend = self.backend_var.get() or "fuzzy_enigma"
+        self.config = replace(self.config, recognition_backend=selected_backend)
+        self.state.active_backend = selected_backend
+        self.state.status_message = f"Recognition backend changed to {selected_backend}."
+        self._refresh(run_recognition=True)
 
     def _on_fixture_selected(self, _event) -> None:
         selection = self.fixture_list.curselection()

@@ -47,6 +47,7 @@ class EngineConfig:
     moss_threshold: float = 10.0
     moss_top_n: int = 5
     moss_cache_enabled: bool = False
+    moss_keep_staged_assets: bool = False
     moss_active_games: list[str] = field(default_factory=lambda: ["Magic: The Gathering"])
 
     @classmethod

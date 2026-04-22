@@ -81,6 +81,9 @@ class FixtureEvaluation:
     expected_games: list[str] = field(default_factory=list)
     expected_is_paper: bool | None = None
     deadline_exceeded: bool = False
+    requested_backend: str | None = None
+    effective_backend: str | None = None
+    backend_fallback_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -104,6 +107,7 @@ class EvaluationSummary:
     calibration_error: float
     calibration_bins: list["ConfidenceCalibrationBin"]
     average_stage_timings: dict[str, float]
+    backend_usage: dict[str, int]
     roi_usage: dict[str, int]
     error_classes: dict[str, int]
     fixtures: list[FixtureEvaluation]
@@ -250,6 +254,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Multiplier applied to recognition_deadline_seconds during evaluation runs so benchmarks can "
             "tolerate slower cards without hanging forever. Default: 20.0."
         ),
+    )
+    parser.add_argument(
+        "--backend",
+        choices=("fuzzy_enigma", "moss_machine"),
+        default=None,
+        help="Optional recognition backend override for evaluation runs.",
+    )
+    parser.add_argument(
+        "--force-backend",
+        action="store_true",
+        help="Treat unsupported backend/mode combinations as hard failures instead of falling back.",
     )
     return parser
 
@@ -465,6 +480,10 @@ def _summarize_evaluations(evaluations: list[FixtureEvaluation]) -> EvaluationSu
     set_scored_count = len(set_scored)
     art_scored_count = len(art_scored)
     roi_usage = _count_by_key(evaluation.active_roi for evaluation in evaluations if evaluation.active_roi)
+    backend_usage = _count_by_key(
+        evaluation.effective_backend or "unknown"
+        for evaluation in evaluations
+    )
     error_classes = _count_by_key(evaluation.error_class for evaluation in evaluations)
 
     top1_hits = sum(1 for evaluation in scored if evaluation.top1_hit)
@@ -498,6 +517,7 @@ def _summarize_evaluations(evaluations: list[FixtureEvaluation]) -> EvaluationSu
         calibration_error=calibration_error,
         calibration_bins=calibration_bins,
         average_stage_timings=_average_stage_timings(evaluations),
+        backend_usage=backend_usage,
         roi_usage=roi_usage,
         error_classes=error_classes,
         fixtures=evaluations,
@@ -654,6 +674,7 @@ def _build_fixture_evaluation(
     predicted_set_code = best_candidate.set_code if best_candidate else None
     predicted_collector_number = best_candidate.collector_number if best_candidate else None
     stage_timings = _coerce_stage_timings(result.debug.get("timings", {}))
+    backend_debug = result.debug.get("backend", {}) if isinstance(result.debug, dict) else {}
     deadline_exceeded = bool(result.debug.get("deadline", {}).get("exceeded"))
     top1_hit = bool(expected.name and result.best_name == expected.name)
     top5_hit = bool(expected.name and expected.name in candidate_names[:5])
@@ -715,6 +736,9 @@ def _build_fixture_evaluation(
         expected_games=list(expected.games),
         expected_is_paper=is_paper_expectation(expected),
         deadline_exceeded=deadline_exceeded,
+        requested_backend=_coerce_string(backend_debug.get("requested")) if isinstance(backend_debug, dict) else None,
+        effective_backend=_coerce_string(backend_debug.get("effective")) if isinstance(backend_debug, dict) else None,
+        backend_fallback_reason=_coerce_string(backend_debug.get("fallback_reason")) if isinstance(backend_debug, dict) else None,
     )
 
 
@@ -917,6 +941,17 @@ def render_summary(summary: EvaluationSummary) -> str:
     lines.extend(
         [
         "",
+        "Backend usage:",
+        ]
+    )
+    if summary.backend_usage:
+        lines.extend(f"  - {backend}: {count}" for backend, count in sorted(summary.backend_usage.items()))
+    else:
+        lines.append("  - none")
+
+    lines.extend(
+        [
+        "",
         "ROI usage:",
         ]
     )
@@ -984,6 +1019,7 @@ def summary_to_json(summary: EvaluationSummary) -> dict:
         "calibration_error": summary.calibration_error,
         "calibration_bins": [asdict(calibration_bin) for calibration_bin in summary.calibration_bins],
         "average_stage_timings": summary.average_stage_timings,
+        "backend_usage": summary.backend_usage,
         "roi_usage": summary.roi_usage,
         "error_classes": summary.error_classes,
         "fixtures": [asdict(fixture) for fixture in summary.fixtures],
@@ -1021,6 +1057,7 @@ def summary_from_json(payload: dict[str, Any]) -> EvaluationSummary:
         calibration_error=float(payload.get("calibration_error", 0.0) or 0.0),
         calibration_bins=calibration_bins,
         average_stage_timings=_coerce_stage_timings(payload.get("average_stage_timings", {})),
+        backend_usage=_coerce_count_dict(payload.get("backend_usage", {})),
         roi_usage=_coerce_count_dict(payload.get("roi_usage", {})),
         error_classes=_coerce_count_dict(payload.get("error_classes", {})),
         fixtures=fixtures,
@@ -1137,6 +1174,7 @@ def render_benchmark_report(report: BenchmarkReport) -> str:
                 f"  Runtime p95 (s): {summary.runtime_p95_seconds:.3f} (tested against {summary.average_candidate_count:.1f} candidates)",
                 f"  Max runtime (s): {summary.max_runtime_seconds:.3f} (tested against {summary.average_candidate_count:.1f} candidates)",
                 f"  Calibration error (ECE): {summary.calibration_error:.3f}",
+                f"  Backend usage: {_format_count_map(summary.backend_usage)}",
             ]
         )
     return "\n".join(lines)
@@ -1175,6 +1213,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.compare_to and len(benchmark_mode_names) > 1:
         parser.error("--compare-to currently supports single-mode runs only.")
     base_config = load_engine_config()
+    if args.backend is not None or args.force_backend:
+        base_config = replace(
+            base_config,
+            **{
+                **({"recognition_backend": args.backend} if args.backend is not None else {}),
+                "recognition_backend_fallback": not args.force_backend,
+            },
+        )
     try:
         roi_expand = parse_roi_expand_factors(args.roi_expand)
     except ValueError as exc:
@@ -1620,6 +1666,12 @@ def _count_by_key(values) -> dict[str, int]:
     return counts
 
 
+def _format_count_map(counts: dict[str, int]) -> str:
+    if not counts:
+        return "none"
+    return ", ".join(f"{key}={value}" for key, value in sorted(counts.items()))
+
+
 def resolve_benchmark_modes(mode_names: str | list[str]) -> list[str]:
     if isinstance(mode_names, str):
         raw_names = [part.strip() for part in mode_names.split(",") if part.strip()]
@@ -1713,6 +1765,7 @@ def render_operational_mode_report(report: OperationalModeReport) -> str:
                 f"  Runtime p95 (s): {summary.runtime_p95_seconds:.3f} (tested against {summary.average_candidate_count:.1f} candidates)",
                 f"  Max runtime (s): {summary.max_runtime_seconds:.3f} (tested against {summary.average_candidate_count:.1f} candidates)",
                 f"  Calibration error (ECE): {summary.calibration_error:.3f}",
+                f"  Backend usage: {_format_count_map(summary.backend_usage)}",
             ]
         )
         if mode_result.implementation_note:

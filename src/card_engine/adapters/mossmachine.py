@@ -56,6 +56,7 @@ class MossMachineSettings:
     runner_path: Path = DEFAULT_MOSS_MACHINE_RUNNER
     asset_cache_dir: Path = DEFAULT_MOSS_MACHINE_ASSET_CACHE
     auto_stage_assets: bool = True
+    keep_staged_assets: bool = False
 
 
 def run_moss_machine_recognition(
@@ -135,7 +136,8 @@ def run_moss_machine_recognition(
             subprocess_elapsed = round(time.monotonic() - subprocess_started_at, 4)
         finally:
             cleanup_started_at = time.monotonic()
-            _cleanup_staged_moss_runtime_assets(staged_paths, staged_directories)
+            if not resolved_settings.keep_staged_assets:
+                _cleanup_staged_moss_runtime_assets(staged_paths, staged_directories)
             cleanup_elapsed = round(time.monotonic() - cleanup_started_at, 4)
     except subprocess.TimeoutExpired:
         total_wall_elapsed = round(time.monotonic() - overall_started_at, 4)
@@ -415,6 +417,7 @@ def _build_wrapper_debug(
     debug["top_n"] = int(settings.top_n)
     debug["cache_enabled"] = bool(settings.cache_enabled)
     debug["auto_stage_assets"] = bool(settings.auto_stage_assets)
+    debug["keep_staged_assets"] = bool(settings.keep_staged_assets)
     debug["repo_path"] = str(settings.repo_path)
     debug["runner_path"] = str(settings.runner_path)
     debug["asset_cache_dir"] = str(settings.asset_cache_dir)

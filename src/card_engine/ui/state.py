@@ -12,6 +12,7 @@ RelativeROI = tuple[float, float, float, float]
 class UIState:
     fixture_index: int = 0
     active_roi: str = "standard"
+    active_backend: str = "fuzzy_enigma"
     show_bbox: bool = True
     fixture_paths: list[Path] = field(default_factory=list)
     status_message: str = "Ready."

@@ -57,9 +57,10 @@ def recognize_card(
     catalog: LocalCatalogIndex | None = None,
     skip_secondary_ocr: bool = False,
     artifact_export_dir: str | Path | None = None,
+    backend: str | None = None,
 ) -> RecognitionResult:
     config = config or load_engine_config()
-    requested_backend = resolve_requested_backend(config=config)
+    requested_backend = resolve_requested_backend(config=config, backend=backend)
     effective_backend, fallback_reason = choose_effective_backend(
         requested_backend=requested_backend,
         image=image,
@@ -76,6 +77,9 @@ def recognize_card(
         result = run_moss_backend(
             image,
             mode=mode,
+            candidate_pool=candidate_pool,
+            expected_card=expected_card,
+            unsupported_reason=fallback_reason,
             progress_callback=progress_callback,
             config=config,
         )
@@ -711,6 +715,7 @@ def _maybe_export_artifacts(
         "pipeline_summary": dict(result.pipeline_summary),
         "failure_code": result.failure_code,
         "review_reason": result.review_reason,
+        "backend": dict(result.debug.get("backend", {})) if isinstance(result.debug, dict) else {},
         "timings": result.debug.get("timings", {}),
         "candidates": candidates,
         "normalized_image_path": normalized_path,
