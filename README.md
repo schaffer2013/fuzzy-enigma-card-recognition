@@ -327,6 +327,7 @@ config = load_engine_config(
     str(Path("C:/work/your-parent-app/config/card-engine/engine.json"))
 )
 recognizer = SortingMachineRecognizer(config=config, auto_track_results=True)
+recognizer.warm_up()
 
 result = recognizer.recognize_top_card(frame, mode="greenfield")
 print(result.card_name, result.confidence)
@@ -439,6 +440,7 @@ recognizer = SortingMachineRecognizer(
     config=EngineConfig(candidate_count=5),
     auto_track_results=True,
 )
+recognizer.warm_up()
 output = recognizer.recognize_top_card(frame)
 
 print(output.card_name, output.confidence)
@@ -502,6 +504,21 @@ Tracked-pool entries now also preserve those identifiers, so parent-side pool
 inspection can work with exact-printing IDs or Oracle-group IDs directly.
 
 The adapter lives in [sortingmachine.py](src/card_engine/adapters/sortingmachine.py).
+
+### Live Runtime Warmup
+
+For user-facing integrations, keep one recognizer instance alive and warm it
+before the first operator-visible scan:
+
+```python
+recognizer = SortingMachineRecognizer(config=config, auto_track_results=True)
+warmup = recognizer.warm_up()
+print(warmup.catalog_records, warmup.rapidocr_ready)
+```
+
+That loads the local catalog once and initializes the primary OCR engine in the
+same long-lived process the parent app will keep using. It avoids measuring or
+showing first-use setup cost as if it were normal steady-state recognition.
 
 ## Configuration
 
@@ -692,6 +709,22 @@ python scripts\eval_fixture_set.py `
   --random-output-dir data\sample_outputs\random_eval_cards `
   --json-out data\sample_outputs\random-eval-summary.json
 ```
+
+Run a production-shaped steady-state stress test through one warmed adapter
+instance:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\stress_live_runtime.py `
+  --fixtures-dir data\sample_outputs\benchmark_20_random_cards `
+  --mode greenfield `
+  --passes 2 `
+  --warmup-passes 1 `
+  --json-out data\sample_outputs\live-runtime-greenfield.json
+```
+
+Use this when you want to measure the path an embedded end user actually
+experiences: one process, one recognizer, preloaded runtime components, and
+repeated scans rather than restarting Python for every recognition.
 
 Random fixture downloads now request `game:paper lang:en` from Scryfall by
 default so the sample set stays aligned with the repo's English-only,

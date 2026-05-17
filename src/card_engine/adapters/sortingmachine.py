@@ -4,6 +4,7 @@ from typing import Any
 from card_engine.config import EngineConfig
 from card_engine.models import Candidate, RecognitionResult
 from card_engine.operational_modes import CandidatePool, ExpectedCard
+from card_engine.runtime import RuntimeWarmupResult, warm_recognition_runtime
 from card_engine.session import RecognitionSession, TrackedPoolEntry
 
 
@@ -94,3 +95,10 @@ class SortingMachineRecognizer:
 
     def clear_tracked_pool(self) -> None:
         self.session.clear_tracked_pool()
+
+    def warm_up(self, *, include_paddle_fallback: bool = False) -> RuntimeWarmupResult:
+        return warm_recognition_runtime(
+            config=self.config,
+            session=self.session,
+            include_paddle_fallback=include_paddle_fallback,
+        )

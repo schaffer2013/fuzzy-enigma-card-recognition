@@ -81,6 +81,8 @@ class LocalCatalogIndex:
             oracle_key = record.oracle_id or f"name:{record.normalized_name}"
             self._records_by_oracle_key.setdefault(oracle_key, []).append(record)
         self._oracle_search_records = self._build_oracle_search_records()
+        self._oracle_search_by_key = {oracle_key: record for oracle_key, record in self._oracle_search_records}
+        self._oracle_trigram_index = self._build_oracle_trigram_index()
 
     @classmethod
     def from_records(cls, records: list[CatalogRecord]) -> "LocalCatalogIndex":
@@ -211,7 +213,7 @@ class LocalCatalogIndex:
             ]
 
         ranked: list[tuple[str, CatalogRecord, float]] = []
-        for oracle_key, record in self._oracle_search_records:
+        for oracle_key, record in self._candidate_oracle_search_records(normalized_query):
             candidates = [record.normalized_name]
             candidates.extend(normalize_text(alias) for alias in (record.aliases or []))
             usable_candidates = [candidate for candidate in candidates if candidate]
@@ -226,6 +228,27 @@ class LocalCatalogIndex:
         return [
             CatalogMatch(record=record, score=score, match_type="fuzzy")
             for _oracle_key, record, score in ranked[:limit]
+        ]
+
+    def _candidate_oracle_search_records(self, normalized_query: str) -> list[tuple[str, CatalogRecord]]:
+        trigrams = _name_trigrams(normalized_query)
+        if len(normalized_query) < 4 or not trigrams:
+            return self._oracle_search_records
+
+        candidate_keys: set[str] = set()
+        for trigram in trigrams:
+            candidate_keys.update(self._oracle_trigram_index.get(trigram, set()))
+        if not candidate_keys:
+            return self._oracle_search_records
+
+        # Keep retrieval conservative. If OCR is noisy enough that the trigram
+        # overlap produces only a tiny set, use the full scan rather than risk a
+        # recall loss for a marginal speed gain.
+        if len(candidate_keys) < 12:
+            return self._oracle_search_records
+        return [
+            (oracle_key, self._oracle_search_by_key[oracle_key])
+            for oracle_key in candidate_keys
         ]
 
     def find_record(
@@ -303,6 +326,16 @@ class LocalCatalogIndex:
             )
         return search_records
 
+    def _build_oracle_trigram_index(self) -> dict[str, set[str]]:
+        index: dict[str, set[str]] = {}
+        for oracle_key, record in self._oracle_search_records:
+            names = [record.normalized_name]
+            names.extend(normalize_text(alias) for alias in (record.aliases or []))
+            for candidate in names:
+                for trigram in _name_trigrams(candidate):
+                    index.setdefault(trigram, set()).add(oracle_key)
+        return index
+
 
 def _fuzzy_score(query: str, candidate: str) -> float:
     ratio = SequenceMatcher(None, query, candidate).ratio()
@@ -313,6 +346,11 @@ def _fuzzy_score(query: str, candidate: str) -> float:
 
     prefix_bonus = 0.05 if candidate.startswith(query) or query.startswith(candidate) else 0.0
     return min(0.99, (ratio * 0.75) + (overlap * 0.25) + prefix_bonus)
+
+
+def _name_trigrams(value: str) -> set[str]:
+    compact = f"  {value} "
+    return {compact[index : index + 3] for index in range(max(0, len(compact) - 2))}
 
 
 def _decode_string_list(value: str | None) -> tuple[str, ...]:
