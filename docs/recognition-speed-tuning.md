@@ -181,6 +181,21 @@ Track at minimum:
 - `title_ocr` and `secondary_ocr` average stage timings
 - secondary OCR invocation count
 
+For end-user latency, also run the warmed long-lived adapter harness:
+
+```bash
+python scripts/stress_live_runtime.py \
+  --fixtures-dir <fixtures_dir> \
+  --mode greenfield \
+  --passes 2 \
+  --warmup-passes 1 \
+  --json-out <result.json>
+```
+
+This isolates steady-state behavior from first-use catalog/OCR initialization
+and mirrors the parent integration pattern more closely than one-off process
+invocations.
+
 ## Bottom line
 
 If your goal is materially faster recognition, the highest-yield path is:

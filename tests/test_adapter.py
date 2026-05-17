@@ -143,3 +143,13 @@ def test_adapter_can_return_detailed_output(monkeypatch):
     assert output.effective_mode is None
     assert output.mode_flags == {}
     assert output.pipeline_summary["resolution_path"] == "title_only"
+
+
+def test_adapter_can_warm_runtime(monkeypatch):
+    recognizer = SortingMachineRecognizer()
+    monkeypatch.setattr(
+        "card_engine.adapters.sortingmachine.warm_recognition_runtime",
+        lambda **kwargs: "warm",
+    )
+
+    assert recognizer.warm_up() == "warm"

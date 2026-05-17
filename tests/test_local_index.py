@@ -30,6 +30,16 @@ def test_search_name_returns_best_fuzzy_match_first():
     assert len(matches) == 2
 
 
+def test_search_name_uses_indexed_candidate_generation_without_losing_obvious_match():
+    records = [CatalogRecord(name=f"Filler Card {index}", normalized_name="") for index in range(50)]
+    records.append(CatalogRecord(name="Lightning Bolt", normalized_name=""))
+    index = LocalCatalogIndex.from_records(records)
+
+    matches = index.search_name("lightning bot", limit=2)
+
+    assert matches[0].record.name == "Lightning Bolt"
+
+
 def test_from_sqlite_loads_catalog_rows(tmp_path):
     db_path = tmp_path / "cards.sqlite3"
     source_path = tmp_path / "default-cards.json"
