@@ -243,6 +243,18 @@ only when hard links are unavailable. Set `moss_keep_staged_assets` to `true`
 for repeated local benchmark runs where leaving the staged runtime DB files in
 place is acceptable.
 
+The upstream Moss repository includes hardware designs, old releases, GUI code,
+sample archives, and other assets that this adapter does not execute. To keep a
+local checkout sparse, run:
+
+```powershell
+.\scripts\setup_moss_machine_sparse.ps1
+```
+
+That keeps only the Moss README and runtime scanner files needed by
+`scripts/run_moss_machine_once.py`; the SQLite recognition databases still stage
+from `data/cache/moss-machine/`.
+
 Quick comparison:
 
 ```powershell
